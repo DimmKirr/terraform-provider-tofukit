@@ -1,0 +1,4 @@
+bin/
+.terraform
+.devcontainer
+terraform.tfstate*
