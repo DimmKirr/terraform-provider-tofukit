@@ -1,0 +1,7 @@
+bin/
+.terraform
+.devcontainer
+terraform.tfstate*
+
+# Output dir ignored  for now
+.tofukit/
