@@ -112,8 +112,7 @@ resource "tofukit_project" "click_cli" {
     }
   }
 
-  # Stack reference
-  stack = tofukit_stack.click_app.id
+  # Stack reference - removed as not supported in schema
 
   # Project dependencies
   depends_on = [
@@ -570,10 +569,10 @@ resource "tofukit_stack" "click_app" {
 
         steps:
         - uses: actions/checkout@v3
-        - name: Set up Python ${{ matrix.python-version }}
+        - name: Set up Python $${{ matrix.python-version }}
           uses: actions/setup-python@v4
           with:
-            python-version: ${{ matrix.python-version }}
+            python-version: $${{ matrix.python-version }}
 
         - name: Install dependencies
           run: |

@@ -23,8 +23,10 @@ type TofukitProvider struct {
 
 // TofukitProviderModel describes the provider data model.
 type TofukitProviderModel struct {
-	OutputFormat types.String `tfsdk:"output_format"`
-	OutputPath   types.String `tfsdk:"output_path"`
+	OutputFormat        types.String `tfsdk:"output_format"`
+	OutputPath          types.String `tfsdk:"output_path"`
+	DryRun              types.Bool   `tfsdk:"dry_run"`
+	ClaudeHomeDirectory types.String `tfsdk:"claude_home_directory"`
 }
 
 func (p *TofukitProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -43,6 +45,14 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Path where to write generated context files",
 				Optional:            true,
 			},
+			"dry_run": schema.BoolAttribute{
+				MarkdownDescription: "When true, only generate context files. When false, execute Claude Code with the generated context.",
+				Optional:            true,
+			},
+			"claude_home_directory": schema.StringAttribute{
+				MarkdownDescription: "Claude home directory for authentication and configuration (default: ~/.claude)",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -59,6 +69,8 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Default values
 	outputFormat := "json"
 	outputPath := ".tofukit"
+	dryRun := true // Default to dry run to maintain current behavior
+	claudeHomeDir := "~/.claude" // Default Claude home directory
 
 	if !data.OutputFormat.IsNull() {
 		outputFormat = data.OutputFormat.ValueString()
@@ -68,11 +80,21 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		outputPath = data.OutputPath.ValueString()
 	}
 
+	if !data.DryRun.IsNull() {
+		dryRun = data.DryRun.ValueBool()
+	}
+
+	if !data.ClaudeHomeDirectory.IsNull() {
+		claudeHomeDir = data.ClaudeHomeDirectory.ValueString()
+	}
+
 	// Create provider data that will be passed to resources
 	providerData := &ProviderData{
-		OutputFormat: outputFormat,
-		OutputPath:   outputPath,
-		Registry:     registry.New(),
+		OutputFormat:        outputFormat,
+		OutputPath:          outputPath,
+		DryRun:              dryRun,
+		ClaudeHomeDirectory: claudeHomeDir,
+		Registry:            registry.New(),
 	}
 
 	resp.DataSourceData = providerData
@@ -110,9 +132,11 @@ func New(version string) func() provider.Provider {
 
 // ProviderData contains data that is passed to all resources
 type ProviderData struct {
-	OutputFormat string
-	OutputPath   string
-	Registry     *registry.Registry
+	OutputFormat        string
+	OutputPath          string
+	DryRun              bool
+	ClaudeHomeDirectory string
+	Registry            *registry.Registry
 }
 
 // GetOutputPath returns the output path
@@ -128,4 +152,14 @@ func (p *ProviderData) GetOutputFormat() string {
 // GetRegistry returns the registry
 func (p *ProviderData) GetRegistry() *registry.Registry {
 	return p.Registry
+}
+
+// GetDryRun returns the dry run setting
+func (p *ProviderData) GetDryRun() bool {
+	return p.DryRun
+}
+
+// GetClaudeHomeDirectory returns the Claude home directory
+func (p *ProviderData) GetClaudeHomeDirectory() string {
+	return p.ClaudeHomeDirectory
 }
