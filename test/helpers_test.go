@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,7 +51,12 @@ func verifyFileContent(t *testing.T, path string, expectedContent string) {
 		return
 	}
 
-	if string(content) != expectedContent {
+	// Normalize content by trimming trailing whitespace for comparison
+	// This handles inconsistencies in trailing newlines
+	actualContent := strings.TrimRight(string(content), "\n\r\t ")
+	expectedNormalized := strings.TrimRight(expectedContent, "\n\r\t ")
+
+	if actualContent != expectedNormalized {
 		t.Errorf("Content mismatch in %s\nExpected: %q\nActual: %q",
 			path, expectedContent, string(content))
 	} else {

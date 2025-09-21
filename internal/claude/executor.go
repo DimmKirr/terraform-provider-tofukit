@@ -69,8 +69,14 @@ func (e *Executor) Execute(ctx context.Context, projectSpec map[string]interface
 		}
 	}
 
-	// Determine project path
-	projectPath := e.client.GetProjectPath(projectSpec, outputDir)
+	// Determine project path - use project name from spec or default
+	projectName := "project"
+	if project, ok := projectSpec["project"].(map[string]interface{}); ok {
+		if name, ok := project["name"].(string); ok {
+			projectName = name
+		}
+	}
+	projectPath := filepath.Join(outputDir, projectName)
 	status.ProjectPath = projectPath
 
 	// Ensure output directory exists

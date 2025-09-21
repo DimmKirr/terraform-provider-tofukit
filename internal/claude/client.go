@@ -141,7 +141,7 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	}
 
 	// Set up options for Claude execution
-	fmt.Printf("🔧 DEBUG: Setting up Claude SDK options\n")
+	fmt.Printf("🔧 DEBUG: Setting up Claude CLI execution\n")
 	fmt.Printf("🔧 DEBUG: Working directory: %s\n", outputPath)
 
 	// Change to the output directory before executing
@@ -177,119 +177,77 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	systemPrompt := c.buildSystemPrompt()
 	fmt.Printf("🔧 DEBUG: System prompt length: %d chars\n", len(systemPrompt))
 
-	// Don't use WithCwd as it causes SDK to return nil messages (SDK bug)
-	opts := []claudecode.Option{
-		claudecode.WithSystemPrompt(systemPrompt),
-		claudecode.WithMaxTurns(5),
-		claudecode.WithPermissionMode(claudecode.PermissionModeBypassPermissions),
-	}
+	// Build the full prompt with system prompt
+	fullPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, prompt)
 
-	fmt.Printf("🔧 DEBUG: Claude SDK Options:\n")
-	fmt.Printf("🔧 DEBUG:   - SystemPrompt: %d chars\n", len(systemPrompt))
-	fmt.Printf("🔧 DEBUG:   - MaxTurns: 5\n")
-	fmt.Printf("🔧 DEBUG:   - PermissionMode: bypassPermissions\n")
-	fmt.Printf("🔧 DEBUG:   - Working dir (via os.Chdir): %s\n", outputPath)
+	fmt.Printf("🔧 DEBUG: Claude CLI Execution:\n")
+	fmt.Printf("🔧 DEBUG:   - Working dir: %s\n", outputPath)
+	fmt.Printf("🔧 DEBUG:   - Full prompt length: %d chars\n", len(fullPrompt))
 	if deadline, ok := ctx.Deadline(); ok {
 		fmt.Printf("🔧 DEBUG:   - Context deadline: %v\n", deadline)
 	} else {
 		fmt.Printf("🔧 DEBUG:   - Context has no deadline\n")
 	}
 	fmt.Printf("🔧 DEBUG: Prompt preview (first 100 chars): %s\n", prompt[:min(len(prompt), 100)])
-	fmt.Printf("🔧 DEBUG: Calling claudecode.Query()...\n")
 
-	// Execute the query - Query returns MessageIterator and error
-	messages, err := claudecode.Query(ctx, prompt, opts...)
+	// Execute Claude CLI command
+	fmt.Printf("🔧 DEBUG: Executing claude command...\n")
+
+	// Use claude CLI with the prompt passed via stdin
+	cmd := exec.CommandContext(ctx, "claude", "--no-color")
+	cmd.Stdin = strings.NewReader(fullPrompt)
+	cmd.Dir = outputPath
+
+	// Set up environment with Claude home directory if needed
+	if c.claudeHomeDir != "" && c.claudeHomeDir != "~/.claude" {
+		cmd.Env = append(os.Environ(), fmt.Sprintf("CLAUDE_HOME=%s", c.claudeHomeDir))
+	}
+
+	// Execute command and capture output
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("🔧 DEBUG: claudecode.Query() failed immediately: %v\n", err)
+		fmt.Printf("🔧 DEBUG: claude command failed: %v\n", err)
+		fmt.Printf("🔧 DEBUG: Command output: %s\n", string(output))
 		tflog.Error(ctx, "Claude Code execution failed", map[string]interface{}{
-			"error": err.Error(),
+			"error":  err.Error(),
+			"output": string(output),
 		})
 		return &ExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("Claude Code execution failed: %v", err),
+			Error:   fmt.Sprintf("Claude Code execution failed: %v\nOutput: %s", err, string(output)),
 		}, err
 	}
 
-	fmt.Printf("🔧 DEBUG: claudecode.Query() returned MessageIterator\n")
+	fmt.Printf("🔧 DEBUG: Claude execution completed successfully\n")
+	fmt.Printf("🔧 DEBUG: Output length: %d chars\n", len(output))
+	fmt.Printf("🔧 DEBUG: Output preview (first 500 chars): %s\n", string(output)[:min(len(output), 500)])
 
-	// Collect all messages
-	var output strings.Builder
-	defer messages.Close()
-
-	fmt.Printf("🔧 DEBUG: Starting message iteration...\n")
-	messageCount := 0
-
-	for {
-		fmt.Printf("🔧 DEBUG: Calling messages.Next() (iteration %d)...\n", messageCount+1)
-		msg, err := messages.Next(ctx)
-		if err != nil {
-			fmt.Printf("🔧 DEBUG: messages.Next() returned error: %v\n", err)
-			// Check if this is end of iteration or actual error
-			if err != nil && strings.Contains(err.Error(), "no more messages") {
-				fmt.Printf("🔧 DEBUG: End of message stream detected (normal termination)\n")
-				break
-			}
-			fmt.Printf("🔧 DEBUG: Unexpected error during iteration: %v\n", err)
-			tflog.Error(ctx, "Error during message iteration", map[string]interface{}{
-				"error": err.Error(),
-			})
-			return &ExecutionResult{
-				Success: false,
-				Error:   fmt.Sprintf("Message iteration failed: %v", err),
-			}, err
-		}
-
-		// Check if message is nil - this also indicates end of stream
-		if msg == nil {
-			fmt.Printf("🔧 DEBUG: Received nil message - end of stream\n")
-			break
-		}
-
-		messageCount++
-		fmt.Printf("🔧 DEBUG: Received message %d\n", messageCount)
-		fmt.Printf("🔧 DEBUG: Message type: %T\n", msg)
-
-		// Handle different message types - for now just log what we get
-		// The SDK may return different types than expected
-		switch msg.(type) {
-		default:
-			fmt.Printf("🔧 DEBUG: Unknown message type: %T\n", msg)
-			// Try to marshal as JSON for debugging
-			if msgBytes, err := json.Marshal(msg); err == nil {
-				msgStr := string(msgBytes)
-				fmt.Printf("🔧 DEBUG: Message JSON: %s\n", msgStr[:min(len(msgStr), 500)])
-				output.WriteString(msgStr)
-				output.WriteString("\n")
-			}
-		}
-	}
-
-	fmt.Printf("🔧 DEBUG: Message iteration complete. Total messages: %d\n", messageCount)
-
-	// Process the response
-	execResult := &ExecutionResult{
-		Success:     true,
-		Output:      output.String(),
-		ProjectPath: outputPath,
-	}
-
-	tflog.Info(ctx, "Claude Code execution completed successfully", map[string]interface{}{
-		"output_length": len(execResult.Output),
+	tflog.Info(ctx, "Claude Code execution completed", map[string]interface{}{
+		"project_path":   outputPath,
+		"output_length":  len(output),
+		"execution_time": fmt.Sprintf("%v", time.Since(time.Now())),
 	})
 
-	return execResult, nil
+	return &ExecutionResult{
+		Success:     true,
+		Output:      string(output),
+		ProjectPath: outputPath,
+	}, nil
 }
 
-// buildPrompt constructs a prompt for Claude Code based on the project specification
+// buildPrompt creates the prompt to send to Claude Code
 func (c *Client) buildPrompt(projectSpec map[string]interface{}) (string, error) {
-	// Convert the project specification to JSON for better readability
+	// Convert spec to JSON for a comprehensive, structured prompt
 	specJSON, err := json.MarshalIndent(projectSpec, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal project specification: %w", err)
+		return "", fmt.Errorf("failed to marshal project spec: %w", err)
 	}
 
-	// Extract project information
-	var projectName, projectDesc, projectVersion string
+	// Extract key information for prompt context
+	projectName := "Project"
+	projectDesc := "A Terraform-generated project"
+	projectVersion := "1.0.0"
+
 	if project, ok := projectSpec["project"].(map[string]interface{}); ok {
 		if name, ok := project["name"].(string); ok {
 			projectName = name
@@ -398,36 +356,13 @@ func (c *Client) ValidateClaudeCodeAvailability(ctx context.Context) error {
 
 	fmt.Printf("🔍 DEBUG: Claude home directory: %s\n", expandedHome)
 
-	credPath := filepath.Join(expandedHome, ".credentials.json")
-	if credInfo, err := os.Stat(credPath); err == nil {
-		fmt.Printf("🔍 DEBUG: Credentials found at %s (size: %d bytes)\n", credPath, credInfo.Size())
-	} else if os.IsNotExist(err) {
-		fmt.Printf("🔍 DEBUG: Credentials NOT found at %s\n", credPath)
-		return fmt.Errorf("claude credentials not found at %s. Please run 'claude login' to authenticate", credPath)
+	// Check if home directory exists
+	if _, err := os.Stat(expandedHome); os.IsNotExist(err) {
+		fmt.Printf("🔍 DEBUG: Claude home directory doesn't exist: %s\n", expandedHome)
+		// This is not an error - the directory might be created during first run
+	} else {
+		fmt.Printf("🔍 DEBUG: Claude home directory exists: %s\n", expandedHome)
 	}
 
-	// Check if Claude SDK package is available
-	if _, err := exec.LookPath("node"); err == nil {
-		nodeCmd := exec.CommandContext(ctx, "node", "-e", "try { require('@anthropic-ai/claude-code'); console.log('SDK found'); } catch(e) { console.log('SDK not found'); }")
-		if output, err := nodeCmd.CombinedOutput(); err == nil {
-			fmt.Printf("🔍 DEBUG: Node.js Claude SDK check: %s", string(output))
-		}
-	}
-
-	tflog.Info(ctx, "Claude Code CLI validation successful")
-	fmt.Printf("✅ DEBUG: Claude validation complete\n\n")
 	return nil
-}
-
-// GetProjectPath returns the expected project path based on the specification
-func (c *Client) GetProjectPath(projectSpec map[string]interface{}, basePath string) string {
-	// Extract project name from specification
-	if project, ok := projectSpec["project"].(map[string]interface{}); ok {
-		if name, ok := project["name"].(string); ok {
-			return filepath.Join(basePath, name)
-		}
-	}
-
-	// Fallback to a generic project directory
-	return filepath.Join(basePath, "generated-project")
 }

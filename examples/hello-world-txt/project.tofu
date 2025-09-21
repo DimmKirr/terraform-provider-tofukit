@@ -18,11 +18,11 @@ hello world2
 EOF
   }
 
-  scaffold {
-    path = "hello3.txt"
-    content = <<-EOF
-hello world2
-EOF
-  }
+#   scaffold {
+#     path = "hello3.txt"
+#     content = <<-EOF
+# hello world3
+# EOF
+#   }
 
 }
