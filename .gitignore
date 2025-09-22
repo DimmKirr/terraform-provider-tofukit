@@ -8,3 +8,7 @@ terraform.tfstate*
 test-output
 vendor/
 *.log
+
+node_modules
+package-lock.json
+package.json

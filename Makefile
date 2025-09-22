@@ -3,8 +3,11 @@
 # Variables
 PROVIDER_NAME := terraform-provider-tofukit
 VERSION := 0.1.0
+
+# Use native Go environment settings for platform detection
 GOOS := $(shell go env GOOS)
 GOARCH := $(shell go env GOARCH)
+
 BINARY_NAME := $(PROVIDER_NAME)_v$(VERSION)
 BIN_DIR := bin
 
@@ -15,10 +18,10 @@ all: build
 # Build the provider binary into bin/ directory
 .PHONY: build
 build:
-	@echo "Building $(PROVIDER_NAME) to $(BIN_DIR)/..."
+	@echo "Building $(PROVIDER_NAME) for $(GOOS)/$(GOARCH) to $(BIN_DIR)/..."
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/$(BINARY_NAME) .
-	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)"
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME) .
+	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME) ($(GOOS)/$(GOARCH))"
 
 # Install the provider locally for testing with tofu
 .PHONY: install
@@ -26,8 +29,67 @@ install: build
 	@echo "Installing provider for local testing..."
 	@mkdir -p ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/$(GOOS)_$(GOARCH)
 	@cp $(BIN_DIR)/$(BINARY_NAME) ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/$(GOOS)_$(GOARCH)/$(BINARY_NAME)
-	@echo "Provider installed to ~/.terraform.d/plugins/"
+	@echo "Provider installed to ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/$(GOOS)_$(GOARCH)/"
 	@echo "Use provider source: registry.terraform.io/DimmKirr/tofukit"
+
+# Build and install for macOS (darwin/arm64)
+.PHONY: install-darwin
+install-darwin:
+	@echo "Building and installing for macOS (darwin/arm64)..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME)_darwin_arm64 .
+	@mkdir -p ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_arm64
+	@cp $(BIN_DIR)/$(BINARY_NAME)_darwin_arm64 ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_arm64/$(BINARY_NAME)
+	@echo "✅ Provider installed for macOS: ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_arm64/"
+
+# Build and install for Linux (linux/arm64)
+.PHONY: install-linux
+install-linux:
+	@echo "Building and installing for Linux (linux/arm64)..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME)_linux_arm64 .
+	@mkdir -p ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_arm64
+	@cp $(BIN_DIR)/$(BINARY_NAME)_linux_arm64 ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_arm64/$(BINARY_NAME)
+	@echo "✅ Provider installed for Linux: ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_arm64/"
+
+# Build and install for Linux (linux/amd64)
+.PHONY: install-linux-amd64
+install-linux-amd64:
+	@echo "Building and installing for Linux (linux/amd64)..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME)_linux_amd64 .
+	@mkdir -p ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_amd64
+	@cp $(BIN_DIR)/$(BINARY_NAME)_linux_amd64 ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_amd64/$(BINARY_NAME)
+	@echo "✅ Provider installed for Linux: ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/linux_amd64/"
+
+# Build and install for macOS (darwin/amd64)
+.PHONY: install-darwin-amd64
+install-darwin-amd64:
+	@echo "Building and installing for macOS (darwin/amd64)..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME)_darwin_amd64 .
+	@mkdir -p ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_amd64
+	@cp $(BIN_DIR)/$(BINARY_NAME)_darwin_amd64 ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_amd64/$(BINARY_NAME)
+	@echo "✅ Provider installed for macOS: ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/darwin_amd64/"
+
+# Build and install for all common platforms
+.PHONY: install-all
+install-all: install-darwin install-darwin-amd64 install-linux install-linux-amd64
+	@echo "✅ Provider installed for all platforms"
+	@echo "Available platforms:"
+	@ls -la ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/$(VERSION)/
+
+# Show installed providers
+.PHONY: show-installed
+show-installed:
+	@echo "📦 Installed TofuKit providers:"
+	@if [ -d ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit ]; then \
+		find ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit -name "$(PROVIDER_NAME)*" -type f | while read f; do \
+			echo "  - $$f"; \
+		done; \
+	else \
+		echo "  No providers installed yet"; \
+	fi
 
 # Test targets
 .PHONY: test test-unit test-integration test-acceptance test-manual test-coverage test-benchmark
@@ -42,6 +104,11 @@ test-unit-short: ## Run unit tests quickly (no coverage)
 	@echo "🧪 Running unit tests (short)..."
 	go test ./internal/... -short
 	@echo "✅ Unit tests completed"
+
+test-clean: ## Run tests with automatic cleanup
+	@echo "🧪 Running tests with automatic cleanup..."
+	CLEANUP_TEST_OUTPUT=true go test ./test/... -v -timeout 10m
+	@echo "✅ Tests completed with cleanup"
 
 test-integration: ## Run integration tests (requires Claude CLI)
 	@echo "🔗 Running integration tests..."
@@ -121,8 +188,29 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BIN_DIR)
 	@rm -f coverage.out coverage.html
-	@rm -rf test-output/
 	@echo "Clean complete"
+
+# Clean test output directories
+.PHONY: clean-test-output
+clean-test-output:
+	@echo "Cleaning test output directories..."
+	@if [ -d test-output ]; then \
+		count=$$(ls -1 test-output 2>/dev/null | wc -l); \
+		if [ "$$count" -gt 0 ]; then \
+			echo "  Removing $$count test output directories..."; \
+			rm -rf test-output/*; \
+		else \
+			echo "  No test output directories to clean"; \
+		fi; \
+	else \
+		echo "  No test-output directory found"; \
+	fi
+	@echo "Test output cleaned"
+
+# Clean everything including test output
+.PHONY: clean-all
+clean-all: clean clean-test-output
+	@echo "All artifacts cleaned"
 
 # Format Go code
 .PHONY: fmt
@@ -197,20 +285,27 @@ help:
 	@echo "=================================================="
 	@echo ""
 	@echo "Build Commands:"
-	@echo "  build          - Build the provider binary to bin/ directory"
-	@echo "  install        - Build and install the provider for local testing"
-	@echo "  dev            - Build with debug symbols"
-	@echo "  quick          - Clean, build, and install"
+	@echo "  build                - Build the provider binary to bin/ directory"
+	@echo "  install              - Build and install for current platform ($(GOOS)/$(GOARCH))"
+	@echo "  install-darwin       - Build and install for macOS (darwin/arm64)"
+	@echo "  install-darwin-amd64 - Build and install for macOS (darwin/amd64)"
+	@echo "  install-linux        - Build and install for Linux (linux/arm64)"
+	@echo "  install-linux-amd64  - Build and install for Linux (linux/amd64)"
+	@echo "  install-all          - Build and install for all supported platforms"
+	@echo "  show-installed       - Show all installed provider versions"
+	@echo "  dev                  - Build with debug symbols"
+	@echo "  quick                - Clean, build, and install"
 	@echo ""
 	@echo "Test Commands:"
-	@echo "  test           - Run unit tests (default)"
-	@echo "  test-unit      - Run unit tests with coverage"
-	@echo "  test-integration - Run integration tests (requires Claude CLI)"
-	@echo "  test-acceptance  - Run Terraform acceptance tests"
-	@echo "  test-all       - Run all test types"
-	@echo "  test-coverage  - Generate coverage report"
-	@echo "  test-coverage-html - Generate HTML coverage report"
-	@echo "  test-benchmark - Run benchmark tests"
+	@echo "  test                 - Run unit tests (default)"
+	@echo "  test-unit            - Run unit tests with coverage"
+	@echo "  test-clean           - Run tests with automatic cleanup"
+	@echo "  test-integration     - Run integration tests (requires Claude CLI)"
+	@echo "  test-acceptance      - Run Terraform acceptance tests"
+	@echo "  test-all             - Run all test types"
+	@echo "  test-coverage        - Generate coverage report"
+	@echo "  test-coverage-html   - Generate HTML coverage report"
+	@echo "  test-benchmark       - Run benchmark tests"
 	@echo ""
 	@echo "Manual Test Commands:"
 	@echo "  test-manual-quick    - Quick hello.txt test"
@@ -219,11 +314,13 @@ help:
 	@echo "  test-manual-validate - Validate Claude CLI setup"
 	@echo "  test-manual-custom   - Custom test (set CUSTOM_NAME and CUSTOM_INSTRUCTIONS)"
 	@echo ""
-	@echo "Code Quality:"
-	@echo "  fmt            - Format Go code"
-	@echo "  lint           - Run linter"
-	@echo "  docs           - Generate documentation"
-	@echo "  clean          - Remove build artifacts"
+	@echo "Code Quality & Cleanup:"
+	@echo "  fmt                  - Format Go code"
+	@echo "  lint                 - Run linter"
+	@echo "  docs                 - Generate documentation"
+	@echo "  clean                - Remove build artifacts"
+	@echo "  clean-test-output    - Remove test output directories"
+	@echo "  clean-all            - Remove all artifacts and test outputs"
 	@echo ""
 	@echo "Setup & CI:"
 	@echo "  claude-setup   - Claude CLI setup instructions"

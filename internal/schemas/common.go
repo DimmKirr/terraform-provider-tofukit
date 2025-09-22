@@ -26,7 +26,7 @@ type ScaffoldModel struct {
 	Path         types.String       `tfsdk:"path"`
 	Content      types.String       `tfsdk:"content"`
 	Generate     types.Bool         `tfsdk:"generate"`
-	Template     types.String       `tfsdk:"template"`
+	Instructions []types.String     `tfsdk:"instructions"`
 	Verification *VerificationModel `tfsdk:"verification"`
 }
 
@@ -56,7 +56,7 @@ func GetRequirementBlock() schema.ListNestedBlock {
 					Attributes: map[string]schema.Attribute{
 						"command": schema.StringAttribute{
 							MarkdownDescription: "Command to run for verification",
-							Required:            true,
+							Optional:            true,
 						},
 						"expect": schema.StringAttribute{
 							MarkdownDescription: "Expected output or pattern",
@@ -84,12 +84,13 @@ func GetScaffoldBlock() schema.ListNestedBlock {
 					Optional:            true,
 				},
 				"generate": schema.BoolAttribute{
-					MarkdownDescription: "Whether to generate from template",
+					MarkdownDescription: "Whether to generate content based on instructions",
 					Optional:            true,
 				},
-				"template": schema.StringAttribute{
-					MarkdownDescription: "Template name to use for generation",
+				"instructions": schema.ListAttribute{
+					MarkdownDescription: "Instructions for generating the file content (used with generate=true)",
 					Optional:            true,
+					ElementType:         types.StringType,
 				},
 			},
 			Blocks: map[string]schema.Block{
@@ -98,7 +99,7 @@ func GetScaffoldBlock() schema.ListNestedBlock {
 					Attributes: map[string]schema.Attribute{
 						"command": schema.StringAttribute{
 							MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
-							Required:            true,
+							Optional:            true,
 						},
 						"expect": schema.StringAttribute{
 							MarkdownDescription: "Expected output or pattern",

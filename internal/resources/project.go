@@ -239,6 +239,15 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 			projectPath := data.ProjectPath.ValueString()
 			scaffoldManager := scaffolds.NewManager(projectPath)
 			for _, scaffold := range mergedScaffolds {
+				// In dry-run mode, only write scaffolds that have content
+				// Skip scaffolds with generate=true and no content (they need Claude)
+				if !scaffold.Generate.IsNull() && scaffold.Generate.ValueBool() &&
+					(scaffold.Content.IsNull() || scaffold.Content.ValueString() == "") {
+					tflog.Info(ctx, "Skipping scaffold in dry-run (needs generation)", map[string]interface{}{
+						"path": scaffold.Path.ValueString(),
+					})
+					continue
+				}
 				if err := scaffoldManager.WriteScaffold(ctx, scaffold); err != nil {
 					tflog.Warn(ctx, "Failed to write scaffold preview", map[string]interface{}{
 						"path":  scaffold.Path.ValueString(),
@@ -782,8 +791,12 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 			scaffoldData["generate"] = scaffold.Generate.ValueBool()
 		}
 
-		if !scaffold.Template.IsNull() && !scaffold.Template.IsUnknown() {
-			scaffoldData["template"] = scaffold.Template.ValueString()
+		if scaffold.Instructions != nil && len(scaffold.Instructions) > 0 {
+			instructions := make([]string, len(scaffold.Instructions))
+			for i, inst := range scaffold.Instructions {
+				instructions[i] = inst.ValueString()
+			}
+			scaffoldData["instructions"] = instructions
 		}
 
 		// Add verification if present
@@ -1150,10 +1163,10 @@ func (r *ProjectResourceFinal) computeScaffoldHash(scaffolds []schemas.ScaffoldM
 
 	// Create a deterministic representation of scaffolds
 	type scaffoldEntry struct {
-		Path     string `json:"path"`
-		Content  string `json:"content"`
-		Generate bool   `json:"generate,omitempty"`
-		Template string `json:"template,omitempty"`
+		Path         string   `json:"path"`
+		Content      string   `json:"content"`
+		Generate     bool     `json:"generate,omitempty"`
+		Instructions []string `json:"instructions,omitempty"`
 	}
 
 	var entries []scaffoldEntry
@@ -1167,8 +1180,12 @@ func (r *ProjectResourceFinal) computeScaffoldHash(scaffolds []schemas.ScaffoldM
 		if !scaffold.Generate.IsNull() && !scaffold.Generate.IsUnknown() {
 			entry.Generate = scaffold.Generate.ValueBool()
 		}
-		if !scaffold.Template.IsNull() && !scaffold.Template.IsUnknown() {
-			entry.Template = scaffold.Template.ValueString()
+		if scaffold.Instructions != nil && len(scaffold.Instructions) > 0 {
+			instructions := make([]string, len(scaffold.Instructions))
+			for i, inst := range scaffold.Instructions {
+				instructions[i] = inst.ValueString()
+			}
+			entry.Instructions = instructions
 		}
 
 		entries = append(entries, entry)

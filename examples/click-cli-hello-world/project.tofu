@@ -8,7 +8,6 @@ resource "tofukit_project" "click_cli" {
   name        = local.project_name
   description = "Deterministic Python CLI application using Click framework - TEST"
   version     = local.project_version
-  stack_ref   = tofukit_stack.click_app.id
 
   # Aggregate all kits with proper references
   kits = {
@@ -112,6 +111,19 @@ resource "tofukit_stack" "click_app" {
     verification {
       command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
       expect  = "${tofukit_framework.click.version}"
+    }
+  }
+
+  scaffold {
+    path = "README.md"
+    generate = true
+    instructions = [
+      "Create readme file typical for this project. Must contain project name",
+      "It should contain sections: ## Quickstart, ## Installation, ## Usage, ## Contributing, ## License"
+    ]
+    verification {
+      command = "cat README.md"
+      expect  = "${local.project_name}"
     }
   }
 }
