@@ -6,3 +6,5 @@ terraform.tfstate*
 # Output dir ignored  for now
 .tofukit/
 test-output
+vendor/
+*.log

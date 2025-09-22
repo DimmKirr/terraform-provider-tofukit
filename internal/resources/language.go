@@ -28,12 +28,11 @@ type LanguageResource struct {
 
 // LanguageResourceModel describes the resource data model
 type LanguageResourceModel struct {
-	ID            types.String               `tfsdk:"id"`
-	Name          types.String               `tfsdk:"name"`
-	Description   types.String               `tfsdk:"description"`
-	Version       types.String               `tfsdk:"version"`
-	DependsOnRefs []types.String             `tfsdk:"depends_on_refs"`
-	Requirements  []schemas.RequirementModel `tfsdk:"requirement"`
+	ID           types.String               `tfsdk:"id"`
+	Name         types.String               `tfsdk:"name"`
+	Description  types.String               `tfsdk:"description"`
+	Version      types.String               `tfsdk:"version"`
+	Requirements []schemas.RequirementModel `tfsdk:"requirement"`
 }
 
 func (r *LanguageResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {

@@ -13,12 +13,11 @@ import (
 
 // ComponentResourceModel is the common model for all component types
 type ComponentResourceModel struct {
-	ID            types.String               `tfsdk:"id"`
-	Name          types.String               `tfsdk:"name"`
-	Description   types.String               `tfsdk:"description"`
-	Version       types.String               `tfsdk:"version"`
-	DependsOnRefs []types.String             `tfsdk:"depends_on_refs"`
-	Requirements  []schemas.RequirementModel `tfsdk:"requirement"`
+	ID           types.String               `tfsdk:"id"`
+	Name         types.String               `tfsdk:"name"`
+	Description  types.String               `tfsdk:"description"`
+	Version      types.String               `tfsdk:"version"`
+	Requirements []schemas.RequirementModel `tfsdk:"requirement"`
 }
 
 // Generic component resource that can be used for all component types

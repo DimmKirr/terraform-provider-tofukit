@@ -2,7 +2,6 @@ package schemas
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -24,10 +23,11 @@ type VerificationModel struct {
 
 // ScaffoldModel represents a scaffold entry
 type ScaffoldModel struct {
-	Path     types.String `tfsdk:"path"`
-	Content  types.String `tfsdk:"content"`
-	Generate types.Bool   `tfsdk:"generate"`
-	Template types.String `tfsdk:"template"`
+	Path         types.String       `tfsdk:"path"`
+	Content      types.String       `tfsdk:"content"`
+	Generate     types.Bool         `tfsdk:"generate"`
+	Template     types.String       `tfsdk:"template"`
+	Verification *VerificationModel `tfsdk:"verification"`
 }
 
 // GetRequirementBlock returns the schema for requirement blocks
@@ -92,6 +92,21 @@ func GetScaffoldBlock() schema.ListNestedBlock {
 					Optional:            true,
 				},
 			},
+			Blocks: map[string]schema.Block{
+				"verification": schema.SingleNestedBlock{
+					MarkdownDescription: "Verification for this scaffold file",
+					Attributes: map[string]schema.Attribute{
+						"command": schema.StringAttribute{
+							MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
+							Required:            true,
+						},
+						"expect": schema.StringAttribute{
+							MarkdownDescription: "Expected output or pattern",
+							Optional:            true,
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -120,14 +135,6 @@ func GetBaseComponentAttributes() map[string]schema.Attribute {
 		"version": schema.StringAttribute{
 			MarkdownDescription: "Version of the component",
 			Required:            true,
-		},
-		"depends_on_refs": schema.ListAttribute{
-			MarkdownDescription: "String references to dependencies (e.g., '@language.python')",
-			Optional:            true,
-			ElementType:         types.StringType,
-			PlanModifiers: []planmodifier.List{
-				listplanmodifier.UseStateForUnknown(),
-			},
 		},
 	}
 }

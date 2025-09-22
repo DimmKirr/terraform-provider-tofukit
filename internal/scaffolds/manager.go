@@ -158,3 +158,60 @@ func hasPrefix(path, prefix string) bool {
 
 	return len(path) >= len(prefix) && path[:len(prefix)] == prefix
 }
+
+// VerifyScaffolds checks that all scaffold files exist with correct content
+func (m *Manager) VerifyScaffolds(ctx context.Context, scaffolds []schemas.ScaffoldModel) error {
+	var missingFiles []string
+	var wrongContent []string
+
+	for _, scaffold := range scaffolds {
+		path := scaffold.Path.ValueString()
+		if path == "" {
+			continue
+		}
+
+		fullPath := filepath.Join(m.BaseDir, path)
+
+		// Check if file exists
+		fileContent, err := os.ReadFile(fullPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				missingFiles = append(missingFiles, path)
+				tflog.Warn(ctx, "Scaffold file missing", map[string]interface{}{
+					"path": fullPath,
+				})
+			} else {
+				return fmt.Errorf("error reading scaffold %s: %w", path, err)
+			}
+			continue
+		}
+
+		// Check content matches
+		expectedContent := scaffold.Content.ValueString()
+		if string(fileContent) != expectedContent {
+			wrongContent = append(wrongContent, path)
+			tflog.Warn(ctx, "Scaffold content mismatch", map[string]interface{}{
+				"path": fullPath,
+				"expected_length": len(expectedContent),
+				"actual_length": len(fileContent),
+			})
+		}
+	}
+
+	// Report all issues
+	if len(missingFiles) > 0 || len(wrongContent) > 0 {
+		errMsg := "Scaffold verification failed:"
+		if len(missingFiles) > 0 {
+			errMsg += fmt.Sprintf("\n  Missing files: %v", missingFiles)
+		}
+		if len(wrongContent) > 0 {
+			errMsg += fmt.Sprintf("\n  Wrong content: %v", wrongContent)
+		}
+		return fmt.Errorf(errMsg)
+	}
+
+	tflog.Info(ctx, "All scaffolds verified successfully", map[string]interface{}{
+		"scaffold_count": len(scaffolds),
+	})
+	return nil
+}

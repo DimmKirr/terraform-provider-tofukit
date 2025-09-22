@@ -2,3 +2,4 @@
 output "project" {
   value = tofukit_project.click_cli
 }
+

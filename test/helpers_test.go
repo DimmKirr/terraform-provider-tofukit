@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,4 +84,126 @@ func verifyFileDoesNotExist(t *testing.T, path string) {
 	} else if !os.IsNotExist(err) {
 		t.Errorf("Error checking file %s: %v", path, err)
 	}
+}
+
+// setupIsolatedClaudeHome creates an isolated Claude home directory for testing
+// It copies the necessary configuration files from the user's Claude home
+func setupIsolatedClaudeHome(t *testing.T, testDir string) string {
+	// Create isolated Claude home directory
+	isolatedClaudeHome := filepath.Join(testDir, ".test-claude-home")
+	if err := os.MkdirAll(isolatedClaudeHome, 0755); err != nil {
+		t.Fatalf("Failed to create isolated Claude home: %v", err)
+	}
+
+	// Get user's Claude home directory
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("Failed to get user home directory: %v", err)
+	}
+	userClaudeHome := filepath.Join(userHome, ".claude")
+
+	// Copy .claude.json if it exists
+	userClaudeJSON := filepath.Join(userHome, ".claude.json")
+	if _, err := os.Stat(userClaudeJSON); err == nil {
+		testClaudeJSON := filepath.Join(testDir, ".claude.json")
+		if err := copyFile(userClaudeJSON, testClaudeJSON); err != nil {
+			t.Logf("Warning: Failed to copy .claude.json: %v", err)
+		} else {
+			t.Logf("Copied .claude.json to test directory")
+		}
+	}
+
+	// Copy essential Claude config directories and files
+	essentialPaths := []string{
+		".credentials.json",
+		"settings.json",
+	}
+
+	for _, path := range essentialPaths {
+		src := filepath.Join(userClaudeHome, path)
+		dst := filepath.Join(isolatedClaudeHome, path)
+
+		if info, err := os.Stat(src); err == nil {
+			if info.IsDir() {
+				if err := copyDir(src, dst); err != nil {
+					t.Logf("Warning: Failed to copy directory %s: %v", path, err)
+				} else {
+					t.Logf("Copied directory %s to test Claude home", path)
+				}
+			} else {
+				if err := copyFile(src, dst); err != nil {
+					t.Logf("Warning: Failed to copy file %s: %v", path, err)
+				} else {
+					t.Logf("Copied file %s to test Claude home", path)
+				}
+			}
+		}
+	}
+
+	t.Logf("Set up isolated Claude home at: %s", isolatedClaudeHome)
+	return isolatedClaudeHome
+}
+
+// copyFile copies a single file from src to dst
+func copyFile(src, dst string) error {
+	// Ensure destination directory exists
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+
+	// Preserve file permissions
+	if info, err := os.Stat(src); err == nil {
+		os.Chmod(dst, info.Mode())
+	}
+
+	_, err = io.Copy(destination, source)
+	return err
+}
+
+// copyDir recursively copies a directory
+func copyDir(src, dst string) error {
+	// Get properties of source dir
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	// Create destination directory
+	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

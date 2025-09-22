@@ -27,6 +27,7 @@ type TofukitProviderModel struct {
 	OutputPath          types.String `tfsdk:"output_path"`
 	DryRun              types.Bool   `tfsdk:"dry_run"`
 	ClaudeHomeDirectory types.String `tfsdk:"claude_home_directory"`
+	Debug               types.Bool   `tfsdk:"debug"`
 }
 
 func (p *TofukitProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -53,6 +54,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Claude home directory for authentication and configuration (default: ~/.claude)",
 				Optional:            true,
 			},
+			"debug": schema.BoolAttribute{
+				MarkdownDescription: "Enable debug mode to output Claude debug information (claude-metadata.json and claude-prompt.jsonl)",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -69,8 +74,9 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Default values
 	outputFormat := "json"
 	outputPath := ".tofukit"
-	dryRun := true // Default to dry run to maintain current behavior
+	dryRun := false              // Default to dry run to maintain current behavior
 	claudeHomeDir := "~/.claude" // Default Claude home directory
+	debug := false
 
 	if !data.OutputFormat.IsNull() {
 		outputFormat = data.OutputFormat.ValueString()
@@ -88,12 +94,17 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		claudeHomeDir = data.ClaudeHomeDirectory.ValueString()
 	}
 
+	if !data.Debug.IsNull() {
+		debug = data.Debug.ValueBool()
+	}
+
 	// Create provider data that will be passed to resources
 	providerData := &ProviderData{
 		OutputFormat:        outputFormat,
 		OutputPath:          outputPath,
 		DryRun:              dryRun,
 		ClaudeHomeDirectory: claudeHomeDir,
+		Debug:               debug,
 		Registry:            registry.New(),
 	}
 
@@ -136,6 +147,7 @@ type ProviderData struct {
 	OutputPath          string
 	DryRun              bool
 	ClaudeHomeDirectory string
+	Debug               bool
 	Registry            *registry.Registry
 }
 
@@ -162,4 +174,9 @@ func (p *ProviderData) GetDryRun() bool {
 // GetClaudeHomeDirectory returns the Claude home directory
 func (p *ProviderData) GetClaudeHomeDirectory() string {
 	return p.ClaudeHomeDirectory
+}
+
+// GetDebug returns the debug setting
+func (p *ProviderData) GetDebug() bool {
+	return p.Debug
 }

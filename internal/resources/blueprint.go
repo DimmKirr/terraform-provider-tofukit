@@ -21,11 +21,10 @@ type BlueprintResource struct {
 }
 
 type BlueprintResourceModel struct {
-	ID            types.String   `tfsdk:"id"`
-	Name          types.String   `tfsdk:"name"`
-	Description   types.String   `tfsdk:"description"`
-	Version       types.String   `tfsdk:"version"`
-	DependsOnRefs []types.String `tfsdk:"depends_on_refs"`
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Description types.String `tfsdk:"description"`
+	Version     types.String `tfsdk:"version"`
 }
 
 func (r *BlueprintResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -52,11 +51,6 @@ func (r *BlueprintResource) Schema(ctx context.Context, req resource.SchemaReque
 			"version": schema.StringAttribute{
 				MarkdownDescription: "Version of the blueprint",
 				Required:            true,
-			},
-			"depends_on_refs": schema.ListAttribute{
-				MarkdownDescription: "String references to dependencies",
-				Optional:            true,
-				ElementType:         types.StringType,
 			},
 		},
 	}

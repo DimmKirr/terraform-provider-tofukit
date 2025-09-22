@@ -3,21 +3,21 @@ package resources
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/scaffolds"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
 var _ resource.Resource = &StackResource{}
 
 func NewStackResource() resource.Resource {
-	return &StackResource{}
+	return &StackResource{
+		BaseComponent: BaseComponent{Kind: "stack"},
+	}
 }
 
 type StackResource struct {
@@ -25,16 +25,21 @@ type StackResource struct {
 }
 
 type StackResourceModel struct {
-	ID            types.String            `tfsdk:"id"`
-	Name          types.String            `tfsdk:"name"`
-	Description   types.String            `tfsdk:"description"`
-	DependsOnRefs []types.String          `tfsdk:"depends_on_refs"`
-	Scaffolds     []schemas.ScaffoldModel `tfsdk:"scaffold"`
-	OutputPath    types.String            `tfsdk:"output_path"` // Track where scaffolds are created
+	ID          types.String            `tfsdk:"id"`
+	Name        types.String            `tfsdk:"name"`
+	Description types.String            `tfsdk:"description"`
+	Kits        types.Map               `tfsdk:"kits"`     // Kits that compose this stack
+	Scaffolds   []schemas.ScaffoldModel `tfsdk:"scaffold"` // Stack's own scaffolds
+	// Removed OutputPath - stacks now contribute scaffolds to project, not separate directories
 }
 
 func (r *StackResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_stack"
+}
+
+// Configure adds the provider configured data to the resource
+func (r *StackResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	r.BaseComponent.Configure(ctx, req, resp)
 }
 
 func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -54,14 +59,34 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Description of the stack",
 				Optional:            true,
 			},
-			"depends_on_refs": schema.ListAttribute{
-				MarkdownDescription: "String references to dependencies",
+			"kits": schema.MapAttribute{
+				MarkdownDescription: "Map of kits that compose this stack",
 				Optional:            true,
-				ElementType:         types.StringType,
-			},
-			"output_path": schema.StringAttribute{
-				MarkdownDescription: "Path where scaffold files are created",
-				Computed:            true,
+				ElementType: types.ObjectType{
+					AttrTypes: map[string]attr.Type{
+						"id":          types.StringType,
+						"type":        types.StringType,
+						"name":        types.StringType,
+						"description": types.StringType,
+						"version":     types.StringType,
+						"requirements": types.ListType{
+							ElemType: types.ObjectType{
+								AttrTypes: map[string]attr.Type{
+									"name": types.StringType,
+									"instructions": types.ListType{
+										ElemType: types.StringType,
+									},
+									"verification": types.ObjectType{
+										AttrTypes: map[string]attr.Type{
+											"command": types.StringType,
+											"expect":  types.StringType,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
 			},
 		},
 
@@ -81,42 +106,26 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	data.ID = types.StringValue(fmt.Sprintf("stack.%s", data.Name.ValueString()))
 
-	// Get provider configuration for output path
-	outputPath := ".tofukit"
-	isDryRun := true
-	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
-		GetOutputPath() string
-	}); ok {
-		outputPath = provData.GetOutputPath()
-		isDryRun = provData.GetDryRun()
-	}
+	// Stacks no longer create files directly - they only contribute scaffolds to the project
+	// The project resource will handle merging and writing all scaffolds with proper precedence
 
-	// Store the output path for later use
-	stackDir := filepath.Join(outputPath, "stacks", data.Name.ValueString())
-	data.OutputPath = types.StringValue(stackDir)
+	// Debug: Log scaffolds in Create
+	for i, scaffold := range data.Scaffolds {
+		logData := map[string]interface{}{
+			"stack_id":         data.ID.ValueString(),
+			"index":            i,
+			"path":             scaffold.Path.ValueString(),
+			"has_verification": scaffold.Verification != nil,
+		}
 
-	// Create scaffolds if not in dry-run mode
-	if !isDryRun && len(data.Scaffolds) > 0 {
-		// Ensure stack directory exists
-		if err := os.MkdirAll(stackDir, 0755); err != nil {
-			tflog.Error(ctx, "Failed to create stack directory", map[string]interface{}{
-				"stack_id": data.ID.ValueString(),
-				"path": stackDir,
-				"error": err.Error(),
-			})
-		} else {
-			scaffoldMgr := scaffolds.NewManager(stackDir)
-			for _, scaffold := range data.Scaffolds {
-				if err := scaffoldMgr.WriteScaffold(ctx, scaffold); err != nil {
-					tflog.Error(ctx, "Failed to create scaffold", map[string]interface{}{
-						"stack_id": data.ID.ValueString(),
-						"scaffold_path": scaffold.Path.ValueString(),
-						"error": err.Error(),
-					})
-				}
+		if scaffold.Verification != nil {
+			logData["verification_command"] = scaffold.Verification.Command.ValueString()
+			if !scaffold.Verification.Expect.IsNull() {
+				logData["verification_expect"] = scaffold.Verification.Expect.ValueString()
 			}
 		}
+
+		tflog.Info(ctx, "Stack scaffold in Create", logData)
 	}
 
 	tflog.Trace(ctx, fmt.Sprintf("created stack resource: %s", data.ID.ValueString()))
@@ -131,6 +140,36 @@ func (r *StackResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Save to registry so it's available for other resources
+	// This is important when resources already exist in state
+	tflog.Info(ctx, "Stack Read: Saving to registry", map[string]interface{}{
+		"stack_id":       data.ID.ValueString(),
+		"scaffold_count": len(data.Scaffolds),
+	})
+
+	// Debug: Print scaffolds with verification details
+	for i, scaffold := range data.Scaffolds {
+		logData := map[string]interface{}{
+			"stack_id":         data.ID.ValueString(),
+			"index":            i,
+			"path":             scaffold.Path.ValueString(),
+			"content_length":   len(scaffold.Content.ValueString()),
+			"has_verification": scaffold.Verification != nil,
+		}
+
+		if scaffold.Verification != nil {
+			logData["verification_command"] = scaffold.Verification.Command.ValueString()
+			if !scaffold.Verification.Expect.IsNull() {
+				logData["verification_expect"] = scaffold.Verification.Expect.ValueString()
+			}
+		}
+
+		tflog.Info(ctx, "Stack scaffold in Read", logData)
+	}
+
+	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -148,30 +187,11 @@ func (r *StackResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	// Get provider configuration
-	isDryRun := true
-	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
-	}); ok {
-		isDryRun = provData.GetDryRun()
-	}
+	// Preserve computed fields from state
+	data.ID = state.ID
 
-	// Preserve output path from state
-	data.OutputPath = state.OutputPath
-
-	// Handle scaffold changes if not in dry-run mode
-	if !isDryRun && !state.OutputPath.IsNull() && state.OutputPath.ValueString() != "" {
-		stackDir := state.OutputPath.ValueString()
-		scaffoldMgr := scaffolds.NewManager(stackDir)
-
-		// Process scaffold changes (removes deleted scaffolds, creates new ones)
-		if err := scaffoldMgr.ProcessScaffoldChanges(ctx, state.Scaffolds, data.Scaffolds); err != nil {
-			tflog.Error(ctx, "Failed to process scaffold changes", map[string]interface{}{
-				"stack_id": data.ID.ValueString(),
-				"error": err.Error(),
-			})
-		}
-	}
+	// Stacks no longer manage files directly - just save updated scaffold configuration
+	// The project resource will handle merging and applying changes
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -184,37 +204,8 @@ func (r *StackResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	// Get provider configuration
-	isDryRun := true
-	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
-	}); ok {
-		isDryRun = provData.GetDryRun()
-	}
-
-	// Clean up scaffold files if not in dry-run mode
-	if !isDryRun && !data.OutputPath.IsNull() && data.OutputPath.ValueString() != "" {
-		stackDir := data.OutputPath.ValueString()
-		scaffoldMgr := scaffolds.NewManager(stackDir)
-
-		// Remove all scaffold files
-		scaffoldMgr.RemoveAllScaffolds(ctx, data.Scaffolds)
-
-		// Try to remove the stack directory if it's empty
-		if err := os.Remove(stackDir); err != nil {
-			if !os.IsNotExist(err) {
-				tflog.Debug(ctx, "Stack directory not empty or already removed", map[string]interface{}{
-					"stack_id": data.ID.ValueString(),
-					"path": stackDir,
-				})
-			}
-		} else {
-			tflog.Info(ctx, "Removed stack directory", map[string]interface{}{
-				"stack_id": data.ID.ValueString(),
-				"path": stackDir,
-			})
-		}
-	}
+	// Stacks no longer manage files directly - just remove from registry
+	// The project resource will handle cleaning up files when it's deleted
 
 	r.RemoveFromRegistry(ctx, data.ID.ValueString())
 }
