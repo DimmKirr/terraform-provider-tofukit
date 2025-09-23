@@ -15,13 +15,13 @@ type ProjectPrompt struct {
 
 // PromptRequest contains the actual project implementation request
 type PromptRequest struct {
-	Type            string                 `json:"type"`
-	ProjectInfo     ProjectInfo            `json:"project_info"`
-	Specification   map[string]interface{} `json:"specification"`
-	Instructions    []string               `json:"instructions"`
-	ScaffoldDetails *ScaffoldInstructions  `json:"scaffold_details,omitempty"`
-	Guidelines      []string               `json:"guidelines"`
-	Deliverables    []string               `json:"deliverables"`
+	Type          string                 `json:"type"`
+	ProjectInfo   ProjectInfo            `json:"project_info"`
+	Specification map[string]interface{} `json:"specification"`
+	Instructions  []string               `json:"instructions"`
+	FileDetails   *FileInstructions      `json:"file_details,omitempty"`
+	Guidelines    []string               `json:"guidelines"`
+	Deliverables  []string               `json:"deliverables"`
 }
 
 // ProjectInfo contains basic project metadata
@@ -31,8 +31,8 @@ type ProjectInfo struct {
 	Version     string `json:"version"`
 }
 
-// ScaffoldInstructions provides details about scaffold files
-type ScaffoldInstructions struct {
+// FileInstructions provides details about file files
+type FileInstructions struct {
 	Description string   `json:"description"`
 	Rules       []string `json:"rules"`
 }
@@ -67,11 +67,11 @@ The following JSON contains the full project specification:
 
 {{range $i, $instruction := .Request.Instructions}}{{add $i 1}}. {{$instruction}}
 {{end}}
-{{if .Request.ScaffoldDetails}}## Scaffold Files
+{{if .Request.FileDetails}}## File Files
 
-{{.Request.ScaffoldDetails.Description}}
+{{.Request.FileDetails.Description}}
 
-{{range .Request.ScaffoldDetails.Rules}}- {{.}}
+{{range .Request.FileDetails.Rules}}- {{.}}
 {{end}}
 {{end}}## Key Guidelines
 
@@ -147,7 +147,7 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			ProjectInfo:   projectInfo,
 			Specification: projectSpec,
 			Instructions: []string{
-				"**Managing scaffold files**: If the specification includes \"scaffolds\", create these files exactly as specified with their exact paths and content. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
+				"**Managing file files**: If the specification includes \"files\", create these files exactly as specified with their exact paths and content. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
 				"**Analyzing the specification**: Understand all the requirements, kits, and dependencies specified in the JSON",
 				"**Creating the project structure**: Set up appropriate directories and files based on the project type and requirements",
 				"**Implementing all requirements**: Follow each requirement listed in the \"requirements\" section with proper priority ordering",
@@ -155,17 +155,17 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 				"**Following verification steps**: Ensure each requirement can be verified as specified",
 				"**Creating comprehensive documentation**: Include README, setup instructions, and usage examples",
 			},
-			ScaffoldDetails: &ScaffoldInstructions{
-				Description: "IMPORTANT: If the specification contains a \"scaffolds\" array, you MUST manage these files exactly as specified:",
+			FileDetails: &FileInstructions{
+				Description: "IMPORTANT: If the specification contains a \"files\" array, you MUST manage these files exactly as specified:",
 				Rules: []string{
-					"Create each file at the exact path specified in the scaffolds array",
+					"Create each file at the exact path specified in the files array",
 					"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
 					"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
 					"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",
 					"IMPORTANT: For generated content, ensure it satisfies ALL instructions AND the verification requirements",
 					"IMPORTANT: Generated files should be production-ready and follow best practices for the file type",
 					"IMPORTANT: If content ends with \\n, the file MUST have a newline at the end. Use echo or printf appropriately",
-					"Remove any existing scaffold files that are NOT in the current specification",
+					"Remove any existing file files that are NOT in the current specification",
 					"When removing the last file from a directory, also remove the empty directory",
 					"These are template/example files that should be created/updated/removed as specified",
 					"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
@@ -173,7 +173,7 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			},
 			Guidelines: []string{
 				"Follow the exact specifications provided in the JSON",
-				"Create scaffold files exactly as specified without modification",
+				"Create file files exactly as specified without modification",
 				"Create parent directories as needed for nested file paths (e.g., mkdir -p for 'dir/subdir/file.txt')",
 				"Clean up empty directories when removing the last file from them (e.g., rmdir or rm -d)",
 				"Implement all requirements in priority order (higher numbers first)",
@@ -184,7 +184,7 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 				"Set up development and build toolchains as specified in the kits",
 			},
 			Deliverables: []string{
-				"All scaffold files created exactly as specified",
+				"All file files created exactly as specified",
 				"Complete, working project implementation",
 				"All files and directories properly structured",
 				"Documentation explaining setup and usage",

@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/datasources"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/resources"
 )
@@ -25,7 +26,6 @@ type TofukitProvider struct {
 type TofukitProviderModel struct {
 	OutputFormat        types.String `tfsdk:"output_format"`
 	OutputPath          types.String `tfsdk:"output_path"`
-	DryRun              types.Bool   `tfsdk:"dry_run"`
 	ClaudeHomeDirectory types.String `tfsdk:"claude_home_directory"`
 	Debug               types.Bool   `tfsdk:"debug"`
 }
@@ -44,10 +44,6 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 			},
 			"output_path": schema.StringAttribute{
 				MarkdownDescription: "Path where to write generated context files",
-				Optional:            true,
-			},
-			"dry_run": schema.BoolAttribute{
-				MarkdownDescription: "When true, only generate context files. When false, execute Claude Code with the generated context.",
 				Optional:            true,
 			},
 			"claude_home_directory": schema.StringAttribute{
@@ -74,7 +70,6 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Default values
 	outputFormat := "json"
 	outputPath := ".tofukit"
-	dryRun := false              // Default to dry run to maintain current behavior
 	claudeHomeDir := "~/.claude" // Default Claude home directory
 	debug := false
 
@@ -84,10 +79,6 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if !data.OutputPath.IsNull() {
 		outputPath = data.OutputPath.ValueString()
-	}
-
-	if !data.DryRun.IsNull() {
-		dryRun = data.DryRun.ValueBool()
 	}
 
 	if !data.ClaudeHomeDirectory.IsNull() {
@@ -102,7 +93,6 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	providerData := &ProviderData{
 		OutputFormat:        outputFormat,
 		OutputPath:          outputPath,
-		DryRun:              dryRun,
 		ClaudeHomeDirectory: claudeHomeDir,
 		Debug:               debug,
 		Registry:            registry.New(),
@@ -129,7 +119,7 @@ func (p *TofukitProvider) Resources(ctx context.Context) []func() resource.Resou
 
 func (p *TofukitProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		// We'll add data sources later if needed
+		datasources.NewQueryDataSource,
 	}
 }
 
@@ -145,10 +135,19 @@ func New(version string) func() provider.Provider {
 type ProviderData struct {
 	OutputFormat        string
 	OutputPath          string
-	DryRun              bool
 	ClaudeHomeDirectory string
 	Debug               bool
 	Registry            *registry.Registry
+}
+
+// GetClaudeHomeDirectory returns the Claude home directory
+func (p *ProviderData) GetClaudeHomeDirectory() string {
+	return p.ClaudeHomeDirectory
+}
+
+// IsDebug returns whether debug mode is enabled
+func (p *ProviderData) IsDebug() bool {
+	return p.Debug
 }
 
 // GetOutputPath returns the output path
@@ -166,17 +165,7 @@ func (p *ProviderData) GetRegistry() *registry.Registry {
 	return p.Registry
 }
 
-// GetDryRun returns the dry run setting
-func (p *ProviderData) GetDryRun() bool {
-	return p.DryRun
-}
-
-// GetClaudeHomeDirectory returns the Claude home directory
-func (p *ProviderData) GetClaudeHomeDirectory() string {
-	return p.ClaudeHomeDirectory
-}
-
-// GetDebug returns the debug setting
+// GetDebug returns the debug setting (for backward compatibility)
 func (p *ProviderData) GetDebug() bool {
 	return p.Debug
 }

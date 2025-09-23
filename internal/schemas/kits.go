@@ -68,7 +68,7 @@ func RequirementModelType() map[string]attr.Type {
 	return map[string]attr.Type{
 		"name":         types.StringType,
 		"instructions": types.ListType{ElemType: types.StringType},
-		"verification": types.ObjectType{AttrTypes: VerificationModelType()},
+		"verification": types.ListType{ElemType: types.ObjectType{AttrTypes: VerificationModelType()}},
 	}
 }
 
@@ -91,14 +91,19 @@ func (r RequirementModel) ToObjectValue() (types.Object, error) {
 
 	// Convert verification if present
 	var verificationValue attr.Value
-	if r.Verification != nil {
-		verObj, err := r.Verification.ToObjectValue()
-		if err != nil {
-			return types.ObjectNull(RequirementModelType()), err
+	if len(r.Verification) > 0 {
+		verValues := []attr.Value{}
+		for _, v := range r.Verification {
+			verObj, err := v.ToObjectValue()
+			if err != nil {
+				return types.ObjectNull(RequirementModelType()), err
+			}
+			verValues = append(verValues, verObj)
 		}
-		verificationValue = verObj
+		verList, _ := types.ListValue(types.ObjectType{AttrTypes: VerificationModelType()}, verValues)
+		verificationValue = verList
 	} else {
-		verificationValue = types.ObjectNull(VerificationModelType())
+		verificationValue = types.ListNull(types.ObjectType{AttrTypes: VerificationModelType()})
 	}
 
 	objVal, objDiag := types.ObjectValue(

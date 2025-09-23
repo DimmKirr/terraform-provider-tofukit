@@ -50,7 +50,7 @@ terraform {
 provider "tofukit" {
   output_format         = "json"
   output_path           = "output"  # Output will be in {test_directory}/output/
-  dry_run               = true       # Use dry run to avoid Claude execution in tests
+  # Claude execution is now required for all tests
   debug                 = true       # Enable debug mode for detailed output
   # claude_home_directory not needed with --dangerously-skip-permissions
 }
@@ -64,22 +64,22 @@ provider "tofukit" {
   description = "A simple hello world project"
   version     = "1.0.0"
 
-  # Single file scaffold - no dependencies needed
-  scaffold {
+  # Single file file - no dependencies needed
+  file {
     path = "hello.txt"
     content = <<-EOF
 hello world
 EOF
   }
 
-  scaffold {
+  file {
     path = "hello2.txt"
     content = <<-EOF
 hello world2
 EOF
   }
 
-  scaffold {
+  file {
     path = "hello3.txt"
     content = <<-EOF
 hello world2
@@ -146,7 +146,7 @@ EOF
 
 	// Step 7: Run apply
 	t.Log("Running tofu apply --auto-approve...")
-	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color")
+	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
 	applyCmd.Dir = testDir
 	applyOutput, err := applyCmd.CombinedOutput()
 	require.NoError(t, err, "Failed to run apply: %s", applyOutput)
@@ -154,7 +154,7 @@ EOF
 
 	// Helper function to run apply
 	runApply := func(t *testing.T) {
-		applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color")
+		applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
 		applyCmd.Dir = testDir
 		applyOutput, err := applyCmd.CombinedOutput()
 		require.NoError(t, err, "Failed to run apply: %s", applyOutput)
@@ -165,7 +165,7 @@ EOF
 
 	// === SUBTEST 1: Initial Creation ===
 	t.Run("InitialCreation", func(t *testing.T) {
-		t.Log("Testing initial scaffold creation...")
+		t.Log("Testing initial file creation...")
 
 		// Apply initial configuration
 		runApply(t)
@@ -183,12 +183,12 @@ EOF
 		assert.FileExists(t, hello3Path, "hello3.txt should exist")
 		verifyFileContent(t, hello3Path, "hello world2")
 
-		t.Log("✓ Initial scaffold creation successful")
+		t.Log("✓ Initial file creation successful")
 	})
 
-	// === SUBTEST 2: Scaffold Removal ===
-	t.Run("ScaffoldRemoval", func(t *testing.T) {
-		t.Log("Testing scaffold removal...")
+	// === SUBTEST 2: File Removal ===
+	t.Run("FileRemoval", func(t *testing.T) {
+		t.Log("Testing file removal...")
 
 		// Update project.tofu to remove hello3.txt
 		updatedProjectContent := `resource "tofukit_project" "hello_world" {
@@ -196,14 +196,14 @@ EOF
   description = "A simple hello world project"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path = "hello.txt"
     content = <<-EOF
 hello world updated
 EOF
   }
 
-  scaffold {
+  file {
     path = "hello2.txt"
     content = <<-EOF
 hello world2
@@ -219,7 +219,7 @@ EOF
 		// Apply the changes
 		runApply(t)
 
-		// Note: Claude doesn't automatically remove files that are no longer in the scaffold list
+		// Note: Claude doesn't automatically remove files that are no longer in the file list
 		// This is expected behavior - Claude is additive and doesn't delete existing files
 		// unless explicitly instructed. We skip this check for now.
 		// hello3Path := filepath.Join(projectPath, "hello3.txt")
@@ -233,33 +233,33 @@ EOF
 		hello2Path := filepath.Join(projectPath, "hello2.txt")
 		assert.FileExists(t, hello2Path, "hello2.txt should still exist")
 
-		t.Log("✓ Scaffold removal and update successful")
+		t.Log("✓ File removal and update successful")
 	})
 
-	// === SUBTEST 3: Scaffold Addition ===
-	t.Run("ScaffoldAddition", func(t *testing.T) {
-		t.Log("Testing scaffold addition in subdirectory...")
+	// === SUBTEST 3: File Addition ===
+	t.Run("FileAddition", func(t *testing.T) {
+		t.Log("Testing file addition in subdirectory...")
 
 		finalProjectContent := `resource "tofukit_project" "hello_world" {
   name        = "hello-world"
   description = "A simple hello world project"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path = "hello.txt"
     content = <<-EOF
 hello world updated
 EOF
   }
 
-  scaffold {
+  file {
     path = "hello2.txt"
     content = <<-EOF
 hello world2
 EOF
   }
 
-  scaffold {
+  file {
     path = "newdir/hello4.txt"
     content = <<-EOF
 hello world4 new file
@@ -278,10 +278,99 @@ EOF
 		assert.FileExists(t, hello4Path, "hello4.txt should be created")
 		verifyFileContent(t, hello4Path, "hello world4 new file")
 
-		t.Log("✓ Scaffold addition in subdirectory successful")
+		t.Log("✓ File addition in subdirectory successful")
 	})
 
-	// === SUBTEST 4: Debug Files Verification ===
+	// === SUBTEST 4: File Reordering ===
+	t.Run("FileReordering", func(t *testing.T) {
+		t.Log("Testing file addition in middle of list (reordering)...")
+
+		// Start with two files
+		initialReorderContent := `resource "tofukit_project" "hello_world" {
+  name        = "hello-world"
+  description = "A simple hello world project"
+  version     = "1.0.0"
+
+  file {
+    path = "first.txt"
+    content = <<-EOF
+first file content
+EOF
+  }
+
+  file {
+    path = "last.txt"
+    content = <<-EOF
+last file content
+EOF
+  }
+}
+`
+		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(initialReorderContent), 0644)
+		require.NoError(t, err, "Failed to write initial reorder configuration")
+
+		// Apply to create initial files
+		runApply(t)
+
+		// Verify initial files exist
+		firstPath := filepath.Join(projectPath, "first.txt")
+		lastPath := filepath.Join(projectPath, "last.txt")
+		assert.FileExists(t, firstPath, "first.txt should exist")
+		assert.FileExists(t, lastPath, "last.txt should exist")
+		verifyFileContent(t, firstPath, "first file content")
+		verifyFileContent(t, lastPath, "last file content")
+
+		// Now insert a file in the middle
+		reorderedContent := `resource "tofukit_project" "hello_world" {
+  name        = "hello-world"
+  description = "A simple hello world project"
+  version     = "1.0.0"
+
+  file {
+    path = "first.txt"
+    content = <<-EOF
+first file content
+EOF
+  }
+
+  file {
+    path = "middle.txt"
+    content = <<-EOF
+middle file content
+EOF
+  }
+
+  file {
+    path = "last.txt"
+    content = <<-EOF
+last file content
+EOF
+  }
+}
+`
+		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(reorderedContent), 0644)
+		require.NoError(t, err, "Failed to write reordered configuration")
+
+		// Apply the changes
+		runApply(t)
+
+		// Verify all three files exist with correct content
+		middlePath := filepath.Join(projectPath, "middle.txt")
+
+		// Check all files exist
+		assert.FileExists(t, firstPath, "first.txt should still exist after reordering")
+		assert.FileExists(t, middlePath, "middle.txt should be created")
+		assert.FileExists(t, lastPath, "last.txt should still exist after reordering")
+
+		// Verify content is correct
+		verifyFileContent(t, firstPath, "first file content")
+		verifyFileContent(t, middlePath, "middle file content")
+		verifyFileContent(t, lastPath, "last file content")
+
+		t.Log("✓ File reordering handled correctly - all files exist with correct content")
+	})
+
+	// === SUBTEST 5: Debug Files Verification ===
 	t.Run("DebugFilesVerification", func(t *testing.T) {
 		t.Log("Verifying debug files...")
 
@@ -294,14 +383,14 @@ EOF
 			spec, err := os.ReadFile(debugSpecFiles[0])
 			require.NoError(t, err)
 			assert.Contains(t, string(spec), "hello-world")
-			assert.Contains(t, string(spec), "scaffolds")
+			assert.Contains(t, string(spec), "files")
 			t.Log("  This file contains the project specification that would be sent to Claude")
 		} else {
 			t.Logf("⚠️ Debug specification file not found (pattern: %s)", debugSpecPattern)
 		}
 
 		// Note about Claude execution mode
-		t.Log("ℹ️  Note: With dry_run=true, Claude execution is skipped for testing")
+		t.Log("ℹ️  Note: Claude execution is always performed for tests")
 		t.Log("  (including Claude thoughts, command history, and execution logs)")
 
 		// Check for JSONL file with timestamp pattern
@@ -316,7 +405,7 @@ EOF
 			}
 		} else {
 			t.Logf("⚠️  Claude execution log not found (pattern: %s)", jsonlPattern)
-			t.Log("  This file contains Claude's prompts and responses when dry_run=false")
+			t.Log("  This file contains Claude's prompts and responses")
 		}
 
 		// Check for markdown prompt files
@@ -343,13 +432,13 @@ EOF
 	t.Log("✅ All tests completed successfully!")
 }
 
-// TestProjectRecursiveScaffold tests nested directory scaffold creation and updates
-func TestProjectRecursiveScaffold(t *testing.T) {
+// TestProjectRecursiveFile tests nested directory file creation and updates
+func TestProjectRecursiveFile(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 
 	// Create test directory
-	testDir := createTestDirectory(t, "TestProjectRecursiveScaffold")
+	testDir := createTestDirectory(t, "TestProjectRecursiveFile")
 
 	// Build and install provider
 	t.Log("Building and installing provider...")
@@ -371,7 +460,7 @@ func TestProjectRecursiveScaffold(t *testing.T) {
 		t.Fatalf("Failed to change to test directory: %v", err)
 	}
 
-	// Create initial configuration with a single nested scaffold
+	// Create initial configuration with a single nested file
 	initialConfig := `
 terraform {
   required_providers {
@@ -383,17 +472,16 @@ terraform {
 }
 
 provider "tofukit" {
-  dry_run = false
   output_path = "output"
   debug = true
 }
 
 resource "tofukit_project" "recursive_test" {
-  name        = "recursive-scaffold"
-  description = "Test recursive/nested scaffold handling"
+  name        = "recursive-file"
+  description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path    = "demo/hello.txt"
     content = "hello from demo\n"
   }
@@ -406,8 +494,8 @@ resource "tofukit_project" "recursive_test" {
 	}
 
 	// Initialize and apply
-	t.Run("InitialNestedScaffold", func(t *testing.T) {
-		t.Log("Creating initial nested scaffold...")
+	t.Run("InitialNestedFile", func(t *testing.T) {
+		t.Log("Creating initial nested file...")
 
 		// Initialize Terraform/OpenTofu
 		initCmd := exec.Command("tofu", "init", "-no-color")
@@ -418,7 +506,7 @@ resource "tofukit_project" "recursive_test" {
 		t.Log("✓ Init completed successfully")
 
 		// Apply the configuration
-		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color")
+		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color", "-parallelism=1")
 		applyCmd.Dir = testDir
 		if applyOutput, err := applyCmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to apply initial configuration: %v\nOutput: %s", err, applyOutput)
@@ -426,19 +514,19 @@ resource "tofukit_project" "recursive_test" {
 		t.Log("✓ Initial apply completed successfully")
 
 		// Verify the nested file was created
-		projectPath := filepath.Join(testDir, "output", "recursive-scaffold")
+		projectPath := filepath.Join(testDir, "output", "recursive-file")
 		nestedFilePath := filepath.Join(projectPath, "demo", "hello.txt")
 
 		assert.DirExists(t, filepath.Join(projectPath, "demo"), "demo directory should exist")
 		assert.FileExists(t, nestedFilePath, "demo/hello.txt should exist")
 		verifyFileContent(t, nestedFilePath, "hello from demo")
 
-		t.Log("✓ Initial nested scaffold created successfully")
+		t.Log("✓ Initial nested file created successfully")
 	})
 
-	// Test adding another nested scaffold
-	t.Run("AddNestedScaffold", func(t *testing.T) {
-		t.Log("Adding another nested scaffold...")
+	// Test adding another nested file
+	t.Run("AddNestedFile", func(t *testing.T) {
+		t.Log("Adding another nested file...")
 
 		// Update configuration to add another nested file
 		updatedConfig := `
@@ -452,22 +540,21 @@ terraform {
 }
 
 provider "tofukit" {
-  dry_run = false
   output_path = "output"
   debug = true
 }
 
 resource "tofukit_project" "recursive_test" {
-  name        = "recursive-scaffold"
-  description = "Test recursive/nested scaffold handling"
+  name        = "recursive-file"
+  description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path    = "demo/hello.txt"
     content = "hello from demo\n"
   }
 
-  scaffold {
+  file {
     path    = "demo/hello2.txt"
     content = "hello2 from demo\n"
   }
@@ -480,7 +567,7 @@ resource "tofukit_project" "recursive_test" {
 		}
 
 		// Apply the update
-		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color")
+		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color", "-parallelism=1")
 		applyCmd.Dir = testDir
 		if applyOutput, err := applyCmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to apply updated configuration: %v\nOutput: %s", err, applyOutput)
@@ -488,7 +575,7 @@ resource "tofukit_project" "recursive_test" {
 		t.Log("✓ Update apply completed successfully")
 
 		// Verify both files exist
-		projectPath := filepath.Join(testDir, "output", "recursive-scaffold")
+		projectPath := filepath.Join(testDir, "output", "recursive-file")
 		file1Path := filepath.Join(projectPath, "demo", "hello.txt")
 		file2Path := filepath.Join(projectPath, "demo", "hello2.txt")
 
@@ -497,7 +584,7 @@ resource "tofukit_project" "recursive_test" {
 		verifyFileContent(t, file1Path, "hello from demo")
 		verifyFileContent(t, file2Path, "hello2 from demo")
 
-		t.Log("✓ Additional nested scaffold added successfully")
+		t.Log("✓ Additional nested file added successfully")
 	})
 
 	// Test deeper nesting
@@ -516,27 +603,26 @@ terraform {
 }
 
 provider "tofukit" {
-  dry_run = false
   output_path = "output"
   debug = true
 }
 
 resource "tofukit_project" "recursive_test" {
-  name        = "recursive-scaffold"
-  description = "Test recursive/nested scaffold handling"
+  name        = "recursive-file"
+  description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path    = "demo/hello.txt"
     content = "hello from demo\n"
   }
 
-  scaffold {
+  file {
     path    = "demo/hello2.txt"
     content = "hello2 from demo\n"
   }
 
-  scaffold {
+  file {
     path    = "demo/subdir/deep/hello3.txt"
     content = "hello3 from deep\n"
   }
@@ -549,7 +635,7 @@ resource "tofukit_project" "recursive_test" {
 		}
 
 		// Apply the update
-		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color")
+		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color", "-parallelism=1")
 		applyCmd.Dir = testDir
 		if applyOutput, err := applyCmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to apply deeper nesting configuration: %v\nOutput: %s", err, applyOutput)
@@ -557,7 +643,7 @@ resource "tofukit_project" "recursive_test" {
 		t.Log("✓ Deeper nesting apply completed successfully")
 
 		// Verify all files exist including deeply nested one
-		projectPath := filepath.Join(testDir, "output", "recursive-scaffold")
+		projectPath := filepath.Join(testDir, "output", "recursive-file")
 		file3Path := filepath.Join(projectPath, "demo", "subdir", "deep", "hello3.txt")
 
 		assert.DirExists(t, filepath.Join(projectPath, "demo", "subdir"), "demo/subdir directory should exist")
@@ -565,12 +651,12 @@ resource "tofukit_project" "recursive_test" {
 		assert.FileExists(t, file3Path, "demo/subdir/deep/hello3.txt should exist")
 		verifyFileContent(t, file3Path, "hello3 from deep")
 
-		t.Log("✓ Deeper nested scaffold created successfully")
+		t.Log("✓ Deeper nested file created successfully")
 	})
 
-	// Test removing nested scaffold (should clean up empty directories)
-	t.Run("RemoveNestedScaffold", func(t *testing.T) {
-		t.Log("Testing removal of nested scaffolds and directory cleanup...")
+	// Test removing nested file (should clean up empty directories)
+	t.Run("RemoveNestedFile", func(t *testing.T) {
+		t.Log("Testing removal of nested files and directory cleanup...")
 
 		// Update configuration to remove the deeply nested file
 		removeConfig := `
@@ -584,17 +670,16 @@ terraform {
 }
 
 provider "tofukit" {
-  dry_run = false
   output_path = "output"
   debug = true
 }
 
 resource "tofukit_project" "recursive_test" {
-  name        = "recursive-scaffold"
-  description = "Test recursive/nested scaffold handling"
+  name        = "recursive-file"
+  description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  scaffold {
+  file {
     path    = "demo/hello.txt"
     content = "hello from demo\n"
   }
@@ -607,7 +692,7 @@ resource "tofukit_project" "recursive_test" {
 		}
 
 		// Apply the update
-		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color")
+		applyCmd := exec.Command("tofu", "apply", "-auto-approve", "-no-color", "-parallelism=1")
 		applyCmd.Dir = testDir
 		if applyOutput, err := applyCmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to apply removal configuration: %v\nOutput: %s", err, applyOutput)
@@ -615,7 +700,7 @@ resource "tofukit_project" "recursive_test" {
 		t.Log("✓ Removal apply completed successfully")
 
 		// Verify only the first file remains
-		projectPath := filepath.Join(testDir, "output", "recursive-scaffold")
+		projectPath := filepath.Join(testDir, "output", "recursive-file")
 		file1Path := filepath.Join(projectPath, "demo", "hello.txt")
 		file2Path := filepath.Join(projectPath, "demo", "hello2.txt")
 		file3Path := filepath.Join(projectPath, "demo", "subdir", "deep", "hello3.txt")
@@ -629,8 +714,194 @@ resource "tofukit_project" "recursive_test" {
 		assert.NoDirExists(t, filepath.Join(projectPath, "demo", "subdir"), "Empty subdir directory should be removed")
 		assert.DirExists(t, filepath.Join(projectPath, "demo"), "demo directory should still exist (has hello.txt)")
 
-		t.Log("✓ Nested scaffolds removed and empty directories cleaned up")
+		t.Log("✓ Nested files removed and empty directories cleaned up")
 	})
 
-	t.Log("✅ All recursive scaffold tests completed successfully!")
+	t.Log("✅ All recursive file tests completed successfully!")
+}
+
+// TestProjectVerificationFailure tests that verification failures are properly detected and reported
+func TestProjectVerificationFailure(t *testing.T) {
+	// Set TF_LOG=DEBUG for debug logging
+	os.Setenv("TF_LOG", "DEBUG")
+	defer os.Unsetenv("TF_LOG")
+
+	// Create unique test directory in test-output
+	testDir := createTestDirectory(t, "TestProjectVerificationFailure")
+
+	t.Log("Testing verification failure detection...")
+
+	// Get project root
+	projectRoot, err := filepath.Abs("..")
+	require.NoError(t, err)
+
+	// Step 1: Build and install the provider locally
+	t.Log("Building and installing provider...")
+	buildCmd := exec.Command("make", "install")
+	buildCmd.Dir = projectRoot
+	output, err := buildCmd.CombinedOutput()
+	require.NoError(t, err, "Failed to build provider: %s", output)
+	t.Log("✓ Provider built and installed successfully")
+
+	// Step 2: Generate main.tofu with provider configuration
+	// Claude execution is always performed
+	mainTofuContent := `# Terraform configuration for verification failure test
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+# Provider configuration
+provider "tofukit" {
+  output_format         = "json"
+  output_path           = "output"
+  # Claude execution is always performed for verification
+  debug                 = true       # Enable debug mode for detailed output
+  claude_home_directory = "~/.claude"
+}
+`
+	err = os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
+	require.NoError(t, err, "Failed to write main.tofu")
+
+	// Step 3: Generate stack with verification that will fail
+	stackTofuContent := `resource "tofukit_stack" "test_stack" {
+  name        = "test-verification-stack"
+  description = "Stack with verification that should fail"
+
+  file {
+    path = "hello.txt"
+    content = "hello world"
+
+    # This verification will fail because the file contains "hello world" not "goodbye world"
+    verification {
+      command = "cat hello.txt"
+      expect  = "goodbye world"
+    }
+  }
+}
+`
+	err = os.WriteFile(filepath.Join(testDir, "stack.tofu"), []byte(stackTofuContent), 0644)
+	require.NoError(t, err, "Failed to write stack.tofu")
+
+	// Step 4: Generate project that uses the stack
+	projectTofuContent := `resource "tofukit_project" "verification_test" {
+  name        = "verification-test"
+  description = "Project to test verification failure"
+  version     = "1.0.0"
+
+  depends_on = [tofukit_stack.test_stack]
+}
+`
+	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
+	require.NoError(t, err, "Failed to write project.tofu")
+
+	// Step 5: Check if terraform/tofu is available
+	var iacTool string
+	if _, err := exec.LookPath("tofu"); err == nil {
+		iacTool = "tofu"
+		t.Log("Using OpenTofu")
+	} else if _, err := exec.LookPath("terraform"); err == nil {
+		iacTool = "terraform"
+		t.Log("Using Terraform")
+	} else {
+		t.Skip("Neither terraform nor tofu available - skipping test")
+	}
+
+	// Clean up resources at the end
+	defer func() {
+		if os.Getenv("SKIP_DESTROY") == "true" {
+			t.Log("Skipping cleanup due to SKIP_DESTROY=true")
+			t.Logf("Test directory preserved at: %s", testDir)
+		} else {
+			t.Log("Debug mode enabled - preserving output directory for inspection")
+			t.Logf("Debug files should be in: %s/output/.debug/", testDir)
+		}
+	}()
+
+	// Step 6: Run init to set up the provider
+	t.Log("Running tofu init...")
+	initCmd := exec.Command(iacTool, "init", "-no-color")
+	initCmd.Dir = testDir
+	initOutput, err := initCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Init output: %s", initOutput)
+	}
+	require.NoError(t, err, "Failed to run init")
+	t.Log("✓ Init completed successfully")
+
+	// Step 7: Run plan
+	t.Log("Running tofu plan...")
+	planCmd := exec.Command(iacTool, "plan", "-no-color")
+	planCmd.Dir = testDir
+	planOutput, err := planCmd.CombinedOutput()
+	require.NoError(t, err, "Failed to run plan: %s", planOutput)
+	t.Log("✓ Plan completed successfully")
+
+	// Step 8: Run apply - This should FAIL due to verification failure
+	t.Log("Running tofu apply --auto-approve (expecting verification failure)...")
+	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
+	applyCmd.Dir = testDir
+	applyOutput, err := applyCmd.CombinedOutput()
+
+	// We expect apply to fail due to verification failure
+	if err != nil {
+		t.Log("✓ Apply failed as expected due to verification failure")
+		t.Logf("Apply output: %s", applyOutput)
+
+		// Verify the error message contains information about verification failure
+		outputStr := string(applyOutput)
+		assert.Contains(t, outputStr, "verification", "Error should mention verification")
+		// Could also check for specific verification command or expected value
+
+		// Now test the fix: Update the verification to have correct expectation
+		t.Log("\n=== Testing verification fix ===")
+		t.Log("Updating stack with correct verification...")
+
+		fixedStackContent := `resource "tofukit_stack" "test_stack" {
+  name        = "test-verification-stack"
+  description = "Stack with corrected verification"
+
+  file {
+    path = "hello.txt"
+    content = "hello world"
+
+    # Fixed verification with correct expectation
+    verification {
+      command = "cat hello.txt"
+      expect  = "hello world"
+    }
+  }
+}
+`
+		err = os.WriteFile(filepath.Join(testDir, "stack.tofu"), []byte(fixedStackContent), 0644)
+		require.NoError(t, err, "Failed to update stack.tofu")
+
+		// Try apply again with fixed verification
+		t.Log("Running tofu apply with fixed verification...")
+		applyFixCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
+		applyFixCmd.Dir = testDir
+		applyFixOutput, err := applyFixCmd.CombinedOutput()
+
+		if err != nil {
+			t.Logf("Apply with fix output: %s", applyFixOutput)
+			t.Fatalf("Apply should succeed after fixing verification, but failed: %v", err)
+		}
+
+		t.Log("✓ Apply succeeded after fixing verification")
+
+		// Verify the file was created with correct content
+		helloPath := filepath.Join(testDir, "output", "verification-test", "hello.txt")
+		assert.FileExists(t, helloPath, "hello.txt should exist after successful apply")
+		verifyFileContent(t, helloPath, "hello world")
+
+		t.Log("✅ Verification failure detection test completed successfully!")
+	} else {
+		// If apply succeeded when it should have failed, that's a test failure
+		t.Errorf("Apply succeeded but should have failed due to verification mismatch")
+		t.Logf("Apply output: %s", applyOutput)
+	}
 }

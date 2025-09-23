@@ -25,12 +25,12 @@ type StackResource struct {
 }
 
 type StackResourceModel struct {
-	ID          types.String            `tfsdk:"id"`
-	Name        types.String            `tfsdk:"name"`
-	Description types.String            `tfsdk:"description"`
-	Kits        types.Map               `tfsdk:"kits"`     // Kits that compose this stack
-	Scaffolds   []schemas.ScaffoldModel `tfsdk:"scaffold"` // Stack's own scaffolds
-	// Removed OutputPath - stacks now contribute scaffolds to project, not separate directories
+	ID          types.String         `tfsdk:"id"`
+	Name        types.String         `tfsdk:"name"`
+	Description types.String         `tfsdk:"description"`
+	Kits        types.Map            `tfsdk:"kits"`  // Kits that compose this stack
+	Files       []schemas.FileModel  `tfsdk:"file"`  // Stack's own files
+	// Removed OutputPath - stacks now contribute files to project, not separate directories
 }
 
 func (r *StackResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -76,10 +76,12 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 									"instructions": types.ListType{
 										ElemType: types.StringType,
 									},
-									"verification": types.ObjectType{
-										AttrTypes: map[string]attr.Type{
-											"command": types.StringType,
-											"expect":  types.StringType,
+									"verification": types.ListType{
+										ElemType: types.ObjectType{
+											AttrTypes: map[string]attr.Type{
+												"command": types.StringType,
+												"expect":  types.StringType,
+											},
 										},
 									},
 								},
@@ -91,7 +93,7 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 		},
 
 		Blocks: map[string]schema.Block{
-			"scaffold": schemas.GetScaffoldBlock(),
+			"file": schemas.GetFileBlock(),
 		},
 	}
 }
@@ -106,26 +108,29 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	data.ID = types.StringValue(fmt.Sprintf("stack.%s", data.Name.ValueString()))
 
-	// Stacks no longer create files directly - they only contribute scaffolds to the project
-	// The project resource will handle merging and writing all scaffolds with proper precedence
+	// Stacks no longer create files directly - they only contribute files to the project
+	// The project resource will handle merging and writing all files with proper precedence
 
-	// Debug: Log scaffolds in Create
-	for i, scaffold := range data.Scaffolds {
+	// Debug: Log files in Create
+	for i, file := range data.Files {
 		logData := map[string]interface{}{
-			"stack_id":         data.ID.ValueString(),
-			"index":            i,
-			"path":             scaffold.Path.ValueString(),
-			"has_verification": scaffold.Verification != nil,
+			"stack_id":            data.ID.ValueString(),
+			"index":               i,
+			"path":                file.Path.ValueString(),
+			"has_verifications":    len(file.Verification) > 0,
+			"verification_count":   len(file.Verification),
 		}
 
-		if scaffold.Verification != nil {
-			logData["verification_command"] = scaffold.Verification.Command.ValueString()
-			if !scaffold.Verification.Expect.IsNull() {
-				logData["verification_expect"] = scaffold.Verification.Expect.ValueString()
+		if len(file.Verification) > 0 {
+			for j, v := range file.Verification {
+				logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
+				if !v.Expect.IsNull() {
+					logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
+				}
 			}
 		}
 
-		tflog.Info(ctx, "Stack scaffold in Create", logData)
+		tflog.Info(ctx, "Stack file in Create", logData)
 	}
 
 	tflog.Trace(ctx, fmt.Sprintf("created stack resource: %s", data.ID.ValueString()))
@@ -144,28 +149,31 @@ func (r *StackResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	// Save to registry so it's available for other resources
 	// This is important when resources already exist in state
 	tflog.Info(ctx, "Stack Read: Saving to registry", map[string]interface{}{
-		"stack_id":       data.ID.ValueString(),
-		"scaffold_count": len(data.Scaffolds),
+		"stack_id":    data.ID.ValueString(),
+		"file_count": len(data.Files),
 	})
 
-	// Debug: Print scaffolds with verification details
-	for i, scaffold := range data.Scaffolds {
+	// Debug: Print files with verification details
+	for i, file := range data.Files {
 		logData := map[string]interface{}{
-			"stack_id":         data.ID.ValueString(),
-			"index":            i,
-			"path":             scaffold.Path.ValueString(),
-			"content_length":   len(scaffold.Content.ValueString()),
-			"has_verification": scaffold.Verification != nil,
+			"stack_id":           data.ID.ValueString(),
+			"index":              i,
+			"path":               file.Path.ValueString(),
+			"content_length":     len(file.Content.ValueString()),
+			"has_verifications":  len(file.Verification) > 0,
+			"verification_count": len(file.Verification),
 		}
 
-		if scaffold.Verification != nil {
-			logData["verification_command"] = scaffold.Verification.Command.ValueString()
-			if !scaffold.Verification.Expect.IsNull() {
-				logData["verification_expect"] = scaffold.Verification.Expect.ValueString()
+		if len(file.Verification) > 0 {
+			for j, v := range file.Verification {
+				logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
+				if !v.Expect.IsNull() {
+					logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
+				}
 			}
 		}
 
-		tflog.Info(ctx, "Stack scaffold in Read", logData)
+		tflog.Info(ctx, "Stack file in Read", logData)
 	}
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
@@ -190,7 +198,7 @@ func (r *StackResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// Preserve computed fields from state
 	data.ID = state.ID
 
-	// Stacks no longer manage files directly - just save updated scaffold configuration
+	// Stacks no longer manage files directly - just save updated file configuration
 	// The project resource will handle merging and applying changes
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)

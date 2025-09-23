@@ -52,26 +52,32 @@ func (r *LanguageResource) Schema(ctx context.Context, req resource.SchemaReques
 }
 
 func (r *LanguageResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	fmt.Printf("🔧 DEBUG: LanguageResource.Create called\n")
 	var data LanguageResourceModel
 
 	// Read OpenTofu plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 
 	if resp.Diagnostics.HasError() {
+		fmt.Printf("🔧 DEBUG: LanguageResource.Create failed with diagnostics error\n")
 		return
 	}
 
 	// Generate ID from name
+	fmt.Printf("🔧 DEBUG: LanguageResource.Create - setting ID for: %s\n", data.Name.ValueString())
 	data.ID = types.StringValue(fmt.Sprintf("language.%s", data.Name.ValueString()))
 
 	// Log the creation
 	tflog.Trace(ctx, fmt.Sprintf("created language resource: %s", data.ID.ValueString()))
 
 	// Save to registry
+	fmt.Printf("🔧 DEBUG: LanguageResource.Create - saving to registry: %s\n", data.ID.ValueString())
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 
 	// Save data into OpenTofu state
+	fmt.Printf("🔧 DEBUG: LanguageResource.Create - saving to state\n")
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	fmt.Printf("🔧 DEBUG: LanguageResource.Create completed for: %s\n", data.Name.ValueString())
 }
 
 func (r *LanguageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

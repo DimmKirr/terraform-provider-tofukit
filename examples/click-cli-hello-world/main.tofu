@@ -12,7 +12,6 @@ terraform {
 provider "tofukit" {
   output_format         = "json"
   output_path           = ".tofukit"
-  dry_run               = true   # Use dry_run for testing
   debug                 = true   # Enable debug mode to see project JSON
   claude_home_directory = "~/.claude"
 }

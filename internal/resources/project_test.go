@@ -112,7 +112,6 @@ func TestProjectResourceFinal_ValidateConfig(t *testing.T) {
 
 			// Create a mock provider data
 			r.ProviderData = &mockProviderData{
-				dryRun:        true,
 				claudeHomeDir: "~/.claude",
 				outputPath:    "/tmp/test",
 				outputFormat:  "json",
@@ -263,14 +262,9 @@ func TestProjectResourceFinal_executeClaudeCode(t *testing.T) {
 
 // Mock provider data for testing
 type mockProviderData struct {
-	dryRun        bool
 	claudeHomeDir string
 	outputPath    string
 	outputFormat  string
-}
-
-func (m *mockProviderData) GetDryRun() bool {
-	return m.dryRun
 }
 
 func (m *mockProviderData) GetClaudeHomeDirectory() string {

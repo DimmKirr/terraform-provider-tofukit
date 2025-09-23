@@ -52,9 +52,11 @@ func TestProjectModelFinal() resources.ProjectModelFinal {
 					types.StringValue("Create a file named hello.txt"),
 					types.StringValue("Add content: Hello, World!"),
 				},
-				Verification: &schemas.VerificationModel{
-					Command: types.StringValue("test -f hello.txt"),
-					Expect:  types.StringValue("success"),
+				Verification: []schemas.VerificationModel{
+					{
+						Command: types.StringValue("test -f hello.txt"),
+						Expect:  types.StringValue("success"),
+					},
 				},
 			},
 		},

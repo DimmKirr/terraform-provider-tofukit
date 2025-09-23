@@ -17,7 +17,6 @@ type ManualTestConfig struct {
 	ProjectName   string
 	Instructions  string
 	OutputDir     string
-	DryRun        bool
 	ClaudeHomeDir string
 	Timeout       time.Duration
 }
@@ -28,7 +27,6 @@ func DefaultManualTestConfig() *ManualTestConfig {
 		ProjectName:   "manual-test",
 		Instructions:  "Create a file called hello.txt with the content 'Hello, World!'",
 		OutputDir:     "./test-output",
-		DryRun:        true,
 		ClaudeHomeDir: "~/.claude",
 		Timeout:       5 * time.Minute,
 	}
@@ -38,7 +36,6 @@ func DefaultManualTestConfig() *ManualTestConfig {
 func RunManualTest(config *ManualTestConfig) error {
 	fmt.Printf("🚀 Starting manual test: %s\n", config.ProjectName)
 	fmt.Printf("📁 Output directory: %s\n", config.OutputDir)
-	fmt.Printf("🏃 Dry run: %t\n", config.DryRun)
 
 	// Create output directory
 	if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
@@ -67,7 +64,7 @@ func RunManualTest(config *ManualTestConfig) error {
 	}
 
 	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir, config.DryRun)
+	executor := claude.NewExecutor(config.ClaudeHomeDir)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -99,7 +96,7 @@ func RunManualTest(config *ManualTestConfig) error {
 	}
 
 	// Show generated project files if not dry run
-	if !config.DryRun && status.ProjectPath != "" {
+	if status.ProjectPath != "" {
 		fmt.Printf("\n📁 Generated project files:\n")
 		if err := showDirectoryContents(status.ProjectPath); err != nil {
 			fmt.Printf("⚠️  Failed to show project files: %v\n", err)
@@ -119,11 +116,10 @@ func RunQuickTest() error {
 }
 
 // RunHelloWorldTest runs the classic hello world test
-func RunHelloWorldTest(dryRun bool) error {
+func RunHelloWorldTest() error {
 	config := DefaultManualTestConfig()
 	config.ProjectName = "hello-world-test"
 	config.Instructions = "Create a hello.txt file with 'Hello, World!' and a README.md with project description"
-	config.DryRun = dryRun
 	config.OutputDir = "./test-output/hello-world"
 
 	return RunManualTest(config)
@@ -133,7 +129,6 @@ func RunHelloWorldTest(dryRun bool) error {
 func RunComplexProjectTest() error {
 	config := DefaultManualTestConfig()
 	config.ProjectName = "complex-test"
-	config.DryRun = false
 	config.OutputDir = "./test-output/complex"
 	config.Timeout = 10 * time.Minute
 
@@ -206,7 +201,7 @@ func RunComplexProjectTest() error {
 	}
 
 	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir, config.DryRun)
+	executor := claude.NewExecutor(config.ClaudeHomeDir)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -243,7 +238,7 @@ func RunComplexProjectTest() error {
 func TestClaudeValidation() error {
 	fmt.Printf("🔍 Testing Claude CLI validation...\n")
 
-	executor := claude.NewExecutor("~/.claude", false)
+	executor := claude.NewExecutor("~/.claude")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

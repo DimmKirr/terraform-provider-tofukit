@@ -18,7 +18,6 @@ import (
 // Client needs systemPrompt field
 type Client struct {
 	claudeHomeDir string
-	dryRun        bool
 	systemPrompt  string
 }
 
@@ -31,7 +30,7 @@ func min(a, b int) int {
 }
 
 // NewClient creates a new Claude Code client
-func NewClient(claudeHomeDir string, dryRun bool) *Client {
+func NewClient(claudeHomeDir string) *Client {
 	// Expand home directory
 	if strings.HasPrefix(claudeHomeDir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -40,7 +39,6 @@ func NewClient(claudeHomeDir string, dryRun bool) *Client {
 
 	return &Client{
 		claudeHomeDir: claudeHomeDir,
-		dryRun:        dryRun,
 	}
 }
 
@@ -73,7 +71,6 @@ type ExecutionResult struct {
 func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]interface{}, outputPath string) (*ExecutionResult, error) {
 	fmt.Printf("🔧 DEBUG: ExecuteProject called\n")
 	fmt.Printf("🔧 DEBUG: - outputPath: %s\n", outputPath)
-	fmt.Printf("🔧 DEBUG: - dryRun: %v\n", c.dryRun)
 	fmt.Printf("🔧 DEBUG: - claudeHomeDir: %s\n", c.claudeHomeDir)
 
 	// Add timeout check
@@ -86,33 +83,8 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	fmt.Printf("🔧 DEBUG: About to log with tflog...\n")
 	tflog.Info(ctx, "Starting Claude Code execution", map[string]interface{}{
 		"output_path": outputPath,
-		"dry_run":     c.dryRun,
 	})
 	fmt.Printf("🔧 DEBUG: tflog.Info completed\n")
-
-	// If in dry run mode, skip actual execution
-	if c.dryRun {
-		fmt.Printf("🔧 DEBUG: Dry run mode - skipping actual execution\n")
-		tflog.Info(ctx, "Dry run mode - skipping Claude Code execution")
-
-		// In dry run, create output directory and a sample file to show the test works
-		if err := os.MkdirAll(outputPath, 0755); err != nil {
-			fmt.Printf("🔧 DEBUG: Failed to create output directory: %v\n", err)
-		} else {
-			testFile := filepath.Join(outputPath, "dryrun-test.txt")
-			if err := os.WriteFile(testFile, []byte("This file was created in dry-run mode"), 0644); err != nil {
-				fmt.Printf("🔧 DEBUG: Failed to create dry-run test file: %v\n", err)
-			} else {
-				fmt.Printf("🔧 DEBUG: Created dry-run test file: %s\n", testFile)
-			}
-		}
-
-		return &ExecutionResult{
-			Success:     true,
-			Output:      "Dry run mode - Claude Code execution skipped",
-			ProjectPath: outputPath,
-		}, nil
-	}
 
 	// Build the prompt from the project specification
 	prompt, err := c.BuildPrompt(projectSpec)

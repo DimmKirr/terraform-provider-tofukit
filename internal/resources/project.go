@@ -23,7 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/scaffolds"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
@@ -44,16 +44,16 @@ type ProjectModelFinal struct {
 	Version            types.String               `tfsdk:"version"`
 	StackRef           types.String               `tfsdk:"stack_ref"` // Reference to the primary stack this project instantiates
 	Requirements       []schemas.RequirementModel `tfsdk:"requirement"`
-	Kits               types.Map                  `tfsdk:"kits"`     // Additional kits to customize the stack
-	Scaffolds          []schemas.ScaffoldModel    `tfsdk:"scaffold"` // Project-specific overrides
+	Kits               types.Map                  `tfsdk:"kits"`  // Additional kits to customize the stack
+	Files              []schemas.FileModel        `tfsdk:"file"`  // Project-specific file overrides
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
 	ExecutionStarted   types.String               `tfsdk:"execution_started"`
 	ExecutionCompleted types.String               `tfsdk:"execution_completed"`
 	ProjectPath        types.String               `tfsdk:"project_path"`
 	ExecutionError     types.String               `tfsdk:"execution_error"`
-	// State tracking for scaffold changes
-	ScaffoldHash types.String `tfsdk:"scaffold_hash"`
-	LastApplied  types.String `tfsdk:"last_applied"`
+	// State tracking for file changes
+	FileHash    types.String `tfsdk:"file_hash"`
+	LastApplied types.String `tfsdk:"last_applied"`
 	// Custom system prompt for Claude
 	SystemPrompt types.String `tfsdk:"system_prompt"`
 }
@@ -114,10 +114,12 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 									"instructions": types.ListType{
 										ElemType: types.StringType,
 									},
-									"verification": types.ObjectType{
-										AttrTypes: map[string]attr.Type{
-											"command": types.StringType,
-											"expect":  types.StringType,
+									"verification": types.ListType{
+										ElemType: types.ObjectType{
+											AttrTypes: map[string]attr.Type{
+												"command": types.StringType,
+												"expect":  types.StringType,
+											},
 										},
 									},
 								},
@@ -130,7 +132,7 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				},
 			},
 			"execution_status": schema.StringAttribute{
-				MarkdownDescription: "Status of Claude Code execution (dry_run, pending, running, completed, failed)",
+				MarkdownDescription: "Status of Claude Code execution (pending, running, completed, failed)",
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -162,12 +164,12 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				Computed:            true,
 				Optional:            true,
 			},
-			"scaffold_hash": schema.StringAttribute{
-				MarkdownDescription: "Hash of scaffold configuration for change detection",
+			"file_hash": schema.StringAttribute{
+				MarkdownDescription: "Hash of file configuration for change detection",
 				Computed:            true,
 			},
 			"last_applied": schema.StringAttribute{
-				MarkdownDescription: "Timestamp when scaffolds were last successfully applied",
+				MarkdownDescription: "Timestamp when files were last successfully applied",
 				Computed:            true,
 			},
 			"system_prompt": schema.StringAttribute{
@@ -177,33 +179,33 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 		},
 		Blocks: map[string]schema.Block{
 			"requirement": schemas.GetRequirementBlock(),
-			"scaffold":    schemas.GetScaffoldBlock(),
+			"file":        schemas.GetFileBlock(),
 		},
 	}
 }
 
 func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create called\n")
 	var data ProjectModelFinal
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create failed with diagnostics error\n")
 		return
 	}
 
+	fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create - setting ID for project: %s\n", data.Name.ValueString())
 	data.ID = types.StringValue(fmt.Sprintf("project.%s", data.Name.ValueString()))
 
 	// Get provider configuration
-	isDryRun := true
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	debug := false
 	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 		GetDebug() bool
 	}); ok {
-		isDryRun = provData.GetDryRun()
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 		debug = provData.GetDebug()
@@ -214,104 +216,50 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.ExecutionCompleted = types.StringValue("")
 	data.ExecutionError = types.StringValue("")
 	data.ProjectPath = types.StringValue(filepath.Join(outputPath, data.Name.ValueString()))
-	data.ScaffoldHash = types.StringValue(r.computeScaffoldHash(data.Scaffolds))
-	// Initialize LastApplied with current time since scaffolds will be applied
+	data.FileHash = types.StringValue(r.computeFileHash(data.Files))
+	// Initialize LastApplied with current time since files will be applied
 	data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 
-	// Set initial execution status
-	if isDryRun {
-		data.ExecutionStatus = types.StringValue("dry_run")
+	// Execute Claude Code - Claude will create all files based on files
+	data.ExecutionStatus = types.StringValue("pending")
+	data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
 
-		// In dry-run mode, we create merged scaffolds directly as a preview
-		// This helps users see what files would be created
-		mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
+	// Collect files FIRST
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
 
-		tflog.Info(ctx, "After collectAndMergeScaffolds in dry-run", map[string]interface{}{
-			"merged_count": len(mergedScaffolds),
-			"project_name": data.Name.ValueString(),
-		})
+	// Build output data AFTER collecting files to ensure they're included
+	outputData := r.buildOutputData(ctx, data)
+	r.writeJSONFile(ctx, data, outputData, outputPath)
 
-		// Build output data AFTER collecting scaffolds to ensure they're included
-		outputData := r.buildOutputData(ctx, data)
-		r.writeJSONFile(ctx, data, outputData, outputPath)
+	// Write debug files if debug mode is enabled
+	if debug {
+		r.writeDebugFiles(ctx, data, outputData, outputPath)
+	}
 
-		if len(mergedScaffolds) > 0 {
-			projectPath := data.ProjectPath.ValueString()
-			scaffoldManager := scaffolds.NewManager(projectPath)
-			for _, scaffold := range mergedScaffolds {
-				// In dry-run mode, only write scaffolds that have content
-				// Skip scaffolds with generate=true and no content (they need Claude)
-				if !scaffold.Generate.IsNull() && scaffold.Generate.ValueBool() &&
-					(scaffold.Content.IsNull() || scaffold.Content.ValueString() == "") {
-					tflog.Info(ctx, "Skipping scaffold in dry-run (needs generation)", map[string]interface{}{
-						"path": scaffold.Path.ValueString(),
-					})
-					continue
-				}
-				if err := scaffoldManager.WriteScaffold(ctx, scaffold); err != nil {
-					tflog.Warn(ctx, "Failed to write scaffold preview", map[string]interface{}{
-						"path":  scaffold.Path.ValueString(),
-						"error": err.Error(),
-					})
-				}
-			}
-			tflog.Info(ctx, "Created merged scaffold preview files (dry-run)", map[string]interface{}{
-				"project_path":  projectPath,
-				"merged_count":  len(mergedScaffolds),
-				"project_count": len(data.Scaffolds),
-			})
+	if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, false); err != nil {
+		// Set error status and fail the resource creation
+		data.ExecutionStatus = types.StringValue("failed")
+		data.ExecutionError = types.StringValue(err.Error())
+		// Ensure completed time is set even on failure
+		if data.ExecutionCompleted.IsNull() || data.ExecutionCompleted.ValueString() == "" {
+			data.ExecutionCompleted = types.StringValue(time.Now().Format(time.RFC3339))
 		}
-
-		// Write debug files even in dry-run mode if debug is enabled
-		if debug {
-			r.writeDebugFiles(ctx, data, outputData, outputPath)
-		}
-
-		tflog.Info(ctx, "Project resource created in dry-run mode", map[string]interface{}{
+		tflog.Error(ctx, "Claude Code execution failed", map[string]interface{}{
 			"project_id": data.ID.ValueString(),
+			"error":      err.Error(),
 		})
+		// Fail the resource creation with a clear error message
+		resp.Diagnostics.AddError(
+			"Claude Code Execution Failed",
+			fmt.Sprintf("Failed to execute Claude Code for project '%s': %s\n\n"+
+				"Check the debug files in %s/.debug/ for more details.",
+			data.Name.ValueString(), err.Error(), outputPath),
+		)
+		return
 	} else {
-		// Execute Claude Code - Claude will create all files based on scaffolds
-		data.ExecutionStatus = types.StringValue("pending")
-		data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
-
-		// Collect scaffolds FIRST
-		mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
-
-		// Build output data AFTER collecting scaffolds to ensure they're included
-		outputData := r.buildOutputData(ctx, data)
-		r.writeJSONFile(ctx, data, outputData, outputPath)
-
-		// Write debug files if debug mode is enabled
-		if debug {
-			r.writeDebugFiles(ctx, data, outputData, outputPath)
-		}
-
-		if err := r.executeClaudeCode(ctx, &data, outputData, mergedScaffolds, outputPath, claudeHomeDir, isDryRun, false); err != nil {
-			// Set error status and fail the resource creation
-			data.ExecutionStatus = types.StringValue("failed")
-			data.ExecutionError = types.StringValue(err.Error())
-			// Ensure completed time is set even on failure
-			if data.ExecutionCompleted.IsNull() || data.ExecutionCompleted.ValueString() == "" {
-				data.ExecutionCompleted = types.StringValue(time.Now().Format(time.RFC3339))
-			}
-			tflog.Error(ctx, "Claude Code execution failed", map[string]interface{}{
-				"project_id": data.ID.ValueString(),
-				"error":      err.Error(),
-			})
-			// Fail the resource creation with a clear error message
-			resp.Diagnostics.AddError(
-				"Claude Code Execution Failed",
-				fmt.Sprintf("Failed to execute Claude Code for project '%s': %s\n\n"+
-					"Check the debug files in %s/.debug/ for more details.",
-					data.Name.ValueString(), err.Error(), outputPath),
-			)
-			return
-		} else {
-			// Ensure LastApplied is set on successful execution
-			if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
-				data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
-			}
+		// Ensure LastApplied is set on successful execution
+		if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
+			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 		}
 	}
 
@@ -350,22 +298,19 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	// Get provider configuration
-	isDryRun := true
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 	}); ok {
-		isDryRun = provData.GetDryRun()
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 	}
 
-	// Always update output files with current configuration (including scaffolds from stacks)
+	// Always update output files with current configuration (including files from stacks)
 	// This ensures the Claude prompt JSON always has the complete specification
-	mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
 	outputData := r.buildOutputData(ctx, data)
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
@@ -384,14 +329,14 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 
 	tflog.Info(ctx, "Updated output files during Read", map[string]interface{}{
 		"project_id":       data.ID.ValueString(),
-		"merged_scaffolds": len(mergedScaffolds),
+		"merged_files": len(mergedFiles),
 	})
 
-	// If not in dry run mode, check if the generated project still exists
-	if !isDryRun && !data.ProjectPath.IsNull() && !data.ProjectPath.IsUnknown() {
+	// Check if the generated project still exists
+	if !data.ProjectPath.IsNull() && !data.ProjectPath.IsUnknown() {
 		projectPath := data.ProjectPath.ValueString()
 		if projectPath != "" {
-			executor := claude.NewExecutor(claudeHomeDir, isDryRun)
+			executor := claude.NewExecutor(claudeHomeDir)
 			if !executor.IsProjectGenerated(ctx, projectPath) {
 				// Project no longer exists, update the state
 				tflog.Warn(ctx, "Generated project no longer exists", map[string]interface{}{
@@ -439,157 +384,48 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	// Get provider configuration
 	outputPath := ".tofukit"
-	isDryRun := true
 	claudeHomeDir := "~/.claude"
 	debug := false
 	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 		GetDebug() bool
 	}); ok {
 		outputPath = provData.GetOutputPath()
-		isDryRun = provData.GetDryRun()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 		debug = provData.GetDebug()
 	}
 
-	// Detect scaffold changes using fingerprinting
-	scaffoldChanged := r.detectScaffoldChanges(ctx, state.Scaffolds, data.Scaffolds)
+	// Detect file changes using fingerprinting
+	fileChanged := r.detectFileChanges(ctx, state.Files, data.Files)
 
 	// Preserve ID and project path from existing state
 	data.ID = state.ID
 	data.ProjectPath = state.ProjectPath
 
-	// Initially preserve the scaffold hash from state - will be updated only on successful apply
-	data.ScaffoldHash = state.ScaffoldHash
+	// Initially preserve the file hash from state - will be updated only on successful apply
+	data.FileHash = state.FileHash
 
-	if scaffoldChanged {
-		tflog.Info(ctx, "Scaffold changes detected, triggering re-execution", map[string]interface{}{
+	if fileChanged {
+		tflog.Info(ctx, "File changes detected, triggering re-execution", map[string]interface{}{
 			"project_id":    data.ID.ValueString(),
-			"old_scaffolds": len(state.Scaffolds),
-			"new_scaffolds": len(data.Scaffolds),
-			"is_dry_run":    isDryRun,
+			"old_files": len(state.Files),
+			"new_files": len(data.Files),
 		})
 
-		if isDryRun {
-			// In dry-run mode, update scaffold preview files directly with merged scaffolds
-			projectDir := state.ProjectPath.ValueString()
-			if projectDir != "" {
-				// Convert relative path to absolute
-				if !filepath.IsAbs(projectDir) {
-					if cwd, err := os.Getwd(); err == nil {
-						projectDir = filepath.Join(cwd, projectDir)
-					}
-				}
+		// Always execute Claude Code for file changes
+		// Execute Claude Code with the updated specification
+		// Preserve existing timestamps - they represent when the project was first executed
+		// Only update status to reflect the re-execution
+		data.ExecutionStatus = types.StringValue("pending")
+		// IMPORTANT: Preserve timestamps from state to avoid provider inconsistency
+		data.ExecutionStarted = state.ExecutionStarted
+		data.ExecutionCompleted = state.ExecutionCompleted
 
-				scaffoldMgr := scaffolds.NewManager(projectDir)
+		// Collect merged files from all sources
+		mergedFiles := r.collectAndMergeFiles(ctx, data)
 
-				// Get merged scaffolds from all sources
-				oldMergedScaffolds := r.collectAndMergeScaffolds(ctx, state)
-				newMergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
-
-				// Build output data AFTER collecting scaffolds to ensure they're included
-				outputData := r.buildOutputData(ctx, data)
-				r.writeJSONFile(ctx, data, outputData, outputPath)
-
-				// Write debug files if debug mode is enabled
-				if debug {
-					r.writeDebugFiles(ctx, data, outputData, outputPath)
-				}
-
-				// Process scaffold changes (removes deleted scaffolds, creates new ones)
-				if err := scaffoldMgr.ProcessScaffoldChanges(ctx, oldMergedScaffolds, newMergedScaffolds); err != nil {
-					tflog.Error(ctx, "Failed to process scaffold preview changes", map[string]interface{}{
-						"error": err.Error(),
-					})
-					// Set error but don't fail the operation in dry-run mode
-					data.ExecutionError = types.StringValue(fmt.Sprintf("Scaffold update failed: %v", err))
-					// Preserve LastApplied from state on error
-					data.LastApplied = state.LastApplied
-					// Ensure LastApplied is never unknown
-					if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
-						data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
-					}
-				} else {
-					// Clear any previous errors and update timestamp and hash
-					data.ExecutionError = types.StringValue("")
-					data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
-					data.ScaffoldHash = types.StringValue(r.computeScaffoldHash(data.Scaffolds))
-				}
-
-				// Preserve dry-run status and timestamps from state
-				data.ExecutionStatus = state.ExecutionStatus
-				data.ExecutionStarted = state.ExecutionStarted
-				data.ExecutionCompleted = state.ExecutionCompleted
-			}
-		} else {
-			// In execution mode, trigger Claude Code with the updated specification
-			// Preserve existing timestamps - they represent when the project was first executed
-			// Only update status to reflect the re-execution
-			data.ExecutionStatus = types.StringValue("pending")
-			// IMPORTANT: Preserve timestamps from state to avoid provider inconsistency
-			data.ExecutionStarted = state.ExecutionStarted
-			data.ExecutionCompleted = state.ExecutionCompleted
-			// Clear any previous error since we're re-executing
-			data.ExecutionError = types.StringValue("")
-
-			// Execute Claude Code with the updated specification and merged scaffolds
-			mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
-
-			// Build output data AFTER collecting scaffolds to ensure they're included
-			outputData := r.buildOutputData(ctx, data)
-			r.writeJSONFile(ctx, data, outputData, outputPath)
-
-			// Write debug files if debug mode is enabled
-			if debug {
-				r.writeDebugFiles(ctx, data, outputData, outputPath)
-			}
-
-			if err := r.executeClaudeCode(ctx, &data, outputData, mergedScaffolds, outputPath, claudeHomeDir, isDryRun, true); err != nil {
-				// Set error status and fail the resource update
-				data.ExecutionStatus = types.StringValue("failed")
-				data.ExecutionError = types.StringValue(err.Error())
-				// Preserve the original completed timestamp and LastApplied
-				data.ExecutionCompleted = state.ExecutionCompleted
-				data.LastApplied = state.LastApplied
-				// Ensure LastApplied is never unknown
-				if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
-					data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
-				}
-				tflog.Error(ctx, "Claude Code execution failed during update", map[string]interface{}{
-					"project_id": data.ID.ValueString(),
-					"error":      err.Error(),
-				})
-				// Fail the resource update with a clear error message
-				resp.Diagnostics.AddError(
-					"Claude Code Execution Failed During Update",
-					fmt.Sprintf("Failed to execute Claude Code for project '%s' update: %s\n\n"+
-						"Check the debug files in %s/.debug/ for more details.",
-						data.Name.ValueString(), err.Error(), outputPath),
-				)
-				return
-			} else {
-				// Only update hash and LastApplied on successful execution
-				data.ScaffoldHash = types.StringValue(r.computeScaffoldHash(data.Scaffolds))
-				data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
-				// Preserve the original timestamps even on successful re-execution
-				data.ExecutionStarted = state.ExecutionStarted
-				data.ExecutionCompleted = state.ExecutionCompleted
-			}
-		}
-	} else {
-		// No scaffold changes detected, preserve existing execution state
-		tflog.Info(ctx, "No scaffold changes detected, preserving execution state", map[string]interface{}{
-			"project_id":     data.ID.ValueString(),
-			"scaffold_count": len(data.Scaffolds),
-		})
-
-		// Still need to update output files with current configuration (including scaffolds from stacks)
-		// Collect merged scaffolds to ensure stack scaffolds are included
-		mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
-
-		// Build output data with all scaffolds
+		// Build output data AFTER collecting files to ensure they're included
 		outputData := r.buildOutputData(ctx, data)
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
@@ -598,8 +434,59 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			r.writeDebugFiles(ctx, data, outputData, outputPath)
 		}
 
-		tflog.Info(ctx, "Updated output files with merged scaffolds", map[string]interface{}{
-			"merged_scaffold_count": len(mergedScaffolds),
+		if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, true); err != nil {
+			// Set error status and fail the resource update
+			data.ExecutionStatus = types.StringValue("failed")
+			data.ExecutionError = types.StringValue(err.Error())
+			// Ensure completed time is set even on failure
+			if data.ExecutionCompleted.IsNull() || data.ExecutionCompleted.ValueString() == "" {
+				data.ExecutionCompleted = types.StringValue(time.Now().Format(time.RFC3339))
+			}
+			// Don't use state.LastApplied here - we want to fail the update
+			data.LastApplied = state.LastApplied
+			// Ensure LastApplied is never unknown
+			if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
+				data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+			}
+			tflog.Error(ctx, "Claude Code execution failed during update", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+				"error":      err.Error(),
+			})
+			resp.Diagnostics.AddError(
+				"Claude Code Execution Failed",
+				fmt.Sprintf("Failed to execute Claude Code for project %s: %s", data.Name.ValueString(), err.Error()),
+			)
+			return
+		} else {
+			// Only update hash and LastApplied on successful execution
+			data.FileHash = types.StringValue(r.computeFileHash(data.Files))
+			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+			// Preserve the original timestamps even on successful re-execution
+			data.ExecutionStarted = state.ExecutionStarted
+			data.ExecutionCompleted = state.ExecutionCompleted
+		}
+
+		// No file changes detected, preserve existing execution state
+		tflog.Info(ctx, "No file changes detected, preserving execution state", map[string]interface{}{
+			"project_id":     data.ID.ValueString(),
+			"file_count": len(data.Files),
+		})
+
+		// Still need to update output files with current configuration (including files from stacks)
+		// Collect merged files to ensure stack files are included
+		mergedFiles = r.collectAndMergeFiles(ctx, data)
+
+		// Build output data with all files
+		outputData = r.buildOutputData(ctx, data)
+		r.writeJSONFile(ctx, data, outputData, outputPath)
+
+		// Write debug files if debug mode is enabled
+		if debug {
+			r.writeDebugFiles(ctx, data, outputData, outputPath)
+		}
+
+		tflog.Info(ctx, "Updated output files with merged files", map[string]interface{}{
+			"merged_file_count": len(mergedFiles),
 		})
 
 		// Preserve all execution-related fields from the current state
@@ -624,7 +511,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	tflog.Info(ctx, "Updated project configuration", map[string]interface{}{
 		"project_id":       data.ID.ValueString(),
-		"scaffold_changed": scaffoldChanged,
+		"file_changed": fileChanged,
 		"execution_status": data.ExecutionStatus.ValueString(),
 		"last_applied":     data.LastApplied.ValueString(),
 	})
@@ -640,37 +527,33 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 	}
 
 	// Get provider configuration
-	isDryRun := true
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 	}); ok {
-		isDryRun = provData.GetDryRun()
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 	}
 
-	// Clean up scaffolds and project directory
+	// Clean up files and project directory
 	if !data.ProjectPath.IsNull() && !data.ProjectPath.IsUnknown() {
 		projectPath := data.ProjectPath.ValueString()
 		if projectPath != "" {
-			// Remove scaffold files
-			if len(data.Scaffolds) > 0 {
-				scaffoldManager := scaffolds.NewManager(projectPath)
-				scaffoldManager.RemoveAllScaffolds(ctx, data.Scaffolds)
-				tflog.Info(ctx, "Removed scaffold files", map[string]interface{}{
+			// Remove file files
+			if len(data.Files) > 0 {
+				fileManager := files.NewManager(projectPath)
+				fileManager.RemoveAllFiles(ctx, data.Files)
+				tflog.Info(ctx, "Removed file files", map[string]interface{}{
 					"project_path": projectPath,
-					"count":        len(data.Scaffolds),
+					"count":        len(data.Files),
 				})
 			}
 
-			// If not in dry run mode, also clean up any generated project
-			if !isDryRun {
-				executor := claude.NewExecutor(claudeHomeDir, isDryRun)
-				if err := executor.CleanupProject(ctx, projectPath); err != nil {
+			// Clean up any generated project
+			executor := claude.NewExecutor(claudeHomeDir)
+			if err := executor.CleanupProject(ctx, projectPath); err != nil {
 					tflog.Warn(ctx, "Failed to cleanup generated project", map[string]interface{}{
 						"project_id":   data.ID.ValueString(),
 						"project_path": projectPath,
@@ -683,7 +566,6 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 						"project_path": projectPath,
 					})
 				}
-			}
 		}
 	}
 
@@ -754,66 +636,78 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 		}
 		reqData["instructions"] = instructions
 
-		// Add verification if present
-		if req.Verification != nil {
-			reqData["verification"] = map[string]string{
-				"command": req.Verification.Command.ValueString(),
-				"expect":  req.Verification.Expect.ValueString(),
+		// Add verifications if present
+		if len(req.Verification) > 0 {
+			verifications := []map[string]string{}
+			for _, v := range req.Verification {
+				verif := map[string]string{
+					"command": v.Command.ValueString(),
+				}
+				if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+					verif["expect"] = v.Expect.ValueString()
+				}
+				verifications = append(verifications, verif)
 			}
+			reqData["verification"] = verifications
 		}
 
 		outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
 	}
 
-	// Add merged scaffolds from all sources
-	mergedScaffolds := r.collectAndMergeScaffolds(ctx, data)
-	tflog.Info(ctx, "Collected merged scaffolds for output", map[string]interface{}{
-		"count":        len(mergedScaffolds),
+	// Add merged files from all sources
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
+	tflog.Info(ctx, "Collected merged files for output", map[string]interface{}{
+		"count":        len(mergedFiles),
 		"project_name": data.Name.ValueString(),
 	})
-	scaffolds := []map[string]interface{}{}
-	for _, scaffold := range mergedScaffolds {
-		scaffoldData := map[string]interface{}{
-			"path": scaffold.Path.ValueString(),
+	files := []map[string]interface{}{}
+	for _, file := range mergedFiles {
+		fileData := map[string]interface{}{
+			"path": file.Path.ValueString(),
 		}
 
 		// Debug log
-		tflog.Debug(ctx, "Processing scaffold for output", map[string]interface{}{
-			"path":             scaffold.Path.ValueString(),
-			"has_verification": scaffold.Verification != nil,
+		tflog.Debug(ctx, "Processing file for output", map[string]interface{}{
+			"path":               file.Path.ValueString(),
+			"has_verifications":  len(file.Verification) > 0,
+			"verification_count": len(file.Verification),
 		})
 
-		if !scaffold.Content.IsNull() && !scaffold.Content.IsUnknown() {
-			scaffoldData["content"] = scaffold.Content.ValueString()
+		if !file.Content.IsNull() && !file.Content.IsUnknown() {
+			fileData["content"] = file.Content.ValueString()
 		}
 
-		if !scaffold.Generate.IsNull() && !scaffold.Generate.IsUnknown() {
-			scaffoldData["generate"] = scaffold.Generate.ValueBool()
+		if !file.Generate.IsNull() && !file.Generate.IsUnknown() {
+			fileData["generate"] = file.Generate.ValueBool()
 		}
 
-		if scaffold.Instructions != nil && len(scaffold.Instructions) > 0 {
-			instructions := make([]string, len(scaffold.Instructions))
-			for i, inst := range scaffold.Instructions {
+		if file.Instructions != nil && len(file.Instructions) > 0 {
+			instructions := make([]string, len(file.Instructions))
+			for i, inst := range file.Instructions {
 				instructions[i] = inst.ValueString()
 			}
-			scaffoldData["instructions"] = instructions
+			fileData["instructions"] = instructions
 		}
 
-		// Add verification if present
-		if scaffold.Verification != nil {
-			verification := map[string]interface{}{
-				"command": scaffold.Verification.Command.ValueString(),
+		// Add verifications if present
+		if len(file.Verification) > 0 {
+			verifications := []map[string]interface{}{}
+			for _, v := range file.Verification {
+				verif := map[string]interface{}{
+					"command": v.Command.ValueString(),
+				}
+				if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+					verif["expect"] = v.Expect.ValueString()
+				}
+				verifications = append(verifications, verif)
 			}
-			if !scaffold.Verification.Expect.IsNull() && !scaffold.Verification.Expect.IsUnknown() {
-				verification["expect"] = scaffold.Verification.Expect.ValueString()
-			}
-			scaffoldData["verification"] = verification
+			fileData["verification"] = verifications
 		}
 
-		scaffolds = append(scaffolds, scaffoldData)
+		files = append(files, fileData)
 	}
-	// Always include scaffolds, even if empty, for consistency
-	outputData["scaffolds"] = scaffolds
+	// Always include files, even if empty, for consistency
+	outputData["files"] = files
 
 	// Add kits if available
 	if !data.Kits.IsNull() && !data.Kits.IsUnknown() {
@@ -873,20 +767,28 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 								reqData["instructions"] = instructions
 							}
 
-							// Get verification
-							if verObj, ok := reqAttrs["verification"].(types.Object); ok && !verObj.IsNull() {
-								verAttrs := verObj.Attributes()
-								verification := make(map[string]string)
+							// Get verification list
+							if verList, ok := reqAttrs["verification"].(types.List); ok && !verList.IsNull() {
+								verifications := []map[string]string{}
+								for _, verElem := range verList.Elements() {
+									if verObj, ok := verElem.(types.Object); ok && !verObj.IsNull() {
+										verAttrs := verObj.Attributes()
+										verification := make(map[string]string)
 
-								if cmd, ok := verAttrs["command"].(types.String); ok && !cmd.IsNull() {
-									verification["command"] = cmd.ValueString()
-								}
-								if exp, ok := verAttrs["expect"].(types.String); ok && !exp.IsNull() {
-									verification["expect"] = exp.ValueString()
-								}
+										if cmd, ok := verAttrs["command"].(types.String); ok && !cmd.IsNull() {
+											verification["command"] = cmd.ValueString()
+										}
+										if exp, ok := verAttrs["expect"].(types.String); ok && !exp.IsNull() {
+											verification["expect"] = exp.ValueString()
+										}
 
-								if len(verification) > 0 {
-									reqData["verification"] = verification
+										if len(verification) > 0 {
+											verifications = append(verifications, verification)
+										}
+									}
+								}
+								if len(verifications) > 0 {
+									reqData["verification"] = verifications
 								}
 							}
 
@@ -927,7 +829,7 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 }
 
 // executeClaudeCode executes Claude Code with the project specification
-func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedScaffolds []schemas.ScaffoldModel, outputPath string, claudeHomeDir string, dryRun bool, preserveTimestamps bool) error {
+func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModel, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
 	// Check if debug mode is enabled
 	debug := false
 	if provData, ok := r.ProviderData.(interface {
@@ -942,12 +844,12 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		systemPrompt = data.SystemPrompt.ValueString()
 	}
 
-	executor := claude.NewExecutor(claudeHomeDir, dryRun)
+	executor := claude.NewExecutor(claudeHomeDir)
 	executor.SetDebug(debug)
 	executor.SetOutputPath(outputPath)
 	executor.SetSystemPrompt(systemPrompt)
 
-	// Write debug files if debug mode is enabled (even when not in dry_run)
+	// Write debug files if debug mode is enabled
 	if debug {
 		r.writeDebugFiles(ctx, *data, outputData, outputPath)
 	}
@@ -980,26 +882,40 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 	// Clear any previous error with empty string
 	data.ExecutionError = types.StringValue("")
 
-	// Verify that Claude created all merged scaffold files correctly
-	if len(mergedScaffolds) > 0 && status.ProjectPath != "" {
-		scaffoldManager := scaffolds.NewManager(status.ProjectPath)
-		if err := scaffoldManager.VerifyScaffolds(ctx, mergedScaffolds); err != nil {
+	// Verify that Claude created all merged file files correctly
+	if len(mergedFiles) > 0 && status.ProjectPath != "" {
+		fileManager := files.NewManager(status.ProjectPath)
+		if err := fileManager.VerifyFiles(ctx, mergedFiles); err != nil {
 			// Log the verification failure but don't fail the operation
 			// Claude might have created the files but with slightly different content
-			tflog.Warn(ctx, "Merged scaffold verification failed after Claude execution", map[string]interface{}{
+			tflog.Warn(ctx, "Merged file verification failed after Claude execution", map[string]interface{}{
 				"error":        err.Error(),
 				"project_path": status.ProjectPath,
 			})
 			// Store the verification error for visibility
 			data.ExecutionError = types.StringValue(fmt.Sprintf("Warning: %v", err))
 		} else {
-			tflog.Info(ctx, "All merged scaffolds verified successfully after Claude execution", map[string]interface{}{
-				"merged_count":  len(mergedScaffolds),
-				"project_count": len(data.Scaffolds),
+			tflog.Info(ctx, "All merged files verified successfully after Claude execution", map[string]interface{}{
+				"merged_count":  len(mergedFiles),
+				"project_count": len(data.Files),
 				"project_path":  status.ProjectPath,
 			})
 			// Clear any previous execution error since verification succeeded
 			data.ExecutionError = types.StringValue("")
+
+			// Run verification commands if files have them
+			if err := fileManager.RunVerifications(ctx, mergedFiles); err != nil {
+				// Verification commands failed - this is a hard error
+				tflog.Error(ctx, "File verification commands failed", map[string]interface{}{
+					"error":        err.Error(),
+					"project_path": status.ProjectPath,
+				})
+				data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed: %v", err))
+				data.ExecutionStatus = types.StringValue("verification_failed")
+
+				// Return error to fail the operation
+				return fmt.Errorf("file verification commands failed: %w", err)
+			}
 		}
 	}
 
@@ -1044,12 +960,11 @@ func (r *ProjectResourceFinal) ValidateConfig(ctx context.Context, req resource.
 
 	// Get provider configuration to check Claude Code availability if not in dry run
 	if provData, ok := r.ProviderData.(interface {
-		GetDryRun() bool
 		GetClaudeHomeDirectory() string
-	}); ok && !provData.GetDryRun() {
-		// In execution mode, validate Claude Code availability
+	}); ok {
+		// Validate Claude Code availability
 		claudeHomeDir := provData.GetClaudeHomeDirectory()
-		executor := claude.NewExecutor(claudeHomeDir, false)
+		executor := claude.NewExecutor(claudeHomeDir)
 		if err := executor.Validate(ctx); err != nil {
 			resp.Diagnostics.AddWarning(
 				"Claude Code Validation",
@@ -1111,7 +1026,7 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	}
 
 	// Build the actual JSON prompt that will be sent to Claude
-	claudeClient := claude.NewClient("", false) // temp client just for building prompt
+	claudeClient := claude.NewClient("") // temp client just for building prompt
 	jsonPrompt, _ := claudeClient.BuildPrompt(projectSpec)
 
 	// Write claude-prompt.json - the actual JSON prompt that gets sent to Claude
@@ -1155,34 +1070,34 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	// - Additional logs from the Claude SDK
 }
 
-// computeScaffoldHash creates a fingerprint of scaffold configuration for change detection
-func (r *ProjectResourceFinal) computeScaffoldHash(scaffolds []schemas.ScaffoldModel) string {
-	if len(scaffolds) == 0 {
+// computeFileHash creates a fingerprint of file configuration for change detection
+func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string {
+	if len(files) == 0 {
 		return ""
 	}
 
-	// Create a deterministic representation of scaffolds
-	type scaffoldEntry struct {
+	// Create a deterministic representation of files
+	type fileEntry struct {
 		Path         string   `json:"path"`
 		Content      string   `json:"content"`
 		Generate     bool     `json:"generate,omitempty"`
 		Instructions []string `json:"instructions,omitempty"`
 	}
 
-	var entries []scaffoldEntry
-	for _, scaffold := range scaffolds {
-		entry := scaffoldEntry{
-			Path:    scaffold.Path.ValueString(),
-			Content: scaffold.Content.ValueString(),
+	var entries []fileEntry
+	for _, file := range files {
+		entry := fileEntry{
+			Path:    file.Path.ValueString(),
+			Content: file.Content.ValueString(),
 		}
 
 		// Include optional fields if they're set
-		if !scaffold.Generate.IsNull() && !scaffold.Generate.IsUnknown() {
-			entry.Generate = scaffold.Generate.ValueBool()
+		if !file.Generate.IsNull() && !file.Generate.IsUnknown() {
+			entry.Generate = file.Generate.ValueBool()
 		}
-		if scaffold.Instructions != nil && len(scaffold.Instructions) > 0 {
-			instructions := make([]string, len(scaffold.Instructions))
-			for i, inst := range scaffold.Instructions {
+		if file.Instructions != nil && len(file.Instructions) > 0 {
+			instructions := make([]string, len(file.Instructions))
+			for i, inst := range file.Instructions {
 				instructions[i] = inst.ValueString()
 			}
 			entry.Instructions = instructions
@@ -1211,27 +1126,27 @@ func (r *ProjectResourceFinal) computeScaffoldHash(scaffolds []schemas.ScaffoldM
 	return hex.EncodeToString(hash[:])
 }
 
-// detectScaffoldChanges determines if scaffolds have meaningfully changed
-func (r *ProjectResourceFinal) detectScaffoldChanges(ctx context.Context, oldScaffolds, newScaffolds []schemas.ScaffoldModel) bool {
-	oldHash := r.computeScaffoldHash(oldScaffolds)
-	newHash := r.computeScaffoldHash(newScaffolds)
+// detectFileChanges determines if files have meaningfully changed
+func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModel) bool {
+	oldHash := r.computeFileHash(oldFiles)
+	newHash := r.computeFileHash(newFiles)
 
 	changed := oldHash != newHash
 
-	tflog.Debug(ctx, "Scaffold change detection", map[string]interface{}{
+	tflog.Debug(ctx, "File change detection", map[string]interface{}{
 		"old_hash":  oldHash,
 		"new_hash":  newHash,
 		"changed":   changed,
-		"old_count": len(oldScaffolds),
-		"new_count": len(newScaffolds),
+		"old_count": len(oldFiles),
+		"new_count": len(newFiles),
 	})
 
 	return changed
 }
 
-// collectAndMergeScaffolds collects scaffolds from all sources and merges them with proper precedence
-func (r *ProjectResourceFinal) collectAndMergeScaffolds(ctx context.Context, data ProjectModelFinal) []schemas.ScaffoldModel {
-	merger := scaffolds.NewMerger()
+// collectAndMergeFiles collects files from all sources and merges them with proper precedence
+func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModel {
+	merger := files.NewMerger()
 
 	// Get the registry to access stacks
 	var reg *registry.Registry
@@ -1275,34 +1190,37 @@ func (r *ProjectResourceFinal) collectAndMergeScaffolds(ctx context.Context, dat
 				if stack, ok := stackData.(StackResourceModel); ok {
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
 						"stack_ref":      stackRef,
-						"scaffold_count": len(stack.Scaffolds),
+						"file_count": len(stack.Files),
 						"stack_name":     stack.Name.ValueString(),
 					})
 
-					// Log the actual scaffolds with verification details
-					for i, scaffold := range stack.Scaffolds {
+					// Log the actual files with verification details
+					for i, file := range stack.Files {
 						logData := map[string]interface{}{
-							"index":            i,
-							"path":             scaffold.Path.ValueString(),
-							"has_verification": scaffold.Verification != nil,
+							"index":               i,
+							"path":                file.Path.ValueString(),
+							"has_verifications":   len(file.Verification) > 0,
+							"verification_count":  len(file.Verification),
 						}
 
-						if scaffold.Verification != nil {
-							logData["verification_command"] = scaffold.Verification.Command.ValueString()
-							if !scaffold.Verification.Expect.IsNull() {
-								logData["verification_expect"] = scaffold.Verification.Expect.ValueString()
+						if len(file.Verification) > 0 {
+							for j, v := range file.Verification {
+								logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
+								if !v.Expect.IsNull() {
+									logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
+								}
 							}
 						}
 
-						tflog.Info(ctx, "Stack scaffold retrieved from registry", logData)
+						tflog.Info(ctx, "Stack file retrieved from registry", logData)
 					}
 
-					// TODO: First add scaffolds from kits within the primary stack (lowest precedence)
+					// TODO: First add files from kits within the primary stack (lowest precedence)
 					// This requires stacks to have their own kit references
 					// For now, we'll just note this is where stack's kits would be processed
 
-					// Add the primary stack's own scaffolds (higher precedence than stack's kits)
-					merger.AddScaffolds(ctx, stack.Scaffolds, scaffolds.SourceStack)
+					// Add the primary stack's own files (higher precedence than stack's kits)
+					merger.AddFiles(ctx, stack.Files, files.SourceStack)
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
 						"stack_ref":   stackRef,
@@ -1336,14 +1254,14 @@ func (r *ProjectResourceFinal) collectAndMergeScaffolds(ctx context.Context, dat
 				})
 
 				if stack, ok := stackData.(StackResourceModel); ok {
-					tflog.Info(ctx, "Processing stack scaffolds", map[string]interface{}{
+					tflog.Info(ctx, "Processing stack files", map[string]interface{}{
 						"stack_id":       stackID,
-						"scaffold_count": len(stack.Scaffolds),
+						"file_count": len(stack.Files),
 						"stack_name":     stack.Name.ValueString(),
 					})
 
-					// Add stack's scaffolds
-					merger.AddScaffolds(ctx, stack.Scaffolds, scaffolds.SourceStack)
+					// Add stack's files
+					merger.AddFiles(ctx, stack.Files, files.SourceStack)
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
 						"stack_id":    stackID,
@@ -1354,22 +1272,22 @@ func (r *ProjectResourceFinal) collectAndMergeScaffolds(ctx context.Context, dat
 		}
 	}
 
-	// TODO: Add scaffolds from project's additional kits
+	// TODO: Add files from project's additional kits
 	// These are kits added directly to the project to customize the stack
-	// This would process data.Kits and collect their scaffolds
-	// merger.AddScaffolds(ctx, kitScaffolds, scaffolds.SourceProject)
+	// This would process data.Kits and collect their files
+	// merger.AddFiles(ctx, kitFiles, files.SourceProject)
 
-	// Finally, add project's own scaffolds (highest precedence)
-	merger.AddScaffolds(ctx, data.Scaffolds, scaffolds.SourceProject)
+	// Finally, add project's own files (highest precedence)
+	merger.AddFiles(ctx, data.Files, files.SourceProject)
 
 	// Get the final merged list
-	mergedScaffolds := merger.GetMergedScaffolds()
+	mergedFiles := merger.GetMergedFiles()
 
-	tflog.Info(ctx, "Merged scaffolds from all sources", map[string]interface{}{
-		"total_count":   len(mergedScaffolds),
+	tflog.Info(ctx, "Merged files from all sources", map[string]interface{}{
+		"total_count":   len(mergedFiles),
 		"stack_ref":     data.StackRef.ValueString(),
-		"project_count": len(data.Scaffolds),
+		"project_count": len(data.Files),
 	})
 
-	return mergedScaffolds
+	return mergedFiles
 }

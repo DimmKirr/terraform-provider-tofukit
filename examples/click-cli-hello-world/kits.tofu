@@ -79,8 +79,7 @@ resource "tofukit_framework" "click" {
     priority = 85
     instructions = [
       "Install Click framework for CLI development",
-      "pip install click==8.1.7",
-      "Verify with: pip show click"
+      "pip install click==8.1.7 or make it a part the selected package management system",
     ]
     verification {
       command = "pip show click | grep Version"

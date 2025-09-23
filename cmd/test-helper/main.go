@@ -12,7 +12,6 @@ import (
 func main() {
 	var (
 		testType     = flag.String("type", "quick", "Type of test to run: quick, hello, complex, validate")
-		dryRun       = flag.Bool("dry-run", false, "Run in dry-run mode")
 		outputDir    = flag.String("output", "./test-output", "Output directory for test results")
 		projectName  = flag.String("name", "", "Project name for custom test")
 		instructions = flag.String("instructions", "", "Custom instructions for test")
@@ -30,8 +29,8 @@ func main() {
 		}
 
 	case "hello":
-		fmt.Printf("Running hello world test (dry-run: %t)...\n", *dryRun)
-		if err := testutil.RunHelloWorldTest(*dryRun); err != nil {
+		fmt.Printf("Running hello world test...\n")
+		if err := testutil.RunHelloWorldTest(); err != nil {
 			log.Fatalf("Hello world test failed: %v", err)
 		}
 
@@ -56,7 +55,6 @@ func main() {
 		config.ProjectName = *projectName
 		config.Instructions = *instructions
 		config.OutputDir = *outputDir
-		config.DryRun = *dryRun
 
 		fmt.Printf("Running custom test: %s\n", *projectName)
 		if err := testutil.RunManualTest(config); err != nil {
@@ -66,7 +64,7 @@ func main() {
 	default:
 		fmt.Printf("❌ Unknown test type: %s\n", *testType)
 		fmt.Printf("\nAvailable test types:\n")
-		fmt.Printf("  quick    - Quick hello.txt test (dry-run)\n")
+		fmt.Printf("  quick    - Quick hello.txt test\n")
 		fmt.Printf("  hello    - Hello world test\n")
 		fmt.Printf("  complex  - Complex multi-requirement test\n")
 		fmt.Printf("  validate - Validate Claude CLI setup\n")

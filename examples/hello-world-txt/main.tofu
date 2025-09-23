@@ -12,7 +12,6 @@ terraform {
 provider "tofukit" {
   output_format         = "json"
   output_path           = ".tofukit"
-  dry_run               = false  # Set to false to execute Claude Code
   claude_home_directory = "~/.claude"
 }
 

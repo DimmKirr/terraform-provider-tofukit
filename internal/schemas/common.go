@@ -9,10 +9,10 @@ import (
 
 // RequirementModel represents a requirement block
 type RequirementModel struct {
-	Name         types.String       `tfsdk:"name"`
-	Priority     types.Int64        `tfsdk:"priority"`
-	Instructions []types.String     `tfsdk:"instructions"`
-	Verification *VerificationModel `tfsdk:"verification"`
+	Name         types.String        `tfsdk:"name"`
+	Priority     types.Int64         `tfsdk:"priority"`
+	Instructions []types.String      `tfsdk:"instructions"`
+	Verification []VerificationModel `tfsdk:"verification"`
 }
 
 // VerificationModel represents a verification block
@@ -21,14 +21,18 @@ type VerificationModel struct {
 	Expect  types.String `tfsdk:"expect"`
 }
 
-// ScaffoldModel represents a scaffold entry
-type ScaffoldModel struct {
-	Path         types.String       `tfsdk:"path"`
-	Content      types.String       `tfsdk:"content"`
-	Generate     types.Bool         `tfsdk:"generate"`
-	Instructions []types.String     `tfsdk:"instructions"`
-	Verification *VerificationModel `tfsdk:"verification"`
+// FileModel represents a file entry
+type FileModel struct {
+	Path         types.String        `tfsdk:"path"`
+	Content      types.String        `tfsdk:"content"`
+	Generate     types.Bool          `tfsdk:"generate"`
+	Instructions []types.String      `tfsdk:"instructions"`
+	Verification []VerificationModel `tfsdk:"verification"`
 }
+
+// ScaffoldModel is deprecated, use FileModel instead
+// Kept for backward compatibility during migration
+type ScaffoldModel = FileModel
 
 // GetRequirementBlock returns the schema for requirement blocks
 func GetRequirementBlock() schema.ListNestedBlock {
@@ -51,16 +55,18 @@ func GetRequirementBlock() schema.ListNestedBlock {
 				},
 			},
 			Blocks: map[string]schema.Block{
-				"verification": schema.SingleNestedBlock{
-					MarkdownDescription: "Verification for this requirement",
-					Attributes: map[string]schema.Attribute{
-						"command": schema.StringAttribute{
-							MarkdownDescription: "Command to run for verification",
-							Optional:            true,
-						},
-						"expect": schema.StringAttribute{
-							MarkdownDescription: "Expected output or pattern",
-							Optional:            true,
+				"verification": schema.ListNestedBlock{
+					MarkdownDescription: "Verification commands for this requirement",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"command": schema.StringAttribute{
+								MarkdownDescription: "Command to run for verification",
+								Required:            true,
+							},
+							"expect": schema.StringAttribute{
+								MarkdownDescription: "Expected output or pattern",
+								Optional:            true,
+							},
 						},
 					},
 				},
@@ -69,10 +75,10 @@ func GetRequirementBlock() schema.ListNestedBlock {
 	}
 }
 
-// GetScaffoldBlock returns the schema for scaffold blocks
-func GetScaffoldBlock() schema.ListNestedBlock {
+// GetFileBlock returns the schema for file blocks
+func GetFileBlock() schema.ListNestedBlock {
 	return schema.ListNestedBlock{
-		MarkdownDescription: "Scaffold entries for file generation",
+		MarkdownDescription: "File entries for generation and management",
 		NestedObject: schema.NestedBlockObject{
 			Attributes: map[string]schema.Attribute{
 				"path": schema.StringAttribute{
@@ -94,16 +100,18 @@ func GetScaffoldBlock() schema.ListNestedBlock {
 				},
 			},
 			Blocks: map[string]schema.Block{
-				"verification": schema.SingleNestedBlock{
-					MarkdownDescription: "Verification for this scaffold file",
-					Attributes: map[string]schema.Attribute{
-						"command": schema.StringAttribute{
-							MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
-							Optional:            true,
-						},
-						"expect": schema.StringAttribute{
-							MarkdownDescription: "Expected output or pattern",
-							Optional:            true,
+				"verification": schema.ListNestedBlock{
+					MarkdownDescription: "Verification commands for this file",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"command": schema.StringAttribute{
+								MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
+								Required:            true,
+							},
+							"expect": schema.StringAttribute{
+								MarkdownDescription: "Expected output or pattern",
+								Optional:            true,
+							},
 						},
 					},
 				},
@@ -113,6 +121,12 @@ func GetScaffoldBlock() schema.ListNestedBlock {
 }
 
 // GetBaseComponentAttributes returns common attributes for all component types
+// GetScaffoldBlock is deprecated, use GetFileBlock instead
+// Kept for backward compatibility during migration
+func GetScaffoldBlock() schema.ListNestedBlock {
+	return GetFileBlock()
+}
+
 func GetBaseComponentAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"id": schema.StringAttribute{

@@ -21,9 +21,9 @@ type Executor struct {
 }
 
 // NewExecutor creates a new Claude Code executor
-func NewExecutor(claudeHomeDir string, dryRun bool) *Executor {
+func NewExecutor(claudeHomeDir string) *Executor {
 	return &Executor{
-		client:     NewClient(claudeHomeDir, dryRun),
+		client:     NewClient(claudeHomeDir),
 		debug:      false,
 		outputPath: "",
 	}

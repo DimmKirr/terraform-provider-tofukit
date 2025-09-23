@@ -67,7 +67,7 @@ resource "tofukit_stack" "click_app" {
   ]
 
   # Main CLI Application
-  scaffold {
+  file {
     path = "src/cli.py"
     content = <<-EOF
     #!/usr/bin/env python3
@@ -96,13 +96,18 @@ resource "tofukit_stack" "click_app" {
 
     verification {
       command = "python3 src/cli.py hello"
-      expect  = "world"
+      expect  = "world 1"
+    }
+
+    verification {
+      command = "python3 src/cli.py --version"
+      expect  = "${local.project_version}"
     }
   }
 
 
   # Requirements Files
-  scaffold {
+  file {
     path = "requirements.txt"
     content = <<-EOF
     click==${tofukit_framework.click.version}
@@ -110,11 +115,27 @@ resource "tofukit_stack" "click_app" {
 
     verification {
       command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
-      expect  = "${tofukit_framework.click.version}"
+    }
+    verification {
+      command = "test -f requirements.txt"
     }
   }
 
-  scaffold {
+
+  # demo txt
+  file {
+    path = "demo.txt"
+    content = <<-EOF
+    hello world
+    EOF
+
+    verification {
+      command = "cat demo.txt"
+      expect  = "hello world"
+    }
+  }
+
+  file {
     path = "README.md"
     generate = true
     instructions = [
@@ -122,8 +143,25 @@ resource "tofukit_stack" "click_app" {
       "It should contain sections: ## Quickstart, ## Installation, ## Usage, ## Contributing, ## License"
     ]
     verification {
-      command = "cat README.md"
+      command = "grep '${local.project_name}' README.md"
       expect  = "${local.project_name}"
+    }
+    verification {
+      command = "grep -c '^## ' README.md"
+      expect  = "5"
+    }
+  }
+
+  # demo txt
+  file {
+    path = "demo.txt"
+    content = <<-EOF
+    hello world
+    EOF
+
+    verification {
+      command = "cat demo.txt"
+      expect  = "hello world"
     }
   }
 }
