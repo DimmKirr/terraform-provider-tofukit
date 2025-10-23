@@ -20,7 +20,7 @@ all: build
 build:
 	@echo "Building $(PROVIDER_NAME) for $(GOOS)/$(GOARCH) to $(BIN_DIR)/..."
 	@mkdir -p $(BIN_DIR)
-	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME) .
+	CGO_ENABLED=0 go build -o $(BIN_DIR)/$(BINARY_NAME) .
 	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME) ($(GOOS)/$(GOARCH))"
 
 # Install the provider locally for testing with tofu

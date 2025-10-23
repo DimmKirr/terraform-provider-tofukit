@@ -283,13 +283,12 @@ EOF
 
 	// === SUBTEST 4: File Reordering ===
 	t.Run("FileReordering", func(t *testing.T) {
-		t.Log("Testing file addition in middle of list (reordering)...")
+		t.Log("Testing file addition in middle of list (reordering) using stack...")
 
-		// Start with two files
-		initialReorderContent := `resource "tofukit_project" "hello_world" {
-  name        = "hello-world"
-  description = "A simple hello world project"
-  version     = "1.0.0"
+		// Start with a stack containing files
+		initialReorderContent := `resource "tofukit_stack" "plaintext" {
+  name        = "plaintext-stack"
+  description = "Stack with plain text files"
 
   file {
     path = "first.txt"
@@ -304,10 +303,26 @@ EOF
 last file content
 EOF
   }
+
+  file {
+    path = "file-from-stack.txt"
+    content = <<-EOF
+this file comes from the stack
+EOF
+  }
+}
+
+resource "tofukit_project" "hello_world" {
+  name        = "hello-world"
+  description = "A simple hello world project"
+  version     = "1.0.0"
+
+  # Project depends on the stack
+  depends_on = [tofukit_stack.plaintext]
 }
 `
 		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(initialReorderContent), 0644)
-		require.NoError(t, err, "Failed to write initial reorder configuration")
+		require.NoError(t, err, "Failed to write initial reorder configuration with stack")
 
 		// Apply to create initial files
 		runApply(t)
@@ -315,16 +330,18 @@ EOF
 		// Verify initial files exist
 		firstPath := filepath.Join(projectPath, "first.txt")
 		lastPath := filepath.Join(projectPath, "last.txt")
+		stackFilePath := filepath.Join(projectPath, "file-from-stack.txt")
 		assert.FileExists(t, firstPath, "first.txt should exist")
 		assert.FileExists(t, lastPath, "last.txt should exist")
+		assert.FileExists(t, stackFilePath, "file-from-stack.txt should exist")
 		verifyFileContent(t, firstPath, "first file content")
 		verifyFileContent(t, lastPath, "last file content")
+		verifyFileContent(t, stackFilePath, "this file comes from the stack")
 
-		// Now insert a file in the middle
-		reorderedContent := `resource "tofukit_project" "hello_world" {
-  name        = "hello-world"
-  description = "A simple hello world project"
-  version     = "1.0.0"
+		// Now insert a file in the middle of the stack
+		reorderedContent := `resource "tofukit_stack" "plaintext" {
+  name        = "plaintext-stack"
+  description = "Stack with plain text files"
 
   file {
     path = "first.txt"
@@ -346,28 +363,47 @@ EOF
 last file content
 EOF
   }
+
+  file {
+    path = "file-from-stack.txt"
+    content = <<-EOF
+this file comes from the stack
+EOF
+  }
+}
+
+resource "tofukit_project" "hello_world" {
+  name        = "hello-world"
+  description = "A simple hello world project"
+  version     = "1.0.0"
+
+  # Project depends on the stack
+  depends_on = [tofukit_stack.plaintext]
 }
 `
 		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(reorderedContent), 0644)
-		require.NoError(t, err, "Failed to write reordered configuration")
+		require.NoError(t, err, "Failed to write reordered configuration with stack")
 
 		// Apply the changes
 		runApply(t)
 
-		// Verify all three files exist with correct content
+		// Verify all files exist with correct content
 		middlePath := filepath.Join(projectPath, "middle.txt")
 
-		// Check all files exist
+		// Check all files exist - THIS SHOULD FAIL with the current bug
+		// because the project doesn't detect stack file changes
 		assert.FileExists(t, firstPath, "first.txt should still exist after reordering")
-		assert.FileExists(t, middlePath, "middle.txt should be created")
+		assert.FileExists(t, middlePath, "middle.txt should be created") // This will FAIL with current bug
 		assert.FileExists(t, lastPath, "last.txt should still exist after reordering")
+		assert.FileExists(t, stackFilePath, "file-from-stack.txt should still exist")
 
 		// Verify content is correct
 		verifyFileContent(t, firstPath, "first file content")
 		verifyFileContent(t, middlePath, "middle file content")
 		verifyFileContent(t, lastPath, "last file content")
+		verifyFileContent(t, stackFilePath, "this file comes from the stack")
 
-		t.Log("✓ File reordering handled correctly - all files exist with correct content")
+		t.Log("✓ File reordering in stack handled correctly - all files exist with correct content")
 	})
 
 	// === SUBTEST 5: Debug Files Verification ===

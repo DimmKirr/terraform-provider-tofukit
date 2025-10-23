@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,4 +207,115 @@ func copyDir(src, dst string) error {
 	}
 
 	return nil
+}
+
+// removeQuarantineAttributes removes macOS quarantine attributes from provider binaries
+// This is needed on macOS when OpenTofu copies binaries from filesystem_mirror
+func removeQuarantineAttributes(t *testing.T, testDir string) {
+	// Only run on macOS
+	if fileExists("/usr/bin/xattr") {
+		providerDir := filepath.Join(testDir, ".terraform", "providers")
+		t.Logf("Looking for provider binaries in: %s", providerDir)
+
+		if _, err := os.Stat(providerDir); err == nil {
+			// Find all provider binaries and remove quarantine
+			count := 0
+			allFiles := 0
+			filepath.Walk(providerDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					t.Logf("Walk error at %s: %v", path, err)
+					return nil
+				}
+
+				// Skip directories
+				if info.IsDir() {
+					return nil
+				}
+
+				allFiles++
+
+				// If it's a symlink, resolve it and check the target
+				realPath := path
+				if info.Mode()&os.ModeSymlink != 0 {
+					t.Logf("Found symlink: %s", path)
+					target, err := filepath.EvalSymlinks(path)
+					if err != nil {
+						t.Logf("Failed to resolve symlink %s: %v", path, err)
+						return nil
+					}
+					t.Logf("Symlink resolves to: %s", target)
+					realPath = target
+
+					// Get info about the target
+					targetInfo, err := os.Stat(target)
+					if err != nil {
+						t.Logf("Failed to stat symlink target %s: %v", target, err)
+						return nil
+					}
+					info = targetInfo
+				}
+
+				t.Logf("Found file: %s (mode: %v, perm: %04o, executable: %v)",
+					realPath, info.Mode(), info.Mode().Perm(), (info.Mode().Perm()&0111) != 0)
+
+				// If the symlink target is a directory, walk it to find binaries
+				if info.IsDir() {
+					t.Logf("Symlink target is a directory, walking it: %s", realPath)
+					filepath.Walk(realPath, func(binPath string, binInfo os.FileInfo, binErr error) error {
+						if binErr != nil {
+							return nil
+						}
+						if !binInfo.IsDir() && binInfo.Mode().IsRegular() && (binInfo.Mode().Perm()&0111) != 0 {
+							t.Logf("Found executable in directory: %s", binPath)
+
+							// Remove quarantine attribute
+							cmd := exec.Command("xattr", "-d", "com.apple.quarantine", binPath)
+							if err := cmd.Run(); err != nil {
+								t.Logf("xattr returned: %v (ok if attribute doesn't exist)", err)
+							}
+
+							// Ad-hoc sign the binary
+							cmd = exec.Command("codesign", "-s", "-", "-f", binPath)
+							if output, err := cmd.CombinedOutput(); err != nil {
+								t.Logf("codesign failed: %v, output: %s", err, string(output))
+							} else {
+								t.Logf("Successfully signed: %s", binPath)
+							}
+							count++
+						}
+						return nil
+					})
+				} else if info.Mode().IsRegular() && (info.Mode().Perm()&0111) != 0 {
+					// This is an executable file, remove quarantine and codesign
+					t.Logf("Processing executable binary: %s", realPath)
+
+					// Remove quarantine attribute
+					cmd := exec.Command("xattr", "-d", "com.apple.quarantine", realPath)
+					if err := cmd.Run(); err != nil {
+						t.Logf("xattr command returned: %v (this is ok if attribute doesn't exist)", err)
+					}
+
+					// Ad-hoc sign the binary
+					cmd = exec.Command("codesign", "-s", "-", "-f", realPath)
+					if output, err := cmd.CombinedOutput(); err != nil {
+						t.Logf("codesign failed: %v, output: %s", err, string(output))
+					} else {
+						t.Logf("Successfully signed: %s", realPath)
+					}
+
+					count++
+				}
+				return nil
+			})
+			t.Logf("Found %d total files, processed %d executable binaries", allFiles, count)
+		} else {
+			t.Logf("Provider directory does not exist: %s", providerDir)
+		}
+	}
+}
+
+// fileExists checks if a file exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

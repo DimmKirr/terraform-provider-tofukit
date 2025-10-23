@@ -13,10 +13,6 @@ import (
 )
 
 func TestDataQuerySimple(t *testing.T) {
-	// Set TF_LOG=DEBUG for debug logging
-	os.Setenv("TF_LOG", "DEBUG")
-	defer os.Unsetenv("TF_LOG")
-
 	// Create unique test directory in test-output
 	testDir := createTestDirectory(t, "TestDataQuerySimple")
 
@@ -24,20 +20,8 @@ func TestDataQuerySimple(t *testing.T) {
 	// The flag bypasses all authentication and permission checks
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
-	// Get project root
-	projectRoot, err := filepath.Abs("..")
-	require.NoError(t, err)
-
-	// Step 1: Build and install the provider locally
-	t.Log("Building and installing provider...")
-	buildCmd := exec.Command("make", "install")
-	buildCmd.Dir = projectRoot
-	output, err := buildCmd.CombinedOutput()
-	require.NoError(t, err, "Failed to build provider: %s", output)
-	t.Log("✓ Provider built and installed successfully")
-
-	// Step 2: No need to setup test files for simple query
-	t.Log("Skipping test file setup - using simple query")
+	// Assume provider is already built and installed via `make install`
+	// Run `make install` manually before running tests if needed
 
 	// Step 3: Generate main.tofu with provider configuration and data query
 	mainTofuContent := `# Terraform configuration for data query test
@@ -87,7 +71,7 @@ output "query_id" {
   description = "Query ID"
 }
 `
-	err = os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
+	err := os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
 	require.NoError(t, err, "Failed to write main.tofu")
 
 	// Step 4: Check if terraform/tofu is available
@@ -105,10 +89,10 @@ output "query_id" {
 	// Clean up resources at the end
 	defer func() {
 		if os.Getenv("SKIP_DESTROY") == "true" {
-			t.Log("Skipping cleanup due to SKIP_DESTROY=true")
+			t.Logf("Skipping cleanup due to SKIP_DESTROY=true")
 			t.Logf("Test directory preserved at: %s", testDir)
 		} else {
-			t.Log("Debug mode enabled - preserving output directory for inspection")
+			t.Logf("Debug mode enabled - preserving output directory for inspection")
 			t.Logf("Debug files should be in: %s/output/.debug/", testDir)
 		}
 	}()
@@ -117,10 +101,9 @@ output "query_id" {
 	t.Log("Running tofu init...")
 	initCmd := exec.Command(iacTool, "init", "-no-color")
 	initCmd.Dir = testDir
-	initOutput, err := initCmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Init output: %s", initOutput)
-	}
+	initCmd.Stdout = os.Stdout
+	initCmd.Stderr = os.Stderr
+	err = initCmd.Run()
 	require.NoError(t, err, "Failed to run init")
 	t.Log("✓ Init completed successfully")
 
@@ -128,19 +111,19 @@ output "query_id" {
 	t.Log("Running tofu plan...")
 	planCmd := exec.Command(iacTool, "plan", "-no-color")
 	planCmd.Dir = testDir
-	planOutput, err := planCmd.CombinedOutput()
-	require.NoError(t, err, "Failed to run plan: %s", planOutput)
-	t.Logf("Plan output:\n%s", planOutput)
+	planCmd.Stdout = os.Stdout
+	planCmd.Stderr = os.Stderr
+	err = planCmd.Run()
+	require.NoError(t, err, "Failed to run plan")
 	t.Log("✓ Plan completed successfully")
 
 	// Step 7: Run apply
 	t.Log("Running tofu apply --auto-approve...")
 	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
 	applyCmd.Dir = testDir
-	applyOutput, err := applyCmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Apply output: %s", applyOutput)
-	}
+	applyCmd.Stdout = os.Stdout
+	applyCmd.Stderr = os.Stderr
+	err = applyCmd.Run()
 	require.NoError(t, err, "Failed to run apply")
 	t.Log("✓ Apply completed successfully")
 
@@ -165,6 +148,22 @@ output "query_id" {
 		t.Logf("Parse error: %v", err)
 	}
 	require.NoError(t, err, "Failed to parse outputs JSON")
+
+	// Save outputs to outputs.json
+	outputsFile := filepath.Join(testDir, "outputs.json")
+	outputsJSON, err := json.MarshalIndent(outputs, "", "  ")
+	require.NoError(t, err, "Failed to marshal outputs")
+	err = os.WriteFile(outputsFile, outputsJSON, 0644)
+	require.NoError(t, err, "Failed to write outputs.json")
+	t.Logf("Outputs saved to: %s", outputsFile)
+
+	// Save state to state.json
+	stateFile := filepath.Join(testDir, "state.json")
+	stateContent, err := os.ReadFile(filepath.Join(testDir, "terraform.tfstate"))
+	require.NoError(t, err, "Failed to read terraform.tfstate")
+	err = os.WriteFile(stateFile, stateContent, 0644)
+	require.NoError(t, err, "Failed to write state.json")
+	t.Logf("State saved to: %s", stateFile)
 
 	// Verify query_id exists
 	queryID, ok := outputs["query_id"].(map[string]interface{})

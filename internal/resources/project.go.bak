@@ -22,8 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/registry
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
@@ -44,8 +44,8 @@ type ProjectModelFinal struct {
 	Version            types.String               `tfsdk:"version"`
 	StackRef           types.String               `tfsdk:"stack_ref"` // Reference to the primary stack this project instantiates
 	Requirements       []schemas.RequirementModel `tfsdk:"requirement"`
-	Kits               types.Map                  `tfsdk:"kits"` // Additional kits to customize the stack
-	Files              []schemas.FileModel        `tfsdk:"file"` // Project-specific file overrides
+	Kits               types.Map                  `tfsdk:"kits"`  // Additional kits to customize the stack
+	Files              []schemas.FileModel        `tfsdk:"file"`  // Project-specific file overrides
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
 	ExecutionStarted   types.String               `tfsdk:"execution_started"`
 	ExecutionCompleted types.String               `tfsdk:"execution_completed"`
@@ -216,18 +216,16 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.ExecutionCompleted = types.StringValue("")
 	data.ExecutionError = types.StringValue("")
 	data.ProjectPath = types.StringValue(filepath.Join(outputPath, data.Name.ValueString()))
-
-	// Collect merged files FIRST to compute correct hash
-	mergedFiles := r.collectAndMergeFiles(ctx, data)
-
-	// Use merged files for hash to track ALL files (including from stacks)
-	data.FileHash = types.StringValue(r.computeFileHash(mergedFiles))
+	data.FileHash = types.StringValue(r.computeFileHash(data.Files))
 	// Initialize LastApplied with current time since files will be applied
 	data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 
 	// Execute Claude Code - Claude will create all files based on files
 	data.ExecutionStatus = types.StringValue("pending")
 	data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
+
+	// Collect files FIRST
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
 
 	// Build output data AFTER collecting files to ensure they're included
 	outputData := r.buildOutputData(ctx, data)
@@ -255,7 +253,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 			"Claude Code Execution Failed",
 			fmt.Sprintf("Failed to execute Claude Code for project '%s': %s\n\n"+
 				"Check the debug files in %s/.debug/ for more details.",
-				data.Name.ValueString(), err.Error(), outputPath),
+			data.Name.ValueString(), err.Error(), outputPath),
 		)
 		return
 	} else {
@@ -330,7 +328,7 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	tflog.Info(ctx, "Updated output files during Read", map[string]interface{}{
-		"project_id":   data.ID.ValueString(),
+		"project_id":       data.ID.ValueString(),
 		"merged_files": len(mergedFiles),
 	})
 
@@ -398,20 +396,8 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		debug = provData.GetDebug()
 	}
 
-	// Collect merged files from both old state and new data to detect ALL changes
-	// This includes changes to stack files, not just project files
-	// Note: During initial creation, state might be empty, so handle gracefully
-	var oldMergedFiles []schemas.FileModel
-	var newMergedFiles []schemas.FileModel
-
-	// Only try to collect old files if we have an existing ID (not a new resource)
-	if !state.ID.IsNull() && !state.ID.IsUnknown() {
-		oldMergedFiles = r.collectAndMergeFiles(ctx, state)
-	}
-	newMergedFiles = r.collectAndMergeFiles(ctx, data)
-
-	// Detect file changes using merged files (includes stack files)
-	fileChanged := r.detectFileChanges(ctx, oldMergedFiles, newMergedFiles)
+	// Detect file changes using fingerprinting
+	fileChanged := r.detectFileChanges(ctx, state.Files, data.Files)
 
 	// Preserve ID and project path from existing state
 	data.ID = state.ID
@@ -422,11 +408,9 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	if fileChanged {
 		tflog.Info(ctx, "File changes detected, triggering re-execution", map[string]interface{}{
-			"project_id":        data.ID.ValueString(),
-			"old_merged_files":  len(oldMergedFiles),
-			"new_merged_files":  len(newMergedFiles),
-			"old_project_files": len(state.Files),
-			"new_project_files": len(data.Files),
+			"project_id":    data.ID.ValueString(),
+			"old_files": len(state.Files),
+			"new_files": len(data.Files),
 		})
 
 		// Always execute Claude Code for file changes
@@ -475,26 +459,128 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			return
 		} else {
 			// Only update hash and LastApplied on successful execution
-			// Use merged files for hash to track ALL file changes (including from stacks)
-			data.FileHash = types.StringValue(r.computeFileHash(mergedFiles))
+			data.FileHash = types.StringValue(r.computeFileHash(data.Files))
 			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 			// Preserve the original timestamps even on successful re-execution
 			data.ExecutionStarted = state.ExecutionStarted
 			data.ExecutionCompleted = state.ExecutionCompleted
 		}
 
+				// Convert relative path to absolute
+				if !filepath.IsAbs(projectDir) {
+					if cwd, err := os.Getwd(); err == nil {
+						projectDir = filepath.Join(cwd, projectDir)
+					}
+				}
+
+				fileMgr := files.NewManager(projectDir)
+
+				// Get merged files from all sources
+				oldMergedFiles := r.collectAndMergeFiles(ctx, state)
+				newMergedFiles := r.collectAndMergeFiles(ctx, data)
+
+				// Build output data AFTER collecting files to ensure they're included
+				outputData := r.buildOutputData(ctx, data)
+				r.writeJSONFile(ctx, data, outputData, outputPath)
+
+				// Write debug files if debug mode is enabled
+				if debug {
+					r.writeDebugFiles(ctx, data, outputData, outputPath)
+				}
+
+				// Process file changes (removes deleted files, creates new ones)
+				if err := fileMgr.ProcessFileChanges(ctx, oldMergedFiles, newMergedFiles); err != nil {
+					tflog.Error(ctx, "Failed to process file preview changes", map[string]interface{}{
+						"error": err.Error(),
+					})
+					// Set error but continue the operation
+					data.ExecutionError = types.StringValue(fmt.Sprintf("File update failed: %v", err))
+					// Preserve LastApplied from state on error
+					data.LastApplied = state.LastApplied
+					// Ensure LastApplied is never unknown
+					if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
+						data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+					}
+				} else {
+					// Clear any previous errors and update timestamp and hash
+					data.ExecutionError = types.StringValue("")
+					data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+					data.FileHash = types.StringValue(r.computeFileHash(data.Files))
+				}
+
+				// Preserve dry-run status and timestamps from state
+				data.ExecutionStatus = state.ExecutionStatus
+				data.ExecutionStarted = state.ExecutionStarted
+				data.ExecutionCompleted = state.ExecutionCompleted
+			}
+		} else {
+			// In execution mode, trigger Claude Code with the updated specification
+			// Preserve existing timestamps - they represent when the project was first executed
+			// Only update status to reflect the re-execution
+			data.ExecutionStatus = types.StringValue("pending")
+			// IMPORTANT: Preserve timestamps from state to avoid provider inconsistency
+			data.ExecutionStarted = state.ExecutionStarted
+			data.ExecutionCompleted = state.ExecutionCompleted
+			// Clear any previous error since we're re-executing
+			data.ExecutionError = types.StringValue("")
+
+			// Execute Claude Code with the updated specification and merged files
+			mergedFiles := r.collectAndMergeFiles(ctx, data)
+
+			// Build output data AFTER collecting files to ensure they're included
+			outputData := r.buildOutputData(ctx, data)
+			r.writeJSONFile(ctx, data, outputData, outputPath)
+
+			// Write debug files if debug mode is enabled
+			if debug {
+				r.writeDebugFiles(ctx, data, outputData, outputPath)
+			}
+
+			if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, true); err != nil {
+				// Set error status and fail the resource update
+				data.ExecutionStatus = types.StringValue("failed")
+				data.ExecutionError = types.StringValue(err.Error())
+				// Preserve the original completed timestamp and LastApplied
+				data.ExecutionCompleted = state.ExecutionCompleted
+				data.LastApplied = state.LastApplied
+				// Ensure LastApplied is never unknown
+				if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
+					data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+				}
+				tflog.Error(ctx, "Claude Code execution failed during update", map[string]interface{}{
+					"project_id": data.ID.ValueString(),
+					"error":      err.Error(),
+				})
+				// Fail the resource update with a clear error message
+				resp.Diagnostics.AddError(
+					"Claude Code Execution Failed During Update",
+					fmt.Sprintf("Failed to execute Claude Code for project '%s' update: %s\n\n"+
+						"Check the debug files in %s/.debug/ for more details.",
+						data.Name.ValueString(), err.Error(), outputPath),
+				)
+				return
+			} else {
+				// Only update hash and LastApplied on successful execution
+				data.FileHash = types.StringValue(r.computeFileHash(data.Files))
+				data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+				// Preserve the original timestamps even on successful re-execution
+				data.ExecutionStarted = state.ExecutionStarted
+				data.ExecutionCompleted = state.ExecutionCompleted
+			}
+		}
+	} else {
 		// No file changes detected, preserve existing execution state
 		tflog.Info(ctx, "No file changes detected, preserving execution state", map[string]interface{}{
-			"project_id": data.ID.ValueString(),
+			"project_id":     data.ID.ValueString(),
 			"file_count": len(data.Files),
 		})
 
 		// Still need to update output files with current configuration (including files from stacks)
 		// Collect merged files to ensure stack files are included
-		mergedFiles = r.collectAndMergeFiles(ctx, data)
+		mergedFiles := r.collectAndMergeFiles(ctx, data)
 
 		// Build output data with all files
-		outputData = r.buildOutputData(ctx, data)
+		outputData := r.buildOutputData(ctx, data)
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
 		// Write debug files if debug mode is enabled
@@ -528,7 +614,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	tflog.Info(ctx, "Updated project configuration", map[string]interface{}{
 		"project_id":       data.ID.ValueString(),
-		"file_changed":     fileChanged,
+		"file_changed": fileChanged,
 		"execution_status": data.ExecutionStatus.ValueString(),
 		"last_applied":     data.LastApplied.ValueString(),
 	})
@@ -569,19 +655,21 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 			}
 
 			// Clean up any generated project
-			executor := claude.NewExecutor(claudeHomeDir)
-			if err := executor.CleanupProject(ctx, projectPath); err != nil {
-				tflog.Warn(ctx, "Failed to cleanup generated project", map[string]interface{}{
-					"project_id":   data.ID.ValueString(),
-					"project_path": projectPath,
-					"error":        err.Error(),
-				})
-				// Don't fail deletion for cleanup issues
-			} else {
-				tflog.Info(ctx, "Cleaned up generated project", map[string]interface{}{
-					"project_id":   data.ID.ValueString(),
-					"project_path": projectPath,
-				})
+			{
+				executor := claude.NewExecutor(claudeHomeDir)
+				if err := executor.CleanupProject(ctx, projectPath); err != nil {
+					tflog.Warn(ctx, "Failed to cleanup generated project", map[string]interface{}{
+						"project_id":   data.ID.ValueString(),
+						"project_path": projectPath,
+						"error":        err.Error(),
+					})
+					// Don't fail deletion for cleanup issues
+				} else {
+					tflog.Info(ctx, "Cleaned up generated project", map[string]interface{}{
+						"project_id":   data.ID.ValueString(),
+						"project_path": projectPath,
+					})
+				}
 			}
 		}
 	}
@@ -976,22 +1064,19 @@ func (r *ProjectResourceFinal) ValidateConfig(ctx context.Context, req resource.
 	}
 
 	// Get provider configuration to check Claude Code availability if not in dry run
-	// Note: ProviderData might be nil during validation phase
-	if r.ProviderData != nil {
-		if provData, ok := r.ProviderData.(interface {
-			GetClaudeHomeDirectory() string
-		}); ok {
-			// Validate Claude Code availability
-			claudeHomeDir := provData.GetClaudeHomeDirectory()
-			executor := claude.NewExecutor(claudeHomeDir)
-			if err := executor.Validate(ctx); err != nil {
-				resp.Diagnostics.AddWarning(
-					"Claude Code Validation",
-					fmt.Sprintf("Claude Code CLI may not be available: %v. "+
-						"This will cause execution to fail. "+
-						"Ensure Claude Code CLI is installed and accessible.", err),
-				)
-			}
+	if provData, ok := r.ProviderData.(interface {
+		GetClaudeHomeDirectory() string
+	}); ok {
+		// Validate Claude Code availability
+		claudeHomeDir := provData.GetClaudeHomeDirectory()
+		executor := claude.NewExecutor(claudeHomeDir)
+		if err := executor.Validate(ctx); err != nil {
+			resp.Diagnostics.AddWarning(
+				"Claude Code Validation",
+				fmt.Sprintf("Claude Code CLI may not be available: %v. "+
+					"This will cause execution to fail. "+
+					"Ensure Claude Code CLI is installed and accessible.", err),
+			)
 		}
 	}
 }
@@ -1046,7 +1131,7 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	}
 
 	// Build the actual JSON prompt that will be sent to Claude
-	claudeClient := claude.NewClient("") // temp client just for building prompt
+	claudeClient := claude.NewClient("", false) // temp client just for building prompt
 	jsonPrompt, _ := claudeClient.BuildPrompt(projectSpec)
 
 	// Write claude-prompt.json - the actual JSON prompt that gets sent to Claude
@@ -1209,18 +1294,18 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 			if stackData, exists := reg.GetStack(stackRef); exists {
 				if stack, ok := stackData.(StackResourceModel); ok {
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
-						"stack_ref":  stackRef,
+						"stack_ref":      stackRef,
 						"file_count": len(stack.Files),
-						"stack_name": stack.Name.ValueString(),
+						"stack_name":     stack.Name.ValueString(),
 					})
 
 					// Log the actual files with verification details
 					for i, file := range stack.Files {
 						logData := map[string]interface{}{
-							"index":              i,
-							"path":               file.Path.ValueString(),
-							"has_verifications":  len(file.Verification) > 0,
-							"verification_count": len(file.Verification),
+							"index":               i,
+							"path":                file.Path.ValueString(),
+							"has_verifications":   len(file.Verification) > 0,
+							"verification_count":  len(file.Verification),
 						}
 
 						if len(file.Verification) > 0 {
@@ -1275,9 +1360,9 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 
 				if stack, ok := stackData.(StackResourceModel); ok {
 					tflog.Info(ctx, "Processing stack files", map[string]interface{}{
-						"stack_id":   stackID,
+						"stack_id":       stackID,
 						"file_count": len(stack.Files),
-						"stack_name": stack.Name.ValueString(),
+						"stack_name":     stack.Name.ValueString(),
 					})
 
 					// Add stack's files
@@ -1298,25 +1383,16 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	// merger.AddFiles(ctx, kitFiles, files.SourceProject)
 
 	// Finally, add project's own files (highest precedence)
-	if data.Files != nil {
-		merger.AddFiles(ctx, data.Files, files.SourceProject)
-	}
+	merger.AddFiles(ctx, data.Files, files.SourceProject)
 
 	// Get the final merged list
 	mergedFiles := merger.GetMergedFiles()
 
-	// Build log attributes safely
-	logAttrs := map[string]interface{}{
+	tflog.Info(ctx, "Merged files from all sources", map[string]interface{}{
 		"total_count":   len(mergedFiles),
+		"stack_ref":     data.StackRef.ValueString(),
 		"project_count": len(data.Files),
-	}
-
-	// Only add stack_ref if it's not null
-	if !data.StackRef.IsNull() && !data.StackRef.IsUnknown() {
-		logAttrs["stack_ref"] = data.StackRef.ValueString()
-	}
-
-	tflog.Info(ctx, "Merged files from all sources", logAttrs)
+	})
 
 	return mergedFiles
 }

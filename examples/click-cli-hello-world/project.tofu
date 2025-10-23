@@ -122,16 +122,16 @@ resource "tofukit_stack" "click_app" {
   }
 
 
-  # demo txt
+  # demo2 txt
   file {
-    path = "demo.txt"
+    path = "demo2.txt"
     content = <<-EOF
     hello world
     EOF
 
     verification {
-      command = "cat demo.txt"
-      expect  = "hello world"
+      command = "cat demo2.txt"
+      expect  = "hello world2"
     }
   }
 
@@ -152,17 +152,6 @@ resource "tofukit_stack" "click_app" {
     }
   }
 
-  # demo txt
-  file {
-    path = "demo.txt"
-    content = <<-EOF
-    hello world
-    EOF
 
-    verification {
-      command = "cat demo.txt"
-      expect  = "hello world"
-    }
-  }
 }
 
