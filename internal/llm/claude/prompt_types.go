@@ -139,6 +139,25 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		systemPrompt = DefaultSystemPrompt()
 	}
 
+	// Check if this is a fix request
+	instructions := []string{
+		"**CRITICAL - Working Directory**: ALL files must be created directly in the current working directory. DO NOT create any project-name subdirectories. DO NOT use 'cd' commands. The current directory IS the project directory.",
+		"**Managing file files**: If the specification includes \"files\", create these files exactly as specified **in the current working directory** with their exact paths and content. IMPORTANT: All file operations must be performed in the current working directory (use pwd to verify). Never create files in /tmp/ or other directories. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
+		"**Analyzing the specification**: Understand all the requirements, kits, and dependencies specified in the JSON",
+		"**Creating files**: Create files and directories as needed (e.g., 'src/cli.py' requires creating 'src/' directory), but all paths are relative to current directory - DO NOT create a project-name directory",
+		"**Implementing all requirements**: Follow each requirement listed in the \"requirements\" section",
+		"**Installing and configuring all kits**: Set up all the tools, frameworks, languages, and methodologies specified in the \"kits\" section",
+		"**Following verification steps**: Ensure each requirement can be verified as specified",
+	}
+
+	// If this is a fix request, prepend fix instructions
+	if fixRequest, ok := projectSpec["_fix_request"].(map[string]interface{}); ok {
+		if fixInstructions, ok := fixRequest["instructions"].(string); ok {
+			// Prepend fix instructions to the beginning
+			instructions = append([]string{fixInstructions}, instructions...)
+		}
+	}
+
 	// Build the structured prompt
 	prompt := &ProjectPrompt{
 		SystemPrompt: systemPrompt,
@@ -146,19 +165,12 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			Type:          "project_implementation",
 			ProjectInfo:   projectInfo,
 			Specification: projectSpec,
-			Instructions: []string{
-				"**Managing file files**: If the specification includes \"files\", create these files exactly as specified with their exact paths and content. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
-				"**Analyzing the specification**: Understand all the requirements, kits, and dependencies specified in the JSON",
-				"**Creating the project structure**: Set up appropriate directories and files based on the project type and requirements",
-				"**Implementing all requirements**: Follow each requirement listed in the \"requirements\" section with proper priority ordering",
-				"**Installing and configuring all kits**: Set up all the tools, frameworks, languages, and methodologies specified in the \"kits\" section",
-				"**Following verification steps**: Ensure each requirement can be verified as specified",
-				"**Creating comprehensive documentation**: Include README, setup instructions, and usage examples",
-			},
+			Instructions:  instructions,
 			FileDetails: &FileInstructions{
 				Description: "IMPORTANT: If the specification contains a \"files\" array, you MUST manage these files exactly as specified:",
 				Rules: []string{
-					"Create each file at the exact path specified in the files array",
+					"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
+					"Create each file at the exact path specified in the files array (relative to current working directory)",
 					"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
 					"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
 					"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",
@@ -206,7 +218,6 @@ Your task is to implement complete, production-ready projects based on detailed 
 - Setting up project structures and development environments
 - Installing and configuring development tools and dependencies
 - Implementing features following best practices and coding standards
-- Creating comprehensive documentation and examples
 - Setting up testing, linting, and build processes
 - Following specified methodologies and architectural patterns
 
@@ -215,9 +226,8 @@ When implementing projects:
 2. Create well-structured, maintainable code
 3. Include comprehensive error handling
 4. Set up proper development toolchains
-5. Write clear documentation and examples
-6. Ensure all verification steps pass
-7. Follow language-specific best practices and conventions
+5. Ensure all verification steps pass
+6. Follow language-specific best practices and conventions
 
 Focus on creating production-ready deliverables that developers can immediately use and extend.`
 }

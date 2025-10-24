@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
 )
 
 // ManualTestConfig contains configuration for manual testing

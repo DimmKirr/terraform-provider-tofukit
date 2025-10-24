@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -25,11 +24,11 @@ type StackResource struct {
 }
 
 type StackResourceModel struct {
-	ID          types.String         `tfsdk:"id"`
-	Name        types.String         `tfsdk:"name"`
-	Description types.String         `tfsdk:"description"`
-	Kits        types.Map            `tfsdk:"kits"`  // Kits that compose this stack
-	Files       []schemas.FileModel  `tfsdk:"file"`  // Stack's own files
+	ID          types.String        `tfsdk:"id"`
+	Name        types.String        `tfsdk:"name"`
+	Description types.String        `tfsdk:"description"`
+	Kits        types.Dynamic       `tfsdk:"kits"` // Kits that compose this stack (list of kit references)
+	Files       []schemas.FileModel `tfsdk:"file"` // Stack's own files
 	// Removed OutputPath - stacks now contribute files to project, not separate directories
 }
 
@@ -59,36 +58,9 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Description of the stack",
 				Optional:            true,
 			},
-			"kits": schema.MapAttribute{
-				MarkdownDescription: "Map of kits that compose this stack",
+			"kits": schema.DynamicAttribute{
+				MarkdownDescription: "List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_framework.click])",
 				Optional:            true,
-				ElementType: types.ObjectType{
-					AttrTypes: map[string]attr.Type{
-						"id":          types.StringType,
-						"type":        types.StringType,
-						"name":        types.StringType,
-						"description": types.StringType,
-						"version":     types.StringType,
-						"requirements": types.ListType{
-							ElemType: types.ObjectType{
-								AttrTypes: map[string]attr.Type{
-									"name": types.StringType,
-									"instructions": types.ListType{
-										ElemType: types.StringType,
-									},
-									"verification": types.ListType{
-										ElemType: types.ObjectType{
-											AttrTypes: map[string]attr.Type{
-												"command": types.StringType,
-												"expect":  types.StringType,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
 			},
 		},
 
@@ -114,11 +86,11 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// Debug: Log files in Create
 	for i, file := range data.Files {
 		logData := map[string]interface{}{
-			"stack_id":            data.ID.ValueString(),
-			"index":               i,
-			"path":                file.Path.ValueString(),
-			"has_verifications":    len(file.Verification) > 0,
-			"verification_count":   len(file.Verification),
+			"stack_id":           data.ID.ValueString(),
+			"index":              i,
+			"path":               file.Path.ValueString(),
+			"has_verifications":  len(file.Verification) > 0,
+			"verification_count": len(file.Verification),
 		}
 
 		if len(file.Verification) > 0 {
@@ -149,7 +121,7 @@ func (r *StackResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	// Save to registry so it's available for other resources
 	// This is important when resources already exist in state
 	tflog.Info(ctx, "Stack Read: Saving to registry", map[string]interface{}{
-		"stack_id":    data.ID.ValueString(),
+		"stack_id":   data.ID.ValueString(),
 		"file_count": len(data.Files),
 	})
 

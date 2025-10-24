@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
 // Executor manages Claude Code execution lifecycle for Terraform resources
@@ -18,6 +20,7 @@ type Executor struct {
 	client     *Client
 	debug      bool
 	outputPath string
+	model      string
 }
 
 // NewExecutor creates a new Claude Code executor
@@ -43,8 +46,12 @@ func (e *Executor) SetOutputPath(outputPath string) {
 
 // SetSystemPrompt sets the custom system prompt
 func (e *Executor) SetSystemPrompt(systemPrompt string) {
-	// Store system prompt for later use
-	// Note: client.SetSystemPrompt is not available in current implementation
+	e.client.SetSystemPrompt(systemPrompt)
+}
+
+// SetModel sets the model to use for execution
+func (e *Executor) SetModel(model string) {
+	e.model = model
 }
 
 // ExecutionStatus represents the status of a Claude Code execution
@@ -93,25 +100,18 @@ func (e *Executor) Execute(ctx context.Context, projectSpec map[string]interface
 		}
 	}
 
-	// Determine project path - use project name from spec or default
-	projectName := "project"
-	if project, ok := projectSpec["project"].(map[string]interface{}); ok {
-		if name, ok := project["name"].(string); ok {
-			projectName = name
-		}
-	}
-	projectPath := filepath.Join(outputDir, projectName)
-	status.ProjectPath = projectPath
+	// Files created directly in output directory, not in project-name subdirectory
+	status.ProjectPath = outputDir
 
-	// Ensure project directory exists
-	if err := os.MkdirAll(projectPath, 0755); err != nil {
-		tflog.Error(ctx, "Failed to create project directory", map[string]interface{}{
-			"path":  projectPath,
+	// Ensure output directory exists
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		tflog.Error(ctx, "Failed to create output directory", map[string]interface{}{
+			"path":  outputDir,
 			"error": err.Error(),
 		})
 		status.State = "failed"
 		status.CompletedAt = time.Now().Format(time.RFC3339)
-		status.Error = fmt.Sprintf("Failed to create project directory: %v", err)
+		status.Error = fmt.Sprintf("Failed to create output directory: %v", err)
 		return status, err
 	}
 
@@ -119,7 +119,7 @@ func (e *Executor) Execute(ctx context.Context, projectSpec map[string]interface
 	execCtx, cancel := context.WithTimeout(ctx, 10*time.Minute) // 10 minute timeout
 	defer cancel()
 
-	result, err := e.client.ExecuteProject(execCtx, projectSpec, projectPath)
+	result, err := e.client.ExecuteProject(execCtx, projectSpec, outputDir, e.model)
 	if err != nil {
 		tflog.Error(ctx, "Claude Code execution failed", map[string]interface{}{
 			"error": err.Error(),
@@ -189,6 +189,325 @@ func (e *Executor) Execute(ctx context.Context, projectSpec map[string]interface
 	})
 
 	return status, nil
+}
+
+// Query sends a simple query to Claude and returns the response (no project creation)
+func (e *Executor) Query(ctx context.Context, instructions []string, model string) (string, error) {
+	// Default to "haiku" if no model specified (Claude-specific default)
+	if model == "" {
+		model = "haiku"
+	}
+
+	tflog.Info(ctx, "Executing Claude query", map[string]interface{}{
+		"instruction_count": len(instructions),
+		"model":             model,
+	})
+
+	// Join instructions into a single prompt
+	prompt := strings.Join(instructions, "\n")
+
+	// Execute Claude with a simple prompt (no -p flag)
+	result, err := e.client.ExecuteQuery(ctx, prompt, model)
+	if err != nil {
+		tflog.Error(ctx, "Claude query failed", map[string]interface{}{
+			"error": err.Error(),
+			"model": model,
+		})
+		return "", err
+	}
+
+	tflog.Info(ctx, "Claude query completed successfully", map[string]interface{}{
+		"output_length": len(result),
+		"model":         model,
+	})
+
+	return result, nil
+}
+
+// ExecuteWithVerification executes Claude with verification retry loop
+// If verifications fail, Claude receives the errors and retries until success or max retries
+func (e *Executor) ExecuteWithVerification(
+	ctx context.Context,
+	projectSpec map[string]interface{},
+	outputDir string,
+	filesToVerify []schemas.FileModel,
+	maxRetries int,
+) (*ExecutionStatus, *files.VerificationReport, error) {
+	var lastStatus *ExecutionStatus
+	var lastReport *files.VerificationReport
+
+	// Files should be created directly in outputDir, not in a subdirectory
+	projectPath := outputDir // Use outputDir directly, no subdirectory
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		tflog.Info(ctx, "Executing Claude with verification", map[string]interface{}{
+			"attempt":     attempt,
+			"max_retries": maxRetries,
+		})
+
+		// Execute Claude
+		status, err := e.Execute(ctx, projectSpec, outputDir)
+		if err != nil {
+			tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
+				"attempt": attempt,
+				"error":   err.Error(),
+			})
+			return status, nil, err
+		}
+
+		lastStatus = status
+
+		// Run verifications if we have files to verify
+		if len(filesToVerify) > 0 {
+			fileManager := files.NewManager(projectPath)
+			report, err := fileManager.RunVerifications(ctx, filesToVerify)
+			if err != nil {
+				tflog.Error(ctx, "Verification execution failed", map[string]interface{}{
+					"attempt": attempt,
+					"error":   err.Error(),
+				})
+				return status, nil, fmt.Errorf("verification execution failed: %w", err)
+			}
+
+			lastReport = report
+
+			// Check if all verifications passed
+			if report.AllPassed {
+				tflog.Info(ctx, "All verifications passed", map[string]interface{}{
+					"passed_count": report.PassedCount,
+					"attempt":      attempt,
+				})
+				return status, report, nil
+			}
+
+			// Verifications failed - prepare fix request if we have retries left
+			if attempt < maxRetries {
+				tflog.Warn(ctx, "Verifications failed, requesting fix from Claude", map[string]interface{}{
+					"failed_count": report.FailedCount,
+					"passed_count": report.PassedCount,
+					"attempt":      attempt,
+					"remaining":    maxRetries - attempt,
+				})
+
+				// Inject fix request into project spec for next attempt
+				projectSpec["_fix_request"] = map[string]interface{}{
+					"attempt":  attempt,
+					"failures": report.GetFailureSummary(),
+					"instructions": "🔧 **VERIFICATION FAILURES DETECTED**\n\n" +
+						"Your previous implementation had verification failures.\n\n" +
+						"**What you were asked to do:**\n" +
+						"See the original instructions in the project specification above.\n\n" +
+						"**What went wrong:**\n" +
+						report.GetFailureSummary() + "\n\n" +
+						"**What you need to do:**\n" +
+						"1. Analyze the verification failures carefully\n" +
+						"2. Identify the root cause of each failure\n" +
+						"3. Fix the issues in the affected files\n" +
+						"4. Ensure ALL verification commands will pass\n\n" +
+						"**Important:** Only modify the files that are causing verification failures. " +
+						"Do not make unnecessary changes to files that are working correctly.",
+				}
+
+				// Wait before retrying (exponential backoff)
+				waitTime := time.Duration(attempt) * time.Second
+				tflog.Info(ctx, "Waiting before retry", map[string]interface{}{
+					"wait_seconds": waitTime.Seconds(),
+				})
+				time.Sleep(waitTime)
+			}
+		} else {
+			// No verifications to run, success
+			tflog.Info(ctx, "No verifications defined, execution successful", map[string]interface{}{
+				"attempt": attempt,
+			})
+			return status, nil, nil
+		}
+	}
+
+	// All retries exhausted
+	tflog.Error(ctx, "Verifications failed after all retry attempts", map[string]interface{}{
+		"max_retries":  maxRetries,
+		"failed_count": lastReport.FailedCount,
+		"passed_count": lastReport.PassedCount,
+	})
+
+	return lastStatus, lastReport, fmt.Errorf(
+		"verifications failed after %d attempts (%d passed, %d failed):\n%s",
+		maxRetries,
+		lastReport.PassedCount,
+		lastReport.FailedCount,
+		lastReport.GetFailureSummary(),
+	)
+}
+
+// ExecuteWithPromptJSON executes Claude using a pre-built prompt JSON string
+// This is used during apply phase when the prompt was already generated and stored during plan
+func (e *Executor) ExecuteWithPromptJSON(
+	ctx context.Context,
+	promptJSON string,
+	outputDir string,
+	filesToVerify []schemas.FileModel,
+	maxRetries int,
+) (*ExecutionStatus, *files.VerificationReport, error) {
+	// Parse the prompt JSON to extract project specification
+	var projectSpec map[string]interface{}
+	if err := json.Unmarshal([]byte(promptJSON), &projectSpec); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse prompt JSON: %w", err)
+	}
+
+	// Extract project info from the prompt for determining project path
+	var projectName string
+	if request, ok := projectSpec["request"].(map[string]interface{}); ok {
+		if projInfo, ok := request["project_info"].(map[string]interface{}); ok {
+			if name, ok := projInfo["name"].(string); ok {
+				projectName = name
+			}
+		}
+	}
+
+	if projectName == "" {
+		projectName = "project" // fallback
+	}
+
+	// Files should be created directly in outputDir, not in a subdirectory
+	projectPath := outputDir // Use outputDir directly, no subdirectory
+	var lastStatus *ExecutionStatus
+	var lastReport *files.VerificationReport
+
+	tflog.Info(ctx, "Executing Claude with pre-built prompt from plan phase", map[string]interface{}{
+		"project_name": projectName,
+		"prompt_size":  len(promptJSON),
+	})
+
+	// Execute Claude with the pre-built prompt
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		tflog.Info(ctx, "Executing Claude with verification (from planned prompt)", map[string]interface{}{
+			"attempt":     attempt,
+			"max_retries": maxRetries,
+		})
+
+		// Execute using the pre-built prompt
+		result, err := e.client.ExecuteProjectWithPrompt(ctx, promptJSON, projectPath, e.model)
+		if err != nil {
+			tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
+				"attempt": attempt,
+				"error":   err.Error(),
+			})
+			// Convert to ExecutionStatus for consistent return type
+			execStatus := &ExecutionStatus{
+				State:       "failed",
+				StartedAt:   time.Now().Format(time.RFC3339),
+				CompletedAt: time.Now().Format(time.RFC3339),
+				ProjectPath: projectPath,
+				Error:       err.Error(),
+			}
+			return execStatus, nil, err
+		}
+
+		// Convert ExecutionResult to ExecutionStatus
+		execStatus := &ExecutionStatus{
+			State:       "completed",
+			StartedAt:   time.Now().Format(time.RFC3339),
+			CompletedAt: time.Now().Format(time.RFC3339),
+			ProjectPath: result.ProjectPath,
+			Output:      result.Output,
+		}
+		if !result.Success {
+			execStatus.State = "failed"
+			execStatus.Error = result.Error
+		}
+
+		lastStatus = execStatus
+
+		// Run verifications if we have files to verify
+		if len(filesToVerify) > 0 {
+			fileManager := files.NewManager(projectPath)
+			report, err := fileManager.RunVerifications(ctx, filesToVerify)
+			if err != nil {
+				tflog.Error(ctx, "Verification execution failed", map[string]interface{}{
+					"attempt": attempt,
+					"error":   err.Error(),
+				})
+				return execStatus, nil, fmt.Errorf("verification execution failed: %w", err)
+			}
+
+			lastReport = report
+
+			// Check if all verifications passed
+			if report.AllPassed {
+				tflog.Info(ctx, "All verifications passed", map[string]interface{}{
+					"passed_count": report.PassedCount,
+					"attempt":      attempt,
+				})
+				return execStatus, report, nil
+			}
+
+			// Verifications failed - prepare fix request if we have retries left
+			if attempt < maxRetries {
+				tflog.Warn(ctx, "Verifications failed, requesting fix from Claude", map[string]interface{}{
+					"failed_count": report.FailedCount,
+					"passed_count": report.PassedCount,
+					"attempt":      attempt,
+					"remaining":    maxRetries - attempt,
+				})
+
+				// For retry, we need to regenerate the prompt with fix request
+				// Extract the specification from the original prompt
+				var spec map[string]interface{}
+				if request, ok := projectSpec["request"].(map[string]interface{}); ok {
+					if specification, ok := request["specification"].(map[string]interface{}); ok {
+						spec = specification
+					}
+				}
+
+				if spec != nil {
+					// Add fix request to the specification
+					spec["_fix_request"] = map[string]interface{}{
+						"attempt":  attempt,
+						"failures": report.GetFailureSummary(),
+						"instructions": "🔧 **VERIFICATION FAILURES DETECTED**\n\n" +
+							"Your previous implementation had verification failures.\n\n" +
+							"**What went wrong:**\n" + report.GetFailureSummary() + "\n\n" +
+							"**What you need to do:**\n" +
+							"1. Analyze the verification failures carefully\n" +
+							"2. Identify the root cause of each failure\n" +
+							"3. Fix the issues in the affected files\n" +
+							"4. Ensure ALL verification commands will pass",
+					}
+
+					// Rebuild the prompt with fix request
+					prompt := BuildProjectPrompt(spec, e.client.GetSystemPrompt())
+					newPromptJSON, err := prompt.ToJSON()
+					if err == nil {
+						promptJSON = newPromptJSON
+					}
+				}
+
+				// Wait before retrying (exponential backoff)
+				waitTime := time.Duration(attempt) * time.Second
+				tflog.Info(ctx, "Waiting before retry", map[string]interface{}{
+					"wait_seconds": waitTime.Seconds(),
+				})
+				time.Sleep(waitTime)
+			}
+		} else {
+			// No verifications, execution succeeded
+			return execStatus, nil, nil
+		}
+	}
+
+	// All retries exhausted
+	tflog.Error(ctx, "Verifications failed after all retry attempts", map[string]interface{}{
+		"max_retries":  maxRetries,
+		"failed_count": lastReport.FailedCount,
+		"passed_count": lastReport.PassedCount,
+	})
+
+	return lastStatus, lastReport, fmt.Errorf(
+		"verification failed after %d attempts:\n%s",
+		maxRetries,
+		lastReport.GetFailureSummary(),
+	)
 }
 
 // Validate checks if Claude Code execution would be possible with the given configuration

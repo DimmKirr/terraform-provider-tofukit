@@ -18,6 +18,7 @@ type ComponentResourceModel struct {
 	Description  types.String               `tfsdk:"description"`
 	Version      types.String               `tfsdk:"version"`
 	Requirements []schemas.RequirementModel `tfsdk:"requirement"`
+	Files        []schemas.FileModel        `tfsdk:"file"` // Files that this kit provides
 }
 
 // Generic component resource that can be used for all component types
@@ -37,6 +38,7 @@ func (r *ComponentResource) Schema(ctx context.Context, req resource.SchemaReque
 
 		Blocks: map[string]schema.Block{
 			"requirement": schemas.GetRequirementBlock(),
+			"file":        schemas.GetFileBlock(),
 		},
 	}
 }

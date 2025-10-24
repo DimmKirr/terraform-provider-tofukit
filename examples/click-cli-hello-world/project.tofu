@@ -1,157 +1,88 @@
+# ========================================
+# TERRAFORM & PROVIDER CONFIGURATION
+# ========================================
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
 
+provider "tofukit" {
+  output_format         = "json"
+  # output_path defaults to "./" (current directory)
+  debug                 = true   # Enable debug mode to see project JSON
+  claude_home_directory = "~/.claude"
+}
+
+# ========================================
+# LOCALS
+# ========================================
 locals {
-  project_name = "python-click-cli"
+  project_name    = "python-click-cli"
   project_version = "1.0.0"
 }
 
+# ========================================
+# MODULE: Python Click CLI Stack
+# ========================================
+module "click_app" {
+  source = "../modules/tofukit-stack-python-click-app-generic"
+
+  project_name    = local.project_name
+  project_version = local.project_version
+}
+
+# ========================================
+# PROJECT RESOURCE
+# ========================================
 resource "tofukit_project" "click_cli" {
   name        = local.project_name
   description = "Deterministic Python CLI application using Click framework - TEST"
   version     = local.project_version
 
-  # Aggregate all kits with proper references
-  kits = {
-    # Language Kit
-    "language.python" = {
-      id          = "language.python"
-      type        = "language"
-      name        = tofukit_language.python.name
-      description = tofukit_language.python.description
-      version     = tofukit_language.python.version
-      requirements = tofukit_language.python.requirement
-    }
+  # Use Haiku model for fast, cheap execution
+  model = "haiku"
 
-    # Tool Kits
-    "tool.pip" = {
-      id          = "tool.pip"
-      type        = "tool"
-      name        = tofukit_tool.pip.name
-      description = tofukit_tool.pip.description
-      version     = tofukit_tool.pip.version
-      requirements = tofukit_tool.pip.requirement
-    }
+  # Reference the stack from the module
+  # The stack already includes all kits (python, pip, venv, click)
+  stack = module.click_app.stack
 
-    # Framework Kits
-    "framework.click" = {
-      id          = "framework.click"
-      type        = "framework"
-      name        = tofukit_framework.click.name
-      description = tofukit_framework.click.description
-      version     = tofukit_framework.click.version
-      requirements = tofukit_framework.click.requirement
-    }
-  }
+  # Optional: Add additional kits to extend the stack
+  # kits = [
+  #   tofukit_tool.pytest,
+  #   tofukit_tool.black,
+  # ]
 
-  # Stack reference - removed as not supported in schema
+  # Optional: Add or override files from the stack
+  # file {
+  #   path = "custom-file.txt"
+  #   content = "Custom content"
+  # }
 
-  # Project dependencies
-  depends_on = [
-    tofukit_language.python,
-    tofukit_tool.pip,
-    tofukit_tool.venv,
-    tofukit_framework.click,
-    tofukit_stack.click_app
-  ]
+  # Note: Terraform automatically creates dependencies from resource references
+  # (stack reference creates implicit dependency on the module)
 }
 
 # ========================================
-# APPLICATION STACK - Scaffolding & Files
+# DATA SOURCES
 # ========================================
-resource "tofukit_stack" "click_app" {
-  name        = "click-application-stack"
-  description = "Complete Python Click CLI application with testing and packaging"
-
-  depends_on = [
-    tofukit_language.python,
-    tofukit_framework.click,
-  ]
-
-  # Main CLI Application
-  file {
-    path = "src/cli.py"
-    content = <<-EOF
-    #!/usr/bin/env python3
-    """
-    Simple CLI application using Click framework.
-    """
-    import click
-
-
-    @click.group()
-    @click.version_option(version='${local.project_version}', prog_name='${local.project_name}')
-    def cli() -> None:
-        """A simple Python CLI application."""
-        pass
-
-
-    @cli.command()
-    def hello() -> None:
-        """Output world text."""
-        click.echo("world")
-
-
-    if __name__ == '__main__':
-        cli()
-    EOF
-
-    verification {
-      command = "python3 src/cli.py hello"
-      expect  = "world 1"
-    }
-
-    verification {
-      command = "python3 src/cli.py --version"
-      expect  = "${local.project_version}"
-    }
-  }
-
-
-  # Requirements Files
-  file {
-    path = "requirements.txt"
-    content = <<-EOF
-    click==${tofukit_framework.click.version}
-    EOF
-
-    verification {
-      command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
-    }
-    verification {
-      command = "test -f requirements.txt"
-    }
-  }
-
-
-  # demo2 txt
-  file {
-    path = "demo2.txt"
-    content = <<-EOF
-    hello world
-    EOF
-
-    verification {
-      command = "cat demo2.txt"
-      expect  = "hello world2"
-    }
-  }
-
-  file {
-    path = "README.md"
-    generate = true
-    instructions = [
-      "Create readme file typical for this project. Must contain project name",
-      "It should contain sections: ## Quickstart, ## Installation, ## Usage, ## Contributing, ## License"
+data "tofukit_query" "ls" {
+  instruction {
+    prompt = "What color is sky?"
+    constraints = [
+      "Answer with exactly one word",
+      "Use lowercase only",
+      "Do NOT include any punctuation or additional text"
     ]
-    verification {
-      command = "grep '${local.project_name}' README.md"
-      expect  = "${local.project_name}"
-    }
-    verification {
-      command = "grep -c '^## ' README.md"
-      expect  = "5"
-    }
   }
-
-
 }
 
+# ========================================
+# OUTPUTS
+# ========================================
+output "ls" {
+  value = data.tofukit_query.ls
+}

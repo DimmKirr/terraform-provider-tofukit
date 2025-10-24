@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
 )
 
 // MockClaudeClient implements a mock version of the Claude client for testing

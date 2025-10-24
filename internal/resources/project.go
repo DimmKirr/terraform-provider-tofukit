@@ -10,20 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/registry
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
@@ -42,9 +42,9 @@ type ProjectModelFinal struct {
 	Name               types.String               `tfsdk:"name"`
 	Description        types.String               `tfsdk:"description"`
 	Version            types.String               `tfsdk:"version"`
-	StackRef           types.String               `tfsdk:"stack_ref"` // Reference to the primary stack this project instantiates
+	Stack              types.Dynamic              `tfsdk:"stack"` // Reference to the stack (accepts resource reference or ID string)
 	Requirements       []schemas.RequirementModel `tfsdk:"requirement"`
-	Kits               types.Map                  `tfsdk:"kits"` // Additional kits to customize the stack
+	Kits               types.Dynamic              `tfsdk:"kits"` // List of kit references or IDs
 	Files              []schemas.FileModel        `tfsdk:"file"` // Project-specific file overrides
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
 	ExecutionStarted   types.String               `tfsdk:"execution_started"`
@@ -56,6 +56,15 @@ type ProjectModelFinal struct {
 	LastApplied types.String `tfsdk:"last_applied"`
 	// Custom system prompt for Claude
 	SystemPrompt types.String `tfsdk:"system_prompt"`
+	// Model to use for Claude execution (haiku, sonnet, opus)
+	Model types.String `tfsdk:"model"`
+	// Computed - stores the complete Claude prompt JSON generated during plan phase
+	// This is stored in state so apply can use exactly what was planned
+	PlannedPromptJSON types.String `tfsdk:"planned_prompt_json"`
+	// Computed - SHA256 hash of the configuration for change detection
+	PromptHash types.String `tfsdk:"prompt_hash"`
+	// Computed - SHA256 hash of actual generated files for drift detection
+	OutputHash types.String `tfsdk:"output_hash"`
 }
 
 func (r *ProjectResourceFinal) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -93,43 +102,13 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "Version of the project",
 				Required:            true,
 			},
-			"stack_ref": schema.StringAttribute{
-				MarkdownDescription: "Reference to the primary stack this project instantiates (e.g., 'stack.django_rest_api')",
+			"stack": schema.DynamicAttribute{
+				MarkdownDescription: "Reference to the stack this project uses (e.g., tofukit_stack.python_cli or tofukit_stack.python_cli.id)",
 				Optional:            true,
 			},
-			"kits": schema.MapAttribute{
-				MarkdownDescription: "Map of all component kits with their details",
+			"kits": schema.DynamicAttribute{
+				MarkdownDescription: "List of kit references to include in the project (e.g., [tofukit_language.python, tofukit_framework.click])",
 				Optional:            true,
-				ElementType: types.ObjectType{
-					AttrTypes: map[string]attr.Type{
-						"id":          types.StringType,
-						"type":        types.StringType,
-						"name":        types.StringType,
-						"description": types.StringType,
-						"version":     types.StringType,
-						"requirements": types.ListType{
-							ElemType: types.ObjectType{
-								AttrTypes: map[string]attr.Type{
-									"name": types.StringType,
-									"instructions": types.ListType{
-										ElemType: types.StringType,
-									},
-									"verification": types.ListType{
-										ElemType: types.ObjectType{
-											AttrTypes: map[string]attr.Type{
-												"command": types.StringType,
-												"expect":  types.StringType,
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				PlanModifiers: []planmodifier.Map{
-					mapplanmodifier.UseStateForUnknown(),
-				},
 			},
 			"execution_status": schema.StringAttribute{
 				MarkdownDescription: "Status of Claude Code execution (pending, running, completed, failed)",
@@ -176,12 +155,124 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "Custom system prompt for Claude. If not set, uses the default system prompt for a senior software architect with 30+ years of experience.",
 				Optional:            true,
 			},
+			"model": schema.StringAttribute{
+				MarkdownDescription: "Model to use for Claude execution. Options: 'haiku' (fast, cheap), 'sonnet' (balanced), 'opus' (most capable). Default: 'sonnet' (Claude CLI default)",
+				Optional:            true,
+			},
+			"planned_prompt_json": schema.StringAttribute{
+				MarkdownDescription: "Internal: Complete Claude prompt JSON generated and stored during apply for reference.",
+				Computed:            true,
+			},
+			"prompt_hash": schema.StringAttribute{
+				MarkdownDescription: "SHA256 hash of the configuration for change detection",
+				Computed:            true,
+				// No plan modifiers - hash is computed during Create/Update when all values are known
+			},
+			"output_hash": schema.StringAttribute{
+				MarkdownDescription: "SHA256 hash of actual generated files for drift detection",
+				Computed:            true,
+			},
 		},
 		Blocks: map[string]schema.Block{
 			"requirement": schemas.GetRequirementBlock(),
 			"file":        schemas.GetFileBlock(),
 		},
 	}
+}
+
+// extractIDFromDynamic extracts the ID string from a dynamic attribute that can be either:
+// - A string (direct ID)
+// - An object with an "id" attribute (resource reference)
+func extractIDFromDynamic(ctx context.Context, dynValue types.Dynamic) string {
+	if dynValue.IsNull() || dynValue.IsUnknown() {
+		return ""
+	}
+
+	underlying := dynValue.UnderlyingValue()
+
+	// Try to get as string first
+	if strVal, ok := underlying.(types.String); ok && !strVal.IsNull() {
+		return strVal.ValueString()
+	}
+
+	// Try to get as object and extract .id
+	if objVal, ok := underlying.(types.Object); ok && !objVal.IsNull() {
+		attrs := objVal.Attributes()
+		if idAttr, exists := attrs["id"]; exists {
+			if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
+				return idStr.ValueString()
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractIDsFromDynamicList extracts a list of ID strings from a dynamic attribute that can be either:
+// - A list of strings (direct IDs)
+// - A list of objects with "id" attributes (resource references)
+func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []string {
+	if dynValue.IsNull() || dynValue.IsUnknown() {
+		fmt.Printf("DEBUG extractIDsFromDynamicList: value is null or unknown\n")
+		return nil
+	}
+
+	var ids []string
+	underlying := dynValue.UnderlyingValue()
+	fmt.Printf("DEBUG extractIDsFromDynamicList: underlying type = %T\n", underlying)
+
+	// Try to get as list
+	if listVal, ok := underlying.(types.List); ok && !listVal.IsNull() {
+		fmt.Printf("DEBUG extractIDsFromDynamicList: got list with %d elements\n", len(listVal.Elements()))
+
+		// Iterate through list elements
+		for i, elem := range listVal.Elements() {
+			fmt.Printf("DEBUG extractIDsFromDynamicList: element[%d] type = %T\n", i, elem)
+
+			// Try as string first
+			if strVal, ok := elem.(types.String); ok && !strVal.IsNull() {
+				id := strVal.ValueString()
+				fmt.Printf("DEBUG extractIDsFromDynamicList: extracted string ID = %s\n", id)
+				ids = append(ids, id)
+				continue
+			}
+
+			// Try as object with .id
+			if objVal, ok := elem.(types.Object); ok && !objVal.IsNull() {
+				attrs := objVal.Attributes()
+				fmt.Printf("DEBUG extractIDsFromDynamicList: object has %d attributes: %v\n", len(attrs), func() []string {
+					keys := make([]string, 0, len(attrs))
+					for k := range attrs {
+						keys = append(keys, k)
+					}
+					return keys
+				}())
+
+				if idAttr, exists := attrs["id"]; exists {
+					if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
+						id := idStr.ValueString()
+						fmt.Printf("DEBUG extractIDsFromDynamicList: extracted object ID = %s\n", id)
+						ids = append(ids, id)
+					}
+				}
+			}
+		}
+	} else {
+		fmt.Printf("DEBUG extractIDsFromDynamicList: not a list or list is null\n")
+	}
+
+	fmt.Printf("DEBUG extractIDsFromDynamicList: returning %d IDs: %v\n", len(ids), ids)
+	return ids
+}
+
+// ModifyPlan is called during the plan phase
+// We don't compute PromptHash here because it may include references to other resources
+// that are Unknown during plan. Instead, we compute it during Create/Update when all
+// values are known, which prevents "inconsistent final plan" errors.
+func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// No hash computation in ModifyPlan - it happens during Create/Update
+	// This prevents inconsistencies when resource references are Unknown during plan
+	tflog.Debug(ctx, "ModifyPlan: Hash computation deferred to apply phase")
 }
 
 func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -200,7 +291,6 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
-	debug := false
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
@@ -208,17 +298,25 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
-		debug = provData.GetDebug()
+		_ = provData.GetDebug() // debug is handled in executeClaudeCode
 	}
 
 	// Initialize all computed fields to ensure they're never unknown
 	data.ExecutionStarted = types.StringValue("")
 	data.ExecutionCompleted = types.StringValue("")
 	data.ExecutionError = types.StringValue("")
-	data.ProjectPath = types.StringValue(filepath.Join(outputPath, data.Name.ValueString()))
+	data.ProjectPath = types.StringValue(outputPath) // Files created directly in output_path, not in subdirectory
 
 	// Collect merged files FIRST to compute correct hash
 	mergedFiles := r.collectAndMergeFiles(ctx, data)
+
+	// Compute config hash for change detection (now that all dependencies are resolved)
+	configHash := r.computeConfigHash(ctx, data)
+	data.PromptHash = types.StringValue(configHash)
+	tflog.Info(ctx, "Create: Computed config hash", map[string]interface{}{
+		"project_name": data.Name.ValueString(),
+		"config_hash":  configHash,
+	})
 
 	// Use merged files for hash to track ALL files (including from stacks)
 	data.FileHash = types.StringValue(r.computeFileHash(mergedFiles))
@@ -229,14 +327,20 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.ExecutionStatus = types.StringValue("pending")
 	data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
 
+	// DEBUG: Check kits in Create
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "\n=== Create method ===\n")
+		fmt.Fprintf(debugFile, "Create: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
+		debugFile.Close()
+	}
+
 	// Build output data AFTER collecting files to ensure they're included
 	outputData := r.buildOutputData(ctx, data)
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
-	// Write debug files if debug mode is enabled
-	if debug {
-		r.writeDebugFiles(ctx, data, outputData, outputPath)
-	}
+	// Note: Debug files are written during ModifyPlan (plan phase)
+	// Prompt is regenerated deterministically during Create (apply phase)
 
 	if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, false); err != nil {
 		// Set error status and fail the resource creation
@@ -262,6 +366,30 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		// Ensure LastApplied is set on successful execution
 		if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
 			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+		}
+
+		// Compute output hash after successful execution
+		// This captures ALL files Claude created (including untracked ones)
+		outputHash := r.computeOutputHash(ctx, data.ProjectPath.ValueString())
+		data.OutputHash = types.StringValue(outputHash)
+		tflog.Info(ctx, "Computed output hash after successful execution", map[string]interface{}{
+			"output_hash":  outputHash,
+			"project_path": data.ProjectPath.ValueString(),
+		})
+
+		// Generate and store the prompt that was actually used
+		// This happens after apply when all dependencies are resolved
+		promptJSON, err := r.generatePromptJSON(ctx, outputData, data.SystemPrompt.ValueString())
+		if err != nil {
+			tflog.Warn(ctx, "Failed to generate prompt JSON for state storage", map[string]interface{}{
+				"error": err.Error(),
+			})
+			// Don't fail the resource, just skip storing the prompt
+		} else {
+			data.PlannedPromptJSON = types.StringValue(promptJSON)
+			tflog.Info(ctx, "Stored prompt in state after successful execution", map[string]interface{}{
+				"prompt_size": len(promptJSON),
+			})
 		}
 	}
 
@@ -313,6 +441,15 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	// Always update output files with current configuration (including files from stacks)
 	// This ensures the Claude prompt JSON always has the complete specification
 	mergedFiles := r.collectAndMergeFiles(ctx, data)
+
+	// DEBUG: Check kits in Read
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "\n=== Read method ===\n")
+		fmt.Fprintf(debugFile, "Read: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
+		debugFile.Close()
+	}
+
 	outputData := r.buildOutputData(ctx, data)
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
@@ -398,38 +535,68 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		debug = provData.GetDebug()
 	}
 
-	// Collect merged files from both old state and new data to detect ALL changes
-	// This includes changes to stack files, not just project files
-	// Note: During initial creation, state might be empty, so handle gracefully
-	var oldMergedFiles []schemas.FileModel
-	var newMergedFiles []schemas.FileModel
+	// Compute new config hash from planned data (all dependencies are resolved now)
+	newConfigHash := r.computeConfigHash(ctx, data)
+	data.PromptHash = types.StringValue(newConfigHash)
+	tflog.Info(ctx, "Update: Computed new config hash", map[string]interface{}{
+		"project_id": state.ID.ValueString(),
+		"old_hash":   state.PromptHash.ValueString(),
+		"new_hash":   newConfigHash,
+	})
 
-	// Only try to collect old files if we have an existing ID (not a new resource)
-	if !state.ID.IsNull() && !state.ID.IsUnknown() {
-		oldMergedFiles = r.collectAndMergeFiles(ctx, state)
+	// Detect prompt changes using hash comparison (includes all changes: files, requirements, system prompt, etc)
+	promptChanged := !state.PromptHash.Equal(data.PromptHash)
+
+	// Collect merged files early to detect file specification changes (including from stacks)
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
+	currentFileHash := r.computeFileHash(mergedFiles)
+
+	// Detect file specification changes (files from project, stacks, kits)
+	fileSpecChanged := state.FileHash.IsNull() || state.FileHash.ValueString() != currentFileHash
+
+	// Detect output drift (files modified/deleted on disk, or LLM non-determinism)
+	outputDrifted := false
+	if !state.OutputHash.IsNull() && !state.OutputHash.IsUnknown() && state.OutputHash.ValueString() != "" {
+		currentOutputHash := r.computeOutputHash(ctx, state.ProjectPath.ValueString())
+		outputDrifted = (currentOutputHash != state.OutputHash.ValueString())
+		if outputDrifted {
+			tflog.Warn(ctx, "Output drift detected - files changed outside Terraform", map[string]interface{}{
+				"project_id":    state.ID.ValueString(),
+				"expected_hash": state.OutputHash.ValueString(),
+				"current_hash":  currentOutputHash,
+			})
+		}
 	}
-	newMergedFiles = r.collectAndMergeFiles(ctx, data)
-
-	// Detect file changes using merged files (includes stack files)
-	fileChanged := r.detectFileChanges(ctx, oldMergedFiles, newMergedFiles)
 
 	// Preserve ID and project path from existing state
 	data.ID = state.ID
 	data.ProjectPath = state.ProjectPath
 
-	// Initially preserve the file hash from state - will be updated only on successful apply
-	data.FileHash = state.FileHash
+	// Declare variables outside if/else to make them available in both branches
+	var outputData map[string]interface{}
 
-	if fileChanged {
-		tflog.Info(ctx, "File changes detected, triggering re-execution", map[string]interface{}{
-			"project_id":        data.ID.ValueString(),
-			"old_merged_files":  len(oldMergedFiles),
-			"new_merged_files":  len(newMergedFiles),
-			"old_project_files": len(state.Files),
-			"new_project_files": len(data.Files),
-		})
+	if promptChanged || fileSpecChanged || outputDrifted {
+		if promptChanged {
+			tflog.Info(ctx, "Config changed - triggering re-execution", map[string]interface{}{
+				"project_id":      data.ID.ValueString(),
+				"old_prompt_hash": state.PromptHash.ValueString(),
+				"new_prompt_hash": data.PromptHash.ValueString(),
+			})
+		}
+		if fileSpecChanged {
+			tflog.Info(ctx, "File specification changed - triggering re-execution", map[string]interface{}{
+				"project_id":    data.ID.ValueString(),
+				"old_file_hash": state.FileHash.ValueString(),
+				"new_file_hash": currentFileHash,
+			})
+		}
+		if outputDrifted {
+			tflog.Info(ctx, "Output drift detected - triggering re-execution", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+			})
+		}
 
-		// Always execute Claude Code for file changes
+		// Always execute Claude Code for prompt changes (files, requirements, system prompt, etc)
 		// Execute Claude Code with the updated specification
 		// Preserve existing timestamps - they represent when the project was first executed
 		// Only update status to reflect the re-execution
@@ -438,17 +605,14 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		data.ExecutionStarted = state.ExecutionStarted
 		data.ExecutionCompleted = state.ExecutionCompleted
 
-		// Collect merged files from all sources
-		mergedFiles := r.collectAndMergeFiles(ctx, data)
+		// mergedFiles already collected earlier for hash comparison
 
 		// Build output data AFTER collecting files to ensure they're included
-		outputData := r.buildOutputData(ctx, data)
+		outputData = r.buildOutputData(ctx, data)
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
-		// Write debug files if debug mode is enabled
-		if debug {
-			r.writeDebugFiles(ctx, data, outputData, outputPath)
-		}
+		// Note: Debug files are written during ModifyPlan (plan phase)
+		// Prompt is regenerated deterministically during Update (apply phase)
 
 		if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, true); err != nil {
 			// Set error status and fail the resource update
@@ -475,23 +639,46 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			return
 		} else {
 			// Only update hash and LastApplied on successful execution
-			// Use merged files for hash to track ALL file changes (including from stacks)
-			data.FileHash = types.StringValue(r.computeFileHash(mergedFiles))
+			// Use the currentFileHash we computed earlier
+			data.FileHash = types.StringValue(currentFileHash)
 			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
+
+			// Compute output hash after successful execution
+			outputHash := r.computeOutputHash(ctx, data.ProjectPath.ValueString())
+			data.OutputHash = types.StringValue(outputHash)
+			tflog.Info(ctx, "Computed output hash after successful update", map[string]interface{}{
+				"output_hash": outputHash,
+			})
+
+			// Generate and store the prompt that was actually used
+			// This happens after apply when all dependencies are resolved
+			promptJSON, err := r.generatePromptJSON(ctx, outputData, data.SystemPrompt.ValueString())
+			if err != nil {
+				tflog.Warn(ctx, "Failed to generate prompt JSON for state storage", map[string]interface{}{
+					"error": err.Error(),
+				})
+				// Don't fail the resource, just skip storing the prompt
+			} else {
+				data.PlannedPromptJSON = types.StringValue(promptJSON)
+				tflog.Info(ctx, "Stored prompt in state after successful update", map[string]interface{}{
+					"prompt_size": len(promptJSON),
+				})
+			}
+
 			// Preserve the original timestamps even on successful re-execution
 			data.ExecutionStarted = state.ExecutionStarted
 			data.ExecutionCompleted = state.ExecutionCompleted
 		}
 
-		// No file changes detected, preserve existing execution state
-		tflog.Info(ctx, "No file changes detected, preserving execution state", map[string]interface{}{
-			"project_id": data.ID.ValueString(),
-			"file_count": len(data.Files),
+	} else {
+		// No changes detected, preserve existing execution state
+		tflog.Info(ctx, "No changes detected, preserving execution state", map[string]interface{}{
+			"project_id":  data.ID.ValueString(),
+			"prompt_hash": data.PromptHash.ValueString(),
+			"file_hash":   currentFileHash,
 		})
 
-		// Still need to update output files with current configuration (including files from stacks)
-		// Collect merged files to ensure stack files are included
-		mergedFiles = r.collectAndMergeFiles(ctx, data)
+		// mergedFiles already collected earlier for hash comparison
 
 		// Build output data with all files
 		outputData = r.buildOutputData(ctx, data)
@@ -512,6 +699,8 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		data.ExecutionCompleted = state.ExecutionCompleted
 		data.ExecutionError = state.ExecutionError
 		data.LastApplied = state.LastApplied
+		data.OutputHash = state.OutputHash
+		data.PlannedPromptJSON = state.PlannedPromptJSON // Preserve prompt from state
 		// Ensure LastApplied is never unknown or null
 		if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
 			data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
@@ -528,7 +717,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	tflog.Info(ctx, "Updated project configuration", map[string]interface{}{
 		"project_id":       data.ID.ValueString(),
-		"file_changed":     fileChanged,
+		"prompt_changed":   promptChanged,
 		"execution_status": data.ExecutionStatus.ValueString(),
 		"last_applied":     data.LastApplied.ValueString(),
 	})
@@ -639,17 +828,27 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 			"name": req.Name.ValueString(),
 		}
 
-		// Add priority if set
-		if !req.Priority.IsNull() && !req.Priority.IsUnknown() {
-			reqData["priority"] = req.Priority.ValueInt64()
-		}
-
-		// Add instructions
-		instructions := []string{}
+		// Add instructions (new structure with prompt and constraints)
+		instructions := []map[string]interface{}{}
 		for _, inst := range req.Instructions {
-			if !inst.IsNull() && !inst.IsUnknown() {
-				instructions = append(instructions, inst.ValueString())
+			instData := map[string]interface{}{
+				"prompt": inst.Prompt.ValueString(),
 			}
+
+			// Add constraints if present
+			if inst.Constraints != nil && len(inst.Constraints) > 0 {
+				constraints := []string{}
+				for _, c := range inst.Constraints {
+					if !c.IsNull() && !c.IsUnknown() {
+						constraints = append(constraints, c.ValueString())
+					}
+				}
+				if len(constraints) > 0 {
+					instData["constraints"] = constraints
+				}
+			}
+
+			instructions = append(instructions, instData)
 		}
 		reqData["instructions"] = instructions
 
@@ -694,14 +893,27 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 			fileData["content"] = file.Content.ValueString()
 		}
 
-		if !file.Generate.IsNull() && !file.Generate.IsUnknown() {
-			fileData["generate"] = file.Generate.ValueBool()
-		}
-
 		if file.Instructions != nil && len(file.Instructions) > 0 {
-			instructions := make([]string, len(file.Instructions))
-			for i, inst := range file.Instructions {
-				instructions[i] = inst.ValueString()
+			instructions := []map[string]interface{}{}
+			for _, inst := range file.Instructions {
+				instData := map[string]interface{}{
+					"prompt": inst.Prompt.ValueString(),
+				}
+
+				// Add constraints if present
+				if inst.Constraints != nil && len(inst.Constraints) > 0 {
+					constraints := []string{}
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							constraints = append(constraints, c.ValueString())
+						}
+					}
+					if len(constraints) > 0 {
+						instData["constraints"] = constraints
+					}
+				}
+
+				instructions = append(instructions, instData)
 			}
 			fileData["instructions"] = instructions
 		}
@@ -726,114 +938,140 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 	// Always include files, even if empty, for consistency
 	outputData["files"] = files
 
-	// Add kits if available
+	// Add kits directly from the Dynamic attribute (they're already fully populated in state)
+	kits := map[string]interface{}{}
+
+	// DEBUG: Write to file
+	debugFile, _ := os.Create("/tmp/tofukit-debug.log")
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "DEBUG buildOutputData: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
+		defer debugFile.Close()
+	}
+
 	if !data.Kits.IsNull() && !data.Kits.IsUnknown() {
-		kitsMap := data.Kits.Elements()
-		kitsOutput := make(map[string]interface{})
-		dependencies := []string{}
+		// The kits are already stored as full objects in the state, not just IDs
+		// Convert the Dynamic value to JSON-serializable format
+		underlying := data.Kits.UnderlyingValue()
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "DEBUG buildOutputData: underlying type=%T\n", underlying)
+		}
 
-		for key, kitValue := range kitsMap {
-			if kitObj, ok := kitValue.(types.Object); ok && !kitObj.IsNull() {
-				kitAttrs := kitObj.Attributes()
-				kitData := make(map[string]interface{})
+		// The underlying value can be either a List or a Tuple depending on the context
+		var elements []attr.Value
 
-				// Extract basic fields
-				if id, ok := kitAttrs["id"].(types.String); ok && !id.IsNull() {
-					kitData["id"] = id.ValueString()
-				}
-				if t, ok := kitAttrs["type"].(types.String); ok && !t.IsNull() {
-					kitData["type"] = t.ValueString()
-				}
-				if name, ok := kitAttrs["name"].(types.String); ok && !name.IsNull() {
-					kitData["name"] = name.ValueString()
-				}
-				if desc, ok := kitAttrs["description"].(types.String); ok && !desc.IsNull() {
-					kitData["description"] = desc.ValueString()
-				}
-				if ver, ok := kitAttrs["version"].(types.String); ok && !ver.IsNull() {
-					kitData["version"] = ver.ValueString()
+		if listVal, ok := underlying.(types.List); ok && !listVal.IsNull() {
+			elements = listVal.Elements()
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "DEBUG buildOutputData: Got list with %d elements\n", len(elements))
+			}
+		} else if tupleVal, ok := underlying.(types.Tuple); ok && !tupleVal.IsNull() {
+			elements = tupleVal.Elements()
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "DEBUG buildOutputData: Got tuple with %d elements\n", len(elements))
+			}
+		}
+
+		if len(elements) > 0 {
+			for i, elem := range elements {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "DEBUG buildOutputData: element[%d] type=%T\n", i, elem)
 				}
 
-				// Extract requirements
-				if reqList, ok := kitAttrs["requirements"].(types.List); ok && !reqList.IsNull() {
-					requirements := []map[string]interface{}{}
+				if objVal, ok := elem.(types.Object); ok && !objVal.IsNull() {
+					attrs := objVal.Attributes()
+					if debugFile != nil {
+						fmt.Fprintf(debugFile, "DEBUG buildOutputData: element[%d] has %d attributes\n", i, len(attrs))
+					}
 
-					for _, reqElem := range reqList.Elements() {
-						if reqObj, ok := reqElem.(types.Object); ok && !reqObj.IsNull() {
-							reqAttrs := reqObj.Attributes()
-							reqData := make(map[string]interface{})
+					// Extract ID to use as map key
+					if idAttr, exists := attrs["id"]; exists {
+						if debugFile != nil {
+							fmt.Fprintf(debugFile, "DEBUG buildOutputData: element[%d] has id attribute\n", i)
+						}
 
-							// Get name
-							if name, ok := reqAttrs["name"].(types.String); ok && !name.IsNull() {
-								reqData["name"] = name.ValueString()
+						if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
+							kitID := idStr.ValueString()
+							if debugFile != nil {
+								fmt.Fprintf(debugFile, "DEBUG buildOutputData: extracted kit ID=%s\n", kitID)
 							}
 
-							// Get priority if set
-							if priority, ok := reqAttrs["priority"].(types.Int64); ok && !priority.IsNull() {
-								reqData["priority"] = priority.ValueInt64()
-							}
-
-							// Get instructions
-							if instList, ok := reqAttrs["instructions"].(types.List); ok && !instList.IsNull() {
-								instructions := []string{}
-								for _, inst := range instList.Elements() {
-									if instStr, ok := inst.(types.String); ok && !instStr.IsNull() {
-										instructions = append(instructions, instStr.ValueString())
+							// Build kit data map from all attributes
+							kitData := map[string]interface{}{}
+							for key, val := range attrs {
+								// Convert each attribute to a JSON-serializable value
+								switch v := val.(type) {
+								case types.String:
+									if !v.IsNull() {
+										kitData[key] = v.ValueString()
+									}
+								case types.List:
+									// Handle lists (like requirements)
+									if !v.IsNull() {
+										listItems := []interface{}{}
+										for _, listElem := range v.Elements() {
+											// Recursively handle list elements
+											if objElem, ok := listElem.(types.Object); ok && !objElem.IsNull() {
+												itemMap := map[string]interface{}{}
+												for k, v2 := range objElem.Attributes() {
+													if strVal, ok := v2.(types.String); ok && !strVal.IsNull() {
+														itemMap[k] = strVal.ValueString()
+													}
+													// Handle nested lists in requirements (instructions, verifications)
+													if listVal2, ok := v2.(types.List); ok && !listVal2.IsNull() {
+														nestedList := []interface{}{}
+														for _, nestedElem := range listVal2.Elements() {
+															if strVal, ok := nestedElem.(types.String); ok && !strVal.IsNull() {
+																nestedList = append(nestedList, strVal.ValueString())
+															} else if objVal3, ok := nestedElem.(types.Object); ok && !objVal3.IsNull() {
+																nestedMap := map[string]interface{}{}
+																for k3, v3 := range objVal3.Attributes() {
+																	if strVal3, ok := v3.(types.String); ok && !strVal3.IsNull() {
+																		nestedMap[k3] = strVal3.ValueString()
+																	} else if listVal3, ok := v3.(types.List); ok && !listVal3.IsNull() {
+																		// Handle lists within nested objects (e.g., constraints in instructions)
+																		deepList := []string{}
+																		for _, deepElem := range listVal3.Elements() {
+																			if strVal4, ok := deepElem.(types.String); ok && !strVal4.IsNull() {
+																				deepList = append(deepList, strVal4.ValueString())
+																			}
+																		}
+																		nestedMap[k3] = deepList
+																	}
+																}
+																nestedList = append(nestedList, nestedMap)
+															}
+														}
+														itemMap[k] = nestedList
+													}
+												}
+												listItems = append(listItems, itemMap)
+											}
+										}
+										kitData[key] = listItems
 									}
 								}
-								reqData["instructions"] = instructions
 							}
 
-							// Get verification list
-							if verList, ok := reqAttrs["verification"].(types.List); ok && !verList.IsNull() {
-								verifications := []map[string]string{}
-								for _, verElem := range verList.Elements() {
-									if verObj, ok := verElem.(types.Object); ok && !verObj.IsNull() {
-										verAttrs := verObj.Attributes()
-										verification := make(map[string]string)
-
-										if cmd, ok := verAttrs["command"].(types.String); ok && !cmd.IsNull() {
-											verification["command"] = cmd.ValueString()
-										}
-										if exp, ok := verAttrs["expect"].(types.String); ok && !exp.IsNull() {
-											verification["expect"] = exp.ValueString()
-										}
-
-										if len(verification) > 0 {
-											verifications = append(verifications, verification)
-										}
-									}
-								}
-								if len(verifications) > 0 {
-									reqData["verification"] = verifications
-								}
+							if debugFile != nil {
+								fmt.Fprintf(debugFile, "DEBUG buildOutputData: adding kit %s with %d fields\n", kitID, len(kitData))
 							}
 
-							if len(reqData) > 0 {
-								requirements = append(requirements, reqData)
-							}
+							kits[kitID] = kitData
+							tflog.Debug(ctx, "Added kit from state", map[string]interface{}{
+								"kit_id": kitID,
+							})
 						}
 					}
-
-					if len(requirements) > 0 {
-						kitData["requirements"] = requirements
-					}
-				}
-
-				if len(kitData) > 0 {
-					kitsOutput[key] = kitData
-					// Add to dependencies list with @kit prefix
-					dependencies = append(dependencies, fmt.Sprintf("@kit.%s", key))
 				}
 			}
 		}
-		outputData["kits"] = kitsOutput
-
-		// Update project dependencies
-		if projectData, ok := outputData["project"].(map[string]interface{}); ok {
-			projectData["dependencies"] = dependencies
-		}
 	}
+
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "DEBUG buildOutputData: final kits map has %d entries\n", len(kits))
+	}
+
+	outputData["kits"] = kits
 
 	return outputData
 }
@@ -846,6 +1084,8 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 }
 
 // executeClaudeCode executes Claude Code with the project specification
+// If PlannedPromptJSON is available (from plan phase), it uses that exact prompt
+// Otherwise, it builds the prompt from outputData (legacy path)
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModel, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
 	// Check if debug mode is enabled
 	debug := false
@@ -861,21 +1101,62 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		systemPrompt = data.SystemPrompt.ValueString()
 	}
 
+	// Get model from resource data (defaults to sonnet if not specified)
+	model := "sonnet"
+	if !data.Model.IsNull() && !data.Model.IsUnknown() {
+		model = data.Model.ValueString()
+	}
+
 	executor := claude.NewExecutor(claudeHomeDir)
 	executor.SetDebug(debug)
 	executor.SetOutputPath(outputPath)
 	executor.SetSystemPrompt(systemPrompt)
+	executor.SetModel(model)
 
-	// Write debug files if debug mode is enabled
-	if debug {
-		r.writeDebugFiles(ctx, *data, outputData, outputPath)
+	// Get max retries from provider config (default to 3)
+	maxRetries := 3
+	if provData, ok := r.ProviderData.(interface{ GetMaxRetries() int }); ok {
+		if retries := provData.GetMaxRetries(); retries > 0 {
+			maxRetries = retries
+		}
 	}
 
-	// Execute Claude Code
-	status, err := executor.Execute(ctx, outputData, outputPath)
+	// Check if we have a planned prompt from the plan phase (stored in state)
+	var promptJSON string
+	var status *claude.ExecutionStatus
+	var report *files.VerificationReport
+	var err error
+
+	if !data.PlannedPromptJSON.IsNull() && !data.PlannedPromptJSON.IsUnknown() && data.PlannedPromptJSON.ValueString() != "" {
+		// Use the planned prompt from plan phase (stored in state)
+		promptJSON = data.PlannedPromptJSON.ValueString()
+		tflog.Info(ctx, "Using planned prompt from state", map[string]interface{}{
+			"prompt_size": len(promptJSON),
+		})
+	} else {
+		// Fallback: Generate prompt from outputData if not in state
+		promptJSON, err = r.generatePromptJSON(ctx, outputData, data.SystemPrompt.ValueString())
+		if err != nil {
+			return fmt.Errorf("failed to generate Claude prompt: %w", err)
+		}
+		tflog.Warn(ctx, "No planned prompt in state, generated from outputData", map[string]interface{}{
+			"prompt_size": len(promptJSON),
+		})
+	}
+
+	// Execute with the prompt
+	status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, mergedFiles, maxRetries)
 	if err != nil {
-		// Even on error, ensure computed fields are set to avoid "unknown value" errors
-		// These fields were already initialized to empty strings, but make sure they stay that way
+		// Execution or verification failed
+		data.ExecutionStatus = types.StringValue("failed")
+		if report != nil && !report.AllPassed {
+			// Verification failed after retries
+			data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed after %d attempts:\n%s", maxRetries, report.GetFailureSummary()))
+			data.ExecutionStatus = types.StringValue("verification_failed")
+		} else {
+			// Execution failed
+			data.ExecutionError = types.StringValue(err.Error())
+		}
 		return fmt.Errorf("Claude Code execution failed: %w", err)
 	}
 
@@ -896,44 +1177,14 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		return fmt.Errorf("Claude Code execution failed: %s", status.Error)
 	}
 
-	// Clear any previous error with empty string
+	// Clear any previous error - verification passed!
 	data.ExecutionError = types.StringValue("")
 
-	// Verify that Claude created all merged file files correctly
-	if len(mergedFiles) > 0 && status.ProjectPath != "" {
-		fileManager := files.NewManager(status.ProjectPath)
-		if err := fileManager.VerifyFiles(ctx, mergedFiles); err != nil {
-			// Log the verification failure but don't fail the operation
-			// Claude might have created the files but with slightly different content
-			tflog.Warn(ctx, "Merged file verification failed after Claude execution", map[string]interface{}{
-				"error":        err.Error(),
-				"project_path": status.ProjectPath,
-			})
-			// Store the verification error for visibility
-			data.ExecutionError = types.StringValue(fmt.Sprintf("Warning: %v", err))
-		} else {
-			tflog.Info(ctx, "All merged files verified successfully after Claude execution", map[string]interface{}{
-				"merged_count":  len(mergedFiles),
-				"project_count": len(data.Files),
-				"project_path":  status.ProjectPath,
-			})
-			// Clear any previous execution error since verification succeeded
-			data.ExecutionError = types.StringValue("")
-
-			// Run verification commands if files have them
-			if err := fileManager.RunVerifications(ctx, mergedFiles); err != nil {
-				// Verification commands failed - this is a hard error
-				tflog.Error(ctx, "File verification commands failed", map[string]interface{}{
-					"error":        err.Error(),
-					"project_path": status.ProjectPath,
-				})
-				data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed: %v", err))
-				data.ExecutionStatus = types.StringValue("verification_failed")
-
-				// Return error to fail the operation
-				return fmt.Errorf("file verification commands failed: %w", err)
-			}
-		}
+	if report != nil {
+		tflog.Info(ctx, "All verifications passed", map[string]interface{}{
+			"passed_count": report.PassedCount,
+			"total_count":  report.PassedCount + report.FailedCount,
+		})
 	}
 
 	// LastApplied was already set during initialization
@@ -996,6 +1247,21 @@ func (r *ProjectResourceFinal) ValidateConfig(ctx context.Context, req resource.
 	}
 }
 
+// generatePromptJSON generates the Claude prompt JSON from the output data
+// This is extracted into a helper so it can be called during both plan and apply phases
+func (r *ProjectResourceFinal) generatePromptJSON(ctx context.Context, outputData map[string]interface{}, systemPrompt string) (string, error) {
+	// Use the BuildProjectPrompt from claude package to generate the prompt
+	prompt := claude.BuildProjectPrompt(outputData, systemPrompt)
+
+	// Convert to JSON
+	promptJSON, err := prompt.ToJSON()
+	if err != nil {
+		return "", fmt.Errorf("failed to convert prompt to JSON: %w", err)
+	}
+
+	return promptJSON, nil
+}
+
 // writeDebugFiles writes debug information when debug mode is enabled
 func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data ProjectModelFinal, outputData map[string]interface{}, outputPath string) {
 	// Create .debug directory for all debug files
@@ -1008,17 +1274,18 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 		return
 	}
 
+	// Generate timestamp for this debug session
+	timestamp := time.Now().Format("20060102-150405")
+
 	// Write project-{name}-{timestamp}.json - the full project specification
 	projectName := data.Name.ValueString()
-	timestamp := time.Now().Unix()
-	projectSpecPath := filepath.Join(debugDir, fmt.Sprintf("project-%s-%d.json", projectName, timestamp))
+	projectSpecPath := filepath.Join(debugDir, fmt.Sprintf("project-%s-%s.json", projectName, timestamp))
 	specJSON, err := json.MarshalIndent(outputData, "", "  ")
 	if err == nil {
 		if writeErr := os.WriteFile(projectSpecPath, specJSON, 0644); writeErr == nil {
 			tflog.Debug(ctx, "Wrote project specification", map[string]interface{}{
-				"path":      projectSpecPath,
-				"size":      len(specJSON),
-				"timestamp": timestamp,
+				"path": projectSpecPath,
+				"size": len(specJSON),
 			})
 		}
 	}
@@ -1035,8 +1302,8 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	// Build structured prompt using the new template approach
 	promptObj := claude.BuildProjectPrompt(projectSpec, customSystemPrompt)
 
-	// Write claude-prompt.md using the template-based approach
-	promptMdPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-%d.md", timestamp))
+	// Write claude-prompt-{timestamp}.md using the template-based approach
+	promptMdPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-%s.md", timestamp))
 	mdContent := promptObj.ToMarkdown()
 	if writeErr := os.WriteFile(promptMdPath, []byte(mdContent), 0644); writeErr == nil {
 		tflog.Debug(ctx, "Wrote prompt markdown file", map[string]interface{}{
@@ -1049,8 +1316,8 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	claudeClient := claude.NewClient("") // temp client just for building prompt
 	jsonPrompt, _ := claudeClient.BuildPrompt(projectSpec)
 
-	// Write claude-prompt.json - the actual JSON prompt that gets sent to Claude
-	promptJSONPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-%d.json", timestamp))
+	// Write claude-prompt-{timestamp}.json - the actual JSON prompt
+	promptJSONPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-%s.json", timestamp))
 	// Pretty-print the JSON for readability in debug
 	var prettyJSON bytes.Buffer
 	json.Indent(&prettyJSON, []byte(jsonPrompt), "", "  ")
@@ -1061,8 +1328,8 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 		})
 	}
 
-	// Write initial entry to claude-log.jsonl - this will contain all prompts and responses
-	logPath := filepath.Join(debugDir, fmt.Sprintf("claude-log-%d.jsonl", timestamp))
+	// Write initial entry to claude-log-{timestamp}.jsonl
+	logPath := filepath.Join(debugDir, fmt.Sprintf("claude-log-%s.jsonl", timestamp))
 	logEntry := map[string]interface{}{
 		"type":              "prompt",
 		"timestamp":         time.Now().Format(time.RFC3339),
@@ -1097,11 +1364,14 @@ func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string
 	}
 
 	// Create a deterministic representation of files
+	type instructionEntry struct {
+		Prompt      string   `json:"prompt"`
+		Constraints []string `json:"constraints,omitempty"`
+	}
 	type fileEntry struct {
-		Path         string   `json:"path"`
-		Content      string   `json:"content"`
-		Generate     bool     `json:"generate,omitempty"`
-		Instructions []string `json:"instructions,omitempty"`
+		Path         string             `json:"path"`
+		Content      string             `json:"content"`
+		Instructions []instructionEntry `json:"instructions,omitempty"`
 	}
 
 	var entries []fileEntry
@@ -1111,14 +1381,27 @@ func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string
 			Content: file.Content.ValueString(),
 		}
 
-		// Include optional fields if they're set
-		if !file.Generate.IsNull() && !file.Generate.IsUnknown() {
-			entry.Generate = file.Generate.ValueBool()
-		}
 		if file.Instructions != nil && len(file.Instructions) > 0 {
-			instructions := make([]string, len(file.Instructions))
-			for i, inst := range file.Instructions {
-				instructions[i] = inst.ValueString()
+			instructions := []instructionEntry{}
+			for _, inst := range file.Instructions {
+				instEntry := instructionEntry{
+					Prompt: inst.Prompt.ValueString(),
+				}
+
+				// Add constraints if present
+				if inst.Constraints != nil && len(inst.Constraints) > 0 {
+					constraints := []string{}
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							constraints = append(constraints, c.ValueString())
+						}
+					}
+					if len(constraints) > 0 {
+						instEntry.Constraints = constraints
+					}
+				}
+
+				instructions = append(instructions, instEntry)
 			}
 			entry.Instructions = instructions
 		}
@@ -1146,6 +1429,166 @@ func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string
 	return hex.EncodeToString(hash[:])
 }
 
+// computeConfigHash creates a hash of the user's configuration (not runtime state)
+// This ensures the hash is deterministic and doesn't change when dependencies are created
+func (r *ProjectResourceFinal) computeConfigHash(ctx context.Context, data ProjectModelFinal) string {
+	var parts []string
+
+	// 1. Hash files from config (not merged, not from registry)
+	for _, file := range data.Files {
+		parts = append(parts, "file:"+file.Path.ValueString())
+		if !file.Content.IsNull() && !file.Content.IsUnknown() {
+			parts = append(parts, "content:"+file.Content.ValueString())
+		}
+		if file.Instructions != nil {
+			for _, inst := range file.Instructions {
+				parts = append(parts, "file_instruction_prompt:"+inst.Prompt.ValueString())
+				if inst.Constraints != nil {
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							parts = append(parts, "file_instruction_constraint:"+c.ValueString())
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Hash requirements
+	for _, req := range data.Requirements {
+		parts = append(parts, "requirement:"+req.Name.ValueString())
+		for _, inst := range req.Instructions {
+			parts = append(parts, "instruction_prompt:"+inst.Prompt.ValueString())
+			if inst.Constraints != nil {
+				for _, c := range inst.Constraints {
+					if !c.IsNull() && !c.IsUnknown() {
+						parts = append(parts, "instruction_constraint:"+c.ValueString())
+					}
+				}
+			}
+		}
+		for _, ver := range req.Verification {
+			parts = append(parts, "verification:"+ver.Command.ValueString())
+			if !ver.Expect.IsNull() && !ver.Expect.IsUnknown() {
+				parts = append(parts, "expect:"+ver.Expect.ValueString())
+			}
+		}
+	}
+
+	// 3. Hash kit IDs (just IDs, not full kit data from registry)
+	kitIDs := extractIDsFromDynamicList(ctx, data.Kits)
+	for _, kitID := range kitIDs {
+		parts = append(parts, "kit:"+kitID)
+	}
+
+	// 4. Hash system prompt
+	if !data.SystemPrompt.IsNull() && !data.SystemPrompt.IsUnknown() {
+		parts = append(parts, "system_prompt:"+data.SystemPrompt.ValueString())
+	}
+
+	// 5. Hash stack reference (name only, not contents)
+	stackID := extractIDFromDynamic(ctx, data.Stack)
+	if stackID != "" {
+		parts = append(parts, "stack:"+stackID)
+	}
+
+	// Sort for determinism
+	sort.Strings(parts)
+
+	// Hash the combined config
+	combined := strings.Join(parts, "|")
+	hash := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(hash[:])
+}
+
+// computeOutputHash creates a hash of all actual files in the project directory
+// This detects drift when files are manually modified/deleted or when LLM creates different files
+func (r *ProjectResourceFinal) computeOutputHash(ctx context.Context, projectPath string) string {
+	if projectPath == "" {
+		return ""
+	}
+
+	// Check if project path exists
+	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		return ""
+	}
+
+	type fileEntry struct {
+		Path string `json:"path"`
+		Hash string `json:"hash"`
+	}
+
+	var entries []fileEntry
+
+	// Walk all files in project directory
+	err := filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories and debug directory
+		if info.IsDir() {
+			if strings.Contains(path, ".debug") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Compute relative path
+		relPath, err := filepath.Rel(projectPath, path)
+		if err != nil {
+			relPath = path
+		}
+
+		// Hash file contents
+		fileData, err := os.ReadFile(path)
+		if err != nil {
+			tflog.Warn(ctx, "Failed to read file for output hash", map[string]interface{}{
+				"path":  path,
+				"error": err.Error(),
+			})
+			return nil // Skip file but continue walking
+		}
+
+		fileHash := sha256.Sum256(fileData)
+		entries = append(entries, fileEntry{
+			Path: relPath,
+			Hash: hex.EncodeToString(fileHash[:]),
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		tflog.Warn(ctx, "Failed to walk project directory for output hash", map[string]interface{}{
+			"path":  projectPath,
+			"error": err.Error(),
+		})
+		return ""
+	}
+
+	if len(entries) == 0 {
+		return ""
+	}
+
+	// Sort entries by path for deterministic hash
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Path < entries[j].Path
+	})
+
+	// Create JSON representation and hash it
+	jsonData, err := json.Marshal(entries)
+	if err != nil {
+		tflog.Warn(ctx, "Failed to marshal file entries for output hash", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return ""
+	}
+
+	hash := sha256.Sum256(jsonData)
+	return hex.EncodeToString(hash[:])
+}
+
 // detectFileChanges determines if files have meaningfully changed
 func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModel) bool {
 	oldHash := r.computeFileHash(oldFiles)
@@ -1162,6 +1605,44 @@ func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, 
 	})
 
 	return changed
+}
+
+// getKitFilesFromRegistry fetches kit data from registry and extracts their files
+func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitIDs []string, reg *registry.Registry) []schemas.FileModel {
+	var allFiles []schemas.FileModel
+
+	if reg == nil || len(kitIDs) == 0 {
+		return allFiles
+	}
+
+	for _, kitID := range kitIDs {
+		if kitData, exists := reg.GetComponent(kitID); exists {
+			if kit, ok := kitData.(ComponentResourceModel); ok {
+				tflog.Info(ctx, "Extracting files from kit", map[string]interface{}{
+					"kit_id":     kitID,
+					"kit_name":   kit.Name.ValueString(),
+					"file_count": len(kit.Files),
+				})
+				allFiles = append(allFiles, kit.Files...)
+			} else {
+				tflog.Warn(ctx, "Kit data is not ComponentResourceModel", map[string]interface{}{
+					"kit_id":      kitID,
+					"actual_type": fmt.Sprintf("%T", kitData),
+				})
+			}
+		} else {
+			tflog.Warn(ctx, "Kit not found in registry", map[string]interface{}{
+				"kit_id": kitID,
+			})
+		}
+	}
+
+	tflog.Info(ctx, "Collected files from kits", map[string]interface{}{
+		"kit_count":   len(kitIDs),
+		"total_files": len(allFiles),
+	})
+
+	return allFiles
 }
 
 // collectAndMergeFiles collects files from all sources and merges them with proper precedence
@@ -1198,18 +1679,17 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 		})
 
 		// If a specific stack is referenced, use only that stack
-		if !data.StackRef.IsNull() && !data.StackRef.IsUnknown() {
-			stackRef := data.StackRef.ValueString()
-
+		stackID := extractIDFromDynamic(ctx, data.Stack)
+		if stackID != "" {
 			tflog.Info(ctx, "Looking for specific stack", map[string]interface{}{
-				"stack_ref": stackRef,
+				"stack_id": stackID,
 			})
 
 			// Get the primary stack this project instantiates
-			if stackData, exists := reg.GetStack(stackRef); exists {
+			if stackData, exists := reg.GetStack(stackID); exists {
 				if stack, ok := stackData.(StackResourceModel); ok {
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
-						"stack_ref":  stackRef,
+						"stack_id":   stackID,
 						"file_count": len(stack.Files),
 						"stack_name": stack.Name.ValueString(),
 					})
@@ -1235,21 +1715,29 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 						tflog.Info(ctx, "Stack file retrieved from registry", logData)
 					}
 
-					// TODO: First add files from kits within the primary stack (lowest precedence)
-					// This requires stacks to have their own kit references
-					// For now, we'll just note this is where stack's kits would be processed
+					// 1. First add files from kits within the primary stack (lowest precedence)
+					stackKitIDs := extractIDsFromDynamicList(ctx, stack.Kits)
+					if len(stackKitIDs) > 0 {
+						stackKitFiles := r.getKitFilesFromRegistry(ctx, stackKitIDs, reg)
+						merger.AddFiles(ctx, stackKitFiles, files.SourceStack)
+						tflog.Info(ctx, "Added files from stack kits", map[string]interface{}{
+							"stack_id":       stackID,
+							"kit_count":      len(stackKitIDs),
+							"kit_file_count": len(stackKitFiles),
+						})
+					}
 
-					// Add the primary stack's own files (higher precedence than stack's kits)
+					// 2. Add the primary stack's own files (higher precedence than stack's kits)
 					merger.AddFiles(ctx, stack.Files, files.SourceStack)
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
-						"stack_ref":   stackRef,
+						"stack_id":    stackID,
 						"actual_type": fmt.Sprintf("%T", stackData),
 					})
 				}
 			} else {
 				tflog.Warn(ctx, "Referenced stack not found in registry", map[string]interface{}{
-					"stack_ref": stackRef,
+					"stack_id": stackID,
 					"available_stacks": func() []string {
 						ids := make([]string, 0, len(allStacks))
 						for id := range allStacks {
@@ -1292,12 +1780,18 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 		}
 	}
 
-	// TODO: Add files from project's additional kits
-	// These are kits added directly to the project to customize the stack
-	// This would process data.Kits and collect their files
-	// merger.AddFiles(ctx, kitFiles, files.SourceProject)
+	// 3. Add files from project's additional kits (override stack kits)
+	projectKitIDs := extractIDsFromDynamicList(ctx, data.Kits)
+	if reg != nil && len(projectKitIDs) > 0 {
+		projectKitFiles := r.getKitFilesFromRegistry(ctx, projectKitIDs, reg)
+		merger.AddFiles(ctx, projectKitFiles, files.SourceProject)
+		tflog.Info(ctx, "Added files from project kits", map[string]interface{}{
+			"kit_count":      len(projectKitIDs),
+			"kit_file_count": len(projectKitFiles),
+		})
+	}
 
-	// Finally, add project's own files (highest precedence)
+	// 4. Finally, add project's own files (highest precedence)
 	if data.Files != nil {
 		merger.AddFiles(ctx, data.Files, files.SourceProject)
 	}
@@ -1311,9 +1805,10 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 		"project_count": len(data.Files),
 	}
 
-	// Only add stack_ref if it's not null
-	if !data.StackRef.IsNull() && !data.StackRef.IsUnknown() {
-		logAttrs["stack_ref"] = data.StackRef.ValueString()
+	// Only add stack if it's not null
+	stackID := extractIDFromDynamic(ctx, data.Stack)
+	if stackID != "" {
+		logAttrs["stack_id"] = stackID
 	}
 
 	tflog.Info(ctx, "Merged files from all sources", logAttrs)

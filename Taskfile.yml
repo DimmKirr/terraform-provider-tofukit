@@ -44,7 +44,50 @@ tasks:
       - build
       - install
       - test:data_hello_world_txt_test
+
+
   test:data_hello_world_txt_test:
+    deps:
+      - build
+      - install
+
     desc: Run data_hello_world_txt_test
+    env:
+      TF_LOG: INFO
     cmds:
       - go test ./test -v -run TestDataQuerySimple
+
+  test:project_hello_world_txt_test:
+    deps:
+      - build
+      - install
+
+    desc: Run project_hello_world_txt_test
+    env:
+      TF_LOG: INFO
+    cmds:
+      - go test ./test -v -run TestProjectHelloWorldTxt
+#      - go test ./test -v -run TestProjectRecursiveFile
+#      - go test ./test -v -run TestProjectVerificationFailure
+
+  test:project_verification_retry_test:
+    deps:
+      - build
+      - install
+
+    desc: Run project_verification_retry_test
+    env:
+      TF_LOG: DEBUG
+    cmds:
+      - go test ./test -v -run TestProjectVerificationRetry
+
+  test:project_click_cli_test:
+    deps:
+      - build
+      - install
+
+    desc: Run project_click_cli_test
+    env:
+      TF_LOG: DEBUG
+    cmds:
+      - go test ./test -v -run TestProjectClickCLI

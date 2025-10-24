@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
@@ -20,8 +21,8 @@ const (
 
 // FileWithSource wraps a file with its source information
 type FileWithSource struct {
-	File schemas.FileModel
-	Source   FileSource
+	File   schemas.FileModel
+	Source FileSource
 }
 
 // Merger handles merging files from multiple sources with precedence rules
@@ -51,17 +52,17 @@ func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModel, source
 			// Only replace if new source has higher precedence
 			if source > existing.Source {
 				tflog.Debug(ctx, "Overriding file with higher precedence", map[string]interface{}{
-					"path":        path,
-					"old_source":  m.getSourceName(existing.Source),
-					"new_source":  sourceName,
+					"path":       path,
+					"old_source": m.getSourceName(existing.Source),
+					"new_source": sourceName,
 				})
 				m.files[path] = FileWithSource{
-					File: file,
-					Source:   source,
+					File:   file,
+					Source: source,
 				}
 			} else {
 				tflog.Debug(ctx, "Keeping existing file with higher precedence", map[string]interface{}{
-					"path":           path,
+					"path":            path,
 					"existing_source": m.getSourceName(existing.Source),
 					"ignored_source":  sourceName,
 				})
@@ -73,8 +74,8 @@ func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModel, source
 				"source": sourceName,
 			})
 			m.files[path] = FileWithSource{
-				File: file,
-				Source:   source,
+				File:   file,
+				Source: source,
 			}
 		}
 	}
@@ -87,6 +88,12 @@ func (m *Merger) GetMergedFiles() []schemas.FileModel {
 	for _, fileWithSource := range m.files {
 		result = append(result, fileWithSource.File)
 	}
+
+	// Sort files by path to ensure deterministic ordering
+	// This is critical for plan/apply consistency
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Path.ValueString() < result[j].Path.ValueString()
+	})
 
 	return result
 }

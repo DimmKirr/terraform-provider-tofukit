@@ -68,7 +68,7 @@ type ExecutionResult struct {
 }
 
 // ExecuteProject executes Claude Code with the provided project specification
-func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]interface{}, outputPath string) (*ExecutionResult, error) {
+func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]interface{}, outputPath string, model string) (*ExecutionResult, error) {
 	fmt.Printf("🔧 DEBUG: ExecuteProject called\n")
 	fmt.Printf("🔧 DEBUG: - outputPath: %s\n", outputPath)
 	fmt.Printf("🔧 DEBUG: - claudeHomeDir: %s\n", c.claudeHomeDir)
@@ -228,6 +228,11 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		actualPrompt = fmt.Sprintf("The full instructions are too long for the command line. Please read the file '%s' and execute all the instructions in it.", fullPromptPath)
 	}
 
+	// Default to sonnet if model not specified
+	if model == "" {
+		model = "sonnet"
+	}
+
 	// Build command - use unbuffer to prevent TTY detection issues
 	commandArgs := []string{
 		"claude",
@@ -236,6 +241,7 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		"--dangerously-skip-permissions",
 		"--max-turns", "30",
 		"--system-prompt", systemPrompt,
+		"--model", model,
 	}
 
 	fmt.Printf("🔧 DEBUG: Command: unbuffer claude -p <prompt> ...\n")
@@ -325,6 +331,133 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		Output:      string(output),
 		ProjectPath: absOutputPath,
 	}, nil
+}
+
+// ExecuteProjectWithPrompt executes Claude using a pre-built prompt JSON string
+// This is used when the prompt was already generated during the plan phase
+func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string, outputPath string, model string) (*ExecutionResult, error) {
+	fmt.Printf("🔧 DEBUG: ExecuteProjectWithPrompt called with pre-built prompt\n")
+	fmt.Printf("🔧 DEBUG: - outputPath: %s\n", outputPath)
+	fmt.Printf("🔧 DEBUG: - prompt size: %d bytes\n", len(promptJSON))
+
+	tflog.Info(ctx, "Executing Claude with pre-built prompt", map[string]interface{}{
+		"output_path": outputPath,
+		"prompt_size": len(promptJSON),
+	})
+
+	// Get absolute path for output directory
+	absOutputPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return &ExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to get absolute path: %v", err),
+		}, err
+	}
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(absOutputPath, 0755); err != nil {
+		return &ExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to create output directory: %v", err),
+		}, err
+	}
+
+	// Change to the output directory before executing
+	originalDir, err := os.Getwd()
+	if err != nil {
+		return &ExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to get current directory: %v", err),
+		}, err
+	}
+
+	if err := os.Chdir(absOutputPath); err != nil {
+		return &ExecutionResult{
+			Success: false,
+			Error:   fmt.Sprintf("Failed to change directory: %v", err),
+		}, err
+	}
+	defer os.Chdir(originalDir)
+
+	// Build system prompt
+	systemPrompt := c.BuildSystemPrompt()
+
+	// Use the prompt JSON directly
+	actualPrompt := promptJSON
+	if len(promptJSON) > 10000 {
+		// Save full prompt to file for very long prompts
+		fullPromptPath := filepath.Join(absOutputPath, "full-prompt.json")
+		if err := os.WriteFile(fullPromptPath, []byte(promptJSON), 0644); err != nil {
+			fmt.Printf("🔧 DEBUG: Failed to write full prompt: %v\n", err)
+		}
+		actualPrompt = fmt.Sprintf("The full instructions are too long for the command line. Please read the file '%s' and execute all the instructions in it.", fullPromptPath)
+	}
+
+	// Default to sonnet if model not specified
+	if model == "" {
+		model = "sonnet"
+	}
+
+	// Build command with unbuffer
+	commandArgs := []string{
+		"claude",
+		"-p",
+		actualPrompt,
+		"--dangerously-skip-permissions",
+		"--max-turns", "30",
+		"--system-prompt", systemPrompt,
+		"--model", model,
+	}
+
+	fmt.Printf("🔧 DEBUG: Executing claude with pre-built prompt from plan\n")
+
+	// Create timeout context
+	execCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, 3*time.Minute)
+		defer cancel()
+	}
+
+	// Execute command
+	cmd := exec.CommandContext(execCtx, "unbuffer", commandArgs...)
+	cmd.Dir = absOutputPath
+
+	output, cmdErr := cmd.CombinedOutput()
+
+	if cmdErr != nil {
+		// Check if it's just max turns
+		if strings.Contains(string(output), "max turns") {
+			fmt.Printf("🔧 DEBUG: Max turns reached but continuing\n")
+		} else {
+			tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
+				"error":  cmdErr.Error(),
+				"output": string(output),
+			})
+			return &ExecutionResult{
+				Success: false,
+				Error:   fmt.Sprintf("Claude execution failed: %v\nOutput: %s", cmdErr, string(output)),
+			}, cmdErr
+		}
+	}
+
+	fmt.Printf("🔧 DEBUG: Claude execution completed successfully\n")
+
+	tflog.Info(ctx, "Claude Code execution completed with pre-built prompt", map[string]interface{}{
+		"project_path":  absOutputPath,
+		"output_length": len(output),
+	})
+
+	return &ExecutionResult{
+		Success:     true,
+		Output:      string(output),
+		ProjectPath: absOutputPath,
+	}, nil
+}
+
+// GetSystemPrompt returns the current system prompt
+func (c *Client) GetSystemPrompt() string {
+	return c.systemPrompt
 }
 
 // BuildPrompt creates a structured JSON prompt to send to Claude Code
@@ -449,6 +582,65 @@ func (c *Client) BuildSystemPrompt() string {
 		return c.systemPrompt
 	}
 	return DefaultSystemPrompt()
+}
+
+// ExecuteQuery executes a simple Claude query without project creation
+func (c *Client) ExecuteQuery(ctx context.Context, prompt string, model string) (string, error) {
+	tflog.Info(ctx, "Executing simple Claude query", map[string]interface{}{
+		"prompt_length": len(prompt),
+		"model":         model,
+	})
+
+	// Create a timeout context if one isn't already set
+	execCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+	}
+
+	// Use -p flag (project mode) with explicit instruction not to create files
+	// Just output the answer directly
+	fullPrompt := prompt + "\n\nIMPORTANT: Do not create any files or directories. Just output your answer directly as text."
+
+	// Build command - use -p flag which works with unbuffer (as user confirmed)
+	commandArgs := []string{
+		"claude",
+		"-p",
+		fullPrompt,
+		"--dangerously-skip-permissions",
+		"--output-format=json",
+		"--model", model,
+		"--max-turns", "3", // Fewer turns for simple queries
+	}
+
+	tflog.Info(ctx, "Executing Claude CLI", map[string]interface{}{
+		"model":     model,
+		"max_turns": "3",
+		"cli_args":  fmt.Sprintf("unbuffer claude -p <prompt> --model %s", model),
+	})
+
+	// Use unbuffer to prevent TTY detection issues
+	cmd := exec.CommandContext(execCtx, "unbuffer", commandArgs...)
+
+	// Execute and capture output
+	output, cmdErr := cmd.CombinedOutput()
+
+	if cmdErr != nil {
+		tflog.Error(ctx, "Claude query execution failed", map[string]interface{}{
+			"error":  cmdErr.Error(),
+			"output": string(output),
+			"model":  model,
+		})
+		return "", fmt.Errorf("Claude query failed: %v\nOutput: %s", cmdErr, string(output))
+	}
+
+	tflog.Info(ctx, "Claude query completed", map[string]interface{}{
+		"output_length": len(output),
+		"model":         model,
+	})
+
+	return string(output), nil
 }
 
 // ValidateClaudeCodeAvailability checks if Claude Code CLI is available

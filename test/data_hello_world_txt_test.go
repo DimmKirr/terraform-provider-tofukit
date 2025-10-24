@@ -45,30 +45,53 @@ provider "tofukit" {
 
 # Data source query - simple color question
 data "tofukit_query" "grass_color" {
-  instructions = [
-    "What color is grass?",
-    "Answer with exactly one word, in lowercase",
-    "Do not include any punctuation or additional text",
-    "Just return the single word: green"
-  ]
-
-  format = "text"
+  instruction {
+    prompt = "What color is grass?"
+    constraints = [
+      "Answer with exactly one word",
+      "Use lowercase only",
+      "Do NOT include any punctuation or additional text"
+    ]
+  }
 }
+
+# Data source query - simple material question
+data "tofukit_query" "rock_hardness" {
+  instruction {
+    prompt = "Is rock a hard or a soft material?"
+    constraints = [
+      "Answer with exactly one word",
+      "Use lowercase only",
+      "Do NOT include any punctuation or additional text"
+    ]
+  }
+}
+
 
 # Output the query results
-output "query_output_json" {
-  value = data.tofukit_query.grass_color.output_json
-  description = "JSON output from the query"
-}
-
-output "query_output_data" {
-  value = data.tofukit_query.grass_color.output_data
-  description = "Raw output from the query"
-}
-
-output "query_id" {
+output "grass_color_id" {
   value = data.tofukit_query.grass_color.id
-  description = "Query ID"
+  description = "ID from grass color query"
+}
+
+output "grass_color_json" {
+  value = data.tofukit_query.grass_color.json
+  description = "JSON output from grass color query"
+}
+
+output "grass_color_text" {
+  value = data.tofukit_query.grass_color.text
+  description = "Text output from grass color query"
+}
+
+output "rock_hardness_json" {
+  value = data.tofukit_query.rock_hardness.json
+  description = "JSON output from rock hardness query"
+}
+
+output "rock_hardness_text" {
+  value = data.tofukit_query.rock_hardness.text
+  description = "Text output from rock hardness query"
 }
 `
 	err := os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
@@ -165,27 +188,42 @@ output "query_id" {
 	require.NoError(t, err, "Failed to write state.json")
 	t.Logf("State saved to: %s", stateFile)
 
-	// Verify query_id exists
-	queryID, ok := outputs["query_id"].(map[string]interface{})
-	require.True(t, ok, "query_id output not found")
-	assert.NotEmpty(t, queryID["value"], "Query ID should not be empty")
-	t.Logf("Query ID: %v", queryID["value"])
+	// Verify grass_color outputs
+	t.Log("Verifying grass_color query outputs...")
 
-	// Verify query_output_data exists and contains expected content
-	queryData, ok := outputs["query_output_data"].(map[string]interface{})
-	require.True(t, ok, "query_output_data not found")
-	rawOutput := queryData["value"].(string)
-	t.Logf("Raw query output: %s", rawOutput)
+	grassColorID, ok := outputs["grass_color_id"].(map[string]interface{})
+	require.True(t, ok, "grass_color_id output not found")
+	assert.NotEmpty(t, grassColorID["value"], "Grass color query ID should not be empty")
+	t.Logf("Grass color query ID: %v", grassColorID["value"])
 
-	// Verify the output contains "green"
-	queryDataValue := queryData["value"].(string)
-	// Clean up the output - remove any whitespace, newlines, etc.
-	cleanedOutput := strings.TrimSpace(strings.ToLower(queryDataValue))
-	t.Logf("Cleaned output: '%s'", cleanedOutput)
+	grassColorText, ok := outputs["grass_color_text"].(map[string]interface{})
+	require.True(t, ok, "grass_color_text not found")
+	grassColorTextValue := grassColorText["value"].(string)
+	t.Logf("Grass color text output: '%s'", grassColorTextValue)
 
-	// The output should contain the word "green"
-	assert.Contains(t, cleanedOutput, "green", "Output should contain the word 'green'")
+	// Verify the output contains "green" (should already be clean)
+	cleanedGrassColor := strings.TrimSpace(strings.ToLower(grassColorTextValue))
+	assert.Contains(t, cleanedGrassColor, "green", "Grass color output should contain 'green'")
+	t.Log("✓ Grass color query verified: contains 'green'")
 
-	t.Log("✓ Data query test completed successfully")
+	// Verify rock_hardness outputs
+	t.Log("Verifying rock_hardness query outputs...")
+
+	rockHardnessJSON, ok := outputs["rock_hardness_json"].(map[string]interface{})
+	require.True(t, ok, "rock_hardness_json output not found")
+	assert.NotEmpty(t, rockHardnessJSON["value"], "Rock hardness JSON should not be empty")
+	t.Logf("Rock hardness JSON output: %v", rockHardnessJSON["value"])
+
+	rockHardnessText, ok := outputs["rock_hardness_text"].(map[string]interface{})
+	require.True(t, ok, "rock_hardness_text not found")
+	rockHardnessTextValue := rockHardnessText["value"].(string)
+	t.Logf("Rock hardness text output: '%s'", rockHardnessTextValue)
+
+	// Verify the output contains "hard" (rocks are hard materials)
+	cleanedRockHardness := strings.TrimSpace(strings.ToLower(rockHardnessTextValue))
+	assert.Contains(t, cleanedRockHardness, "hard", "Rock hardness output should contain 'hard'")
+	t.Log("✓ Rock hardness query verified: contains 'hard'")
+
+	t.Log("✓ All data query tests completed successfully")
 
 }

@@ -10,9 +10,14 @@ import (
 // RequirementModel represents a requirement block
 type RequirementModel struct {
 	Name         types.String        `tfsdk:"name"`
-	Priority     types.Int64         `tfsdk:"priority"`
-	Instructions []types.String      `tfsdk:"instructions"`
+	Instructions []InstructionModel  `tfsdk:"instruction"`
 	Verification []VerificationModel `tfsdk:"verification"`
+}
+
+// InstructionModel represents an instruction block
+type InstructionModel struct {
+	Prompt      types.String   `tfsdk:"prompt"`
+	Constraints []types.String `tfsdk:"constraints"`
 }
 
 // VerificationModel represents a verification block
@@ -25,8 +30,7 @@ type VerificationModel struct {
 type FileModel struct {
 	Path         types.String        `tfsdk:"path"`
 	Content      types.String        `tfsdk:"content"`
-	Generate     types.Bool          `tfsdk:"generate"`
-	Instructions []types.String      `tfsdk:"instructions"`
+	Instructions []InstructionModel  `tfsdk:"instruction"`
 	Verification []VerificationModel `tfsdk:"verification"`
 }
 
@@ -44,17 +48,24 @@ func GetRequirementBlock() schema.ListNestedBlock {
 					MarkdownDescription: "Name of the requirement",
 					Required:            true,
 				},
-				"priority": schema.Int64Attribute{
-					MarkdownDescription: "Priority of the requirement (higher number = higher priority, default: 0)",
-					Optional:            true,
-				},
-				"instructions": schema.ListAttribute{
-					MarkdownDescription: "List of instructions",
-					Optional:            true,
-					ElementType:         types.StringType,
-				},
 			},
 			Blocks: map[string]schema.Block{
+				"instruction": schema.ListNestedBlock{
+					MarkdownDescription: "Instruction steps for implementing this requirement (executed sequentially)",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"prompt": schema.StringAttribute{
+								MarkdownDescription: "LLM-facing instruction describing what to do",
+								Required:            true,
+							},
+							"constraints": schema.ListAttribute{
+								MarkdownDescription: "Constraints that must be respected (what NOT to do)",
+								Optional:            true,
+								ElementType:         types.StringType,
+							},
+						},
+					},
+				},
 				"verification": schema.ListNestedBlock{
 					MarkdownDescription: "Verification commands for this requirement",
 					NestedObject: schema.NestedBlockObject{
@@ -86,20 +97,27 @@ func GetFileBlock() schema.ListNestedBlock {
 					Required:            true,
 				},
 				"content": schema.StringAttribute{
-					MarkdownDescription: "Content of the file",
+					MarkdownDescription: "Content of the file (mutually exclusive with instruction block)",
 					Optional:            true,
-				},
-				"generate": schema.BoolAttribute{
-					MarkdownDescription: "Whether to generate content based on instructions",
-					Optional:            true,
-				},
-				"instructions": schema.ListAttribute{
-					MarkdownDescription: "Instructions for generating the file content (used with generate=true)",
-					Optional:            true,
-					ElementType:         types.StringType,
 				},
 			},
 			Blocks: map[string]schema.Block{
+				"instruction": schema.ListNestedBlock{
+					MarkdownDescription: "Instructions for generating the file content (mutually exclusive with content attribute)",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"prompt": schema.StringAttribute{
+								MarkdownDescription: "LLM-facing instruction describing what to generate",
+								Required:            true,
+							},
+							"constraints": schema.ListAttribute{
+								MarkdownDescription: "Constraints that must be respected (what NOT to do)",
+								Optional:            true,
+								ElementType:         types.StringType,
+							},
+						},
+					},
+				},
 				"verification": schema.ListNestedBlock{
 					MarkdownDescription: "Verification commands for this file",
 					NestedObject: schema.NestedBlockObject{

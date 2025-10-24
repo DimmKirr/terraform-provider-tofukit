@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/resources"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )

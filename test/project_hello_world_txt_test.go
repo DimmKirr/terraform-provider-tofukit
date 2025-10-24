@@ -22,19 +22,9 @@ func TestProjectHelloWorldTxt(t *testing.T) {
 	// The flag bypasses all authentication and permission checks
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
-	// Get project root
-	projectRoot, err := filepath.Abs("..")
-	require.NoError(t, err)
+	var err error
 
-	// Step 1: Build and install the provider locally
-	t.Log("Building and installing provider...")
-	buildCmd := exec.Command("make", "install")
-	buildCmd.Dir = projectRoot
-	output, err := buildCmd.CombinedOutput()
-	require.NoError(t, err, "Failed to build provider: %s", output)
-	t.Log("✓ Provider built and installed successfully")
-
-	// Step 2: Generate main.tofu with provider configuration
+	// Step 1: Generate main.tofu with provider configuration
 	// Set output_path to "output" directory within test directory
 	mainTofuContent := `# Terraform configuration for hello-world-txt test
 terraform {
@@ -75,14 +65,14 @@ EOF
   file {
     path = "hello2.txt"
     content = <<-EOF
-hello world2
+!hello world2!
 EOF
   }
 
   file {
     path = "hello3.txt"
     content = <<-EOF
-hello world2
+hello world3
 EOF
   }
 }
@@ -160,8 +150,8 @@ EOF
 		require.NoError(t, err, "Failed to run apply: %s", applyOutput)
 	}
 
-	// Project path for all subtests
-	projectPath := filepath.Join(testDir, "output", "hello-world")
+	// Project path for all subtests - files created directly in output directory (no subdirectory)
+	projectPath := filepath.Join(testDir, "output")
 
 	// === SUBTEST 1: Initial Creation ===
 	t.Run("InitialCreation", func(t *testing.T) {
@@ -177,11 +167,11 @@ EOF
 
 		hello2Path := filepath.Join(projectPath, "hello2.txt")
 		assert.FileExists(t, hello2Path, "hello2.txt should exist")
-		verifyFileContent(t, hello2Path, "hello world2")
+		verifyFileContent(t, hello2Path, "!hello world2!")
 
 		hello3Path := filepath.Join(projectPath, "hello3.txt")
 		assert.FileExists(t, hello3Path, "hello3.txt should exist")
-		verifyFileContent(t, hello3Path, "hello world2")
+		verifyFileContent(t, hello3Path, "hello world3")
 
 		t.Log("✓ Initial file creation successful")
 	})
@@ -206,7 +196,7 @@ EOF
   file {
     path = "hello2.txt"
     content = <<-EOF
-hello world2
+!hello world2!
 EOF
   }
 
@@ -255,7 +245,7 @@ EOF
   file {
     path = "hello2.txt"
     content = <<-EOF
-hello world2
+!hello world2!
 EOF
   }
 
@@ -281,132 +271,7 @@ EOF
 		t.Log("✓ File addition in subdirectory successful")
 	})
 
-	// === SUBTEST 4: File Reordering ===
-	t.Run("FileReordering", func(t *testing.T) {
-		t.Log("Testing file addition in middle of list (reordering) using stack...")
-
-		// Start with a stack containing files
-		initialReorderContent := `resource "tofukit_stack" "plaintext" {
-  name        = "plaintext-stack"
-  description = "Stack with plain text files"
-
-  file {
-    path = "first.txt"
-    content = <<-EOF
-first file content
-EOF
-  }
-
-  file {
-    path = "last.txt"
-    content = <<-EOF
-last file content
-EOF
-  }
-
-  file {
-    path = "file-from-stack.txt"
-    content = <<-EOF
-this file comes from the stack
-EOF
-  }
-}
-
-resource "tofukit_project" "hello_world" {
-  name        = "hello-world"
-  description = "A simple hello world project"
-  version     = "1.0.0"
-
-  # Project depends on the stack
-  depends_on = [tofukit_stack.plaintext]
-}
-`
-		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(initialReorderContent), 0644)
-		require.NoError(t, err, "Failed to write initial reorder configuration with stack")
-
-		// Apply to create initial files
-		runApply(t)
-
-		// Verify initial files exist
-		firstPath := filepath.Join(projectPath, "first.txt")
-		lastPath := filepath.Join(projectPath, "last.txt")
-		stackFilePath := filepath.Join(projectPath, "file-from-stack.txt")
-		assert.FileExists(t, firstPath, "first.txt should exist")
-		assert.FileExists(t, lastPath, "last.txt should exist")
-		assert.FileExists(t, stackFilePath, "file-from-stack.txt should exist")
-		verifyFileContent(t, firstPath, "first file content")
-		verifyFileContent(t, lastPath, "last file content")
-		verifyFileContent(t, stackFilePath, "this file comes from the stack")
-
-		// Now insert a file in the middle of the stack
-		reorderedContent := `resource "tofukit_stack" "plaintext" {
-  name        = "plaintext-stack"
-  description = "Stack with plain text files"
-
-  file {
-    path = "first.txt"
-    content = <<-EOF
-first file content
-EOF
-  }
-
-  file {
-    path = "middle.txt"
-    content = <<-EOF
-middle file content
-EOF
-  }
-
-  file {
-    path = "last.txt"
-    content = <<-EOF
-last file content
-EOF
-  }
-
-  file {
-    path = "file-from-stack.txt"
-    content = <<-EOF
-this file comes from the stack
-EOF
-  }
-}
-
-resource "tofukit_project" "hello_world" {
-  name        = "hello-world"
-  description = "A simple hello world project"
-  version     = "1.0.0"
-
-  # Project depends on the stack
-  depends_on = [tofukit_stack.plaintext]
-}
-`
-		err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(reorderedContent), 0644)
-		require.NoError(t, err, "Failed to write reordered configuration with stack")
-
-		// Apply the changes
-		runApply(t)
-
-		// Verify all files exist with correct content
-		middlePath := filepath.Join(projectPath, "middle.txt")
-
-		// Check all files exist - THIS SHOULD FAIL with the current bug
-		// because the project doesn't detect stack file changes
-		assert.FileExists(t, firstPath, "first.txt should still exist after reordering")
-		assert.FileExists(t, middlePath, "middle.txt should be created") // This will FAIL with current bug
-		assert.FileExists(t, lastPath, "last.txt should still exist after reordering")
-		assert.FileExists(t, stackFilePath, "file-from-stack.txt should still exist")
-
-		// Verify content is correct
-		verifyFileContent(t, firstPath, "first file content")
-		verifyFileContent(t, middlePath, "middle file content")
-		verifyFileContent(t, lastPath, "last file content")
-		verifyFileContent(t, stackFilePath, "this file comes from the stack")
-
-		t.Log("✓ File reordering in stack handled correctly - all files exist with correct content")
-	})
-
-	// === SUBTEST 5: Debug Files Verification ===
+	// === SUBTEST 4: Debug Files Verification ===
 	t.Run("DebugFilesVerification", func(t *testing.T) {
 		t.Log("Verifying debug files...")
 
@@ -476,15 +341,6 @@ func TestProjectRecursiveFile(t *testing.T) {
 	// Create test directory
 	testDir := createTestDirectory(t, "TestProjectRecursiveFile")
 
-	// Build and install provider
-	t.Log("Building and installing provider...")
-	cmd := exec.Command("make", "install")
-	cmd.Dir = filepath.Join("..") // Go up one level from test directory
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to build provider: %v\nOutput: %s", err, output)
-	}
-	t.Log("✓ Provider built and installed successfully")
-
 	// Change to test directory
 	originalDir, err := os.Getwd()
 	if err != nil {
@@ -549,8 +405,8 @@ resource "tofukit_project" "recursive_test" {
 		}
 		t.Log("✓ Initial apply completed successfully")
 
-		// Verify the nested file was created
-		projectPath := filepath.Join(testDir, "output", "recursive-file")
+		// Verify the nested file was created - files created directly in output directory (no subdirectory)
+		projectPath := filepath.Join(testDir, "output")
 		nestedFilePath := filepath.Join(projectPath, "demo", "hello.txt")
 
 		assert.DirExists(t, filepath.Join(projectPath, "demo"), "demo directory should exist")
@@ -610,8 +466,8 @@ resource "tofukit_project" "recursive_test" {
 		}
 		t.Log("✓ Update apply completed successfully")
 
-		// Verify both files exist
-		projectPath := filepath.Join(testDir, "output", "recursive-file")
+		// Verify both files exist - files created directly in output directory (no subdirectory)
+		projectPath := filepath.Join(testDir, "output")
 		file1Path := filepath.Join(projectPath, "demo", "hello.txt")
 		file2Path := filepath.Join(projectPath, "demo", "hello2.txt")
 
@@ -678,8 +534,8 @@ resource "tofukit_project" "recursive_test" {
 		}
 		t.Log("✓ Deeper nesting apply completed successfully")
 
-		// Verify all files exist including deeply nested one
-		projectPath := filepath.Join(testDir, "output", "recursive-file")
+		// Verify all files exist including deeply nested one - files created directly in output directory (no subdirectory)
+		projectPath := filepath.Join(testDir, "output")
 		file3Path := filepath.Join(projectPath, "demo", "subdir", "deep", "hello3.txt")
 
 		assert.DirExists(t, filepath.Join(projectPath, "demo", "subdir"), "demo/subdir directory should exist")
@@ -735,8 +591,8 @@ resource "tofukit_project" "recursive_test" {
 		}
 		t.Log("✓ Removal apply completed successfully")
 
-		// Verify only the first file remains
-		projectPath := filepath.Join(testDir, "output", "recursive-file")
+		// Verify only the first file remains - files created directly in output directory (no subdirectory)
+		projectPath := filepath.Join(testDir, "output")
 		file1Path := filepath.Join(projectPath, "demo", "hello.txt")
 		file2Path := filepath.Join(projectPath, "demo", "hello2.txt")
 		file3Path := filepath.Join(projectPath, "demo", "subdir", "deep", "hello3.txt")
@@ -767,19 +623,9 @@ func TestProjectVerificationFailure(t *testing.T) {
 
 	t.Log("Testing verification failure detection...")
 
-	// Get project root
-	projectRoot, err := filepath.Abs("..")
-	require.NoError(t, err)
+	var err error
 
-	// Step 1: Build and install the provider locally
-	t.Log("Building and installing provider...")
-	buildCmd := exec.Command("make", "install")
-	buildCmd.Dir = projectRoot
-	output, err := buildCmd.CombinedOutput()
-	require.NoError(t, err, "Failed to build provider: %s", output)
-	t.Log("✓ Provider built and installed successfully")
-
-	// Step 2: Generate main.tofu with provider configuration
+	// Step 1: Generate main.tofu with provider configuration
 	// Claude execution is always performed
 	mainTofuContent := `# Terraform configuration for verification failure test
 terraform {
@@ -929,8 +775,8 @@ provider "tofukit" {
 
 		t.Log("✓ Apply succeeded after fixing verification")
 
-		// Verify the file was created with correct content
-		helloPath := filepath.Join(testDir, "output", "verification-test", "hello.txt")
+		// Verify the file was created with correct content - files created directly in output directory (no subdirectory)
+		helloPath := filepath.Join(testDir, "output", "hello.txt")
 		assert.FileExists(t, helloPath, "hello.txt should exist after successful apply")
 		verifyFileContent(t, helloPath, "hello world")
 

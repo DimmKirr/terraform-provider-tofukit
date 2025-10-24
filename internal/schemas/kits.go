@@ -67,7 +67,7 @@ func KitModelType() map[string]attr.Type {
 func RequirementModelType() map[string]attr.Type {
 	return map[string]attr.Type{
 		"name":         types.StringType,
-		"instructions": types.ListType{ElemType: types.StringType},
+		"instruction":  types.ListType{ElemType: types.ObjectType{AttrTypes: InstructionModelType()}},
 		"verification": types.ListType{ElemType: types.ObjectType{AttrTypes: VerificationModelType()}},
 	}
 }
@@ -80,14 +80,32 @@ func VerificationModelType() map[string]attr.Type {
 	}
 }
 
+// InstructionModelType returns the attribute types for InstructionModel
+func InstructionModelType() map[string]attr.Type {
+	return map[string]attr.Type{
+		"prompt":      types.StringType,
+		"constraints": types.ListType{ElemType: types.StringType},
+	}
+}
+
 // ToObjectValue converts RequirementModel to types.Object
 func (r RequirementModel) ToObjectValue() (types.Object, error) {
 	// Convert instructions
-	instValues := make([]attr.Value, len(r.Instructions))
-	for i, inst := range r.Instructions {
-		instValues[i] = inst
+	var instructionValue attr.Value
+	if len(r.Instructions) > 0 {
+		instValues := []attr.Value{}
+		for _, inst := range r.Instructions {
+			instObj, err := inst.ToObjectValue()
+			if err != nil {
+				return types.ObjectNull(RequirementModelType()), err
+			}
+			instValues = append(instValues, instObj)
+		}
+		instList, _ := types.ListValue(types.ObjectType{AttrTypes: InstructionModelType()}, instValues)
+		instructionValue = instList
+	} else {
+		instructionValue = types.ListNull(types.ObjectType{AttrTypes: InstructionModelType()})
 	}
-	instList, _ := types.ListValue(types.StringType, instValues)
 
 	// Convert verification if present
 	var verificationValue attr.Value
@@ -110,7 +128,7 @@ func (r RequirementModel) ToObjectValue() (types.Object, error) {
 		RequirementModelType(),
 		map[string]attr.Value{
 			"name":         r.Name,
-			"instructions": instList,
+			"instruction":  instructionValue,
 			"verification": verificationValue,
 		},
 	)
@@ -131,6 +149,34 @@ func (v VerificationModel) ToObjectValue() (types.Object, error) {
 	)
 	if objDiag.HasError() {
 		return types.ObjectNull(VerificationModelType()), fmt.Errorf("failed to create verification object")
+	}
+	return objVal, nil
+}
+
+// ToObjectValue converts InstructionModel to types.Object
+func (i InstructionModel) ToObjectValue() (types.Object, error) {
+	// Convert constraints to list
+	var constraintsValue attr.Value
+	if i.Constraints != nil && len(i.Constraints) > 0 {
+		constraintValues := make([]attr.Value, len(i.Constraints))
+		for idx, c := range i.Constraints {
+			constraintValues[idx] = c
+		}
+		constraintsList, _ := types.ListValue(types.StringType, constraintValues)
+		constraintsValue = constraintsList
+	} else {
+		constraintsValue = types.ListNull(types.StringType)
+	}
+
+	objVal, objDiag := types.ObjectValue(
+		InstructionModelType(),
+		map[string]attr.Value{
+			"prompt":      i.Prompt,
+			"constraints": constraintsValue,
+		},
+	)
+	if objDiag.HasError() {
+		return types.ObjectNull(InstructionModelType()), fmt.Errorf("failed to create instruction object")
 	}
 	return objVal, nil
 }

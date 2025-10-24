@@ -12,6 +12,45 @@ import (
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
+// VerificationResult represents the result of a single verification
+type VerificationResult struct {
+	FilePath string
+	Command  string
+	Expected string
+	Actual   string
+	Passed   bool
+	Error    error
+}
+
+// VerificationReport contains results from all verifications
+type VerificationReport struct {
+	AllPassed   bool
+	FailedCount int
+	PassedCount int
+	Results     []VerificationResult
+}
+
+// GetFailureSummary returns a formatted string of all failures for Claude
+func (r *VerificationReport) GetFailureSummary() string {
+	var failures []string
+	for _, result := range r.Results {
+		if !result.Passed {
+			if result.Error != nil {
+				failures = append(failures, fmt.Sprintf(
+					"❌ File '%s': Command '%s' failed with error: %v (output: %s)",
+					result.FilePath, result.Command, result.Error, result.Actual,
+				))
+			} else {
+				failures = append(failures, fmt.Sprintf(
+					"❌ File '%s': Command '%s' expected '%s' but got '%s'",
+					result.FilePath, result.Command, result.Expected, result.Actual,
+				))
+			}
+		}
+	}
+	return strings.Join(failures, "\n")
+}
+
 // Manager handles file operations
 type Manager struct {
 	BaseDir string
@@ -193,9 +232,9 @@ func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModel) er
 		if string(fileContent) != expectedContent {
 			wrongContent = append(wrongContent, path)
 			tflog.Warn(ctx, "File content mismatch", map[string]interface{}{
-				"path": fullPath,
+				"path":            fullPath,
 				"expected_length": len(expectedContent),
-				"actual_length": len(fileContent),
+				"actual_length":   len(fileContent),
 			})
 		}
 	}
@@ -218,11 +257,11 @@ func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModel) er
 	return nil
 }
 
-// RunVerifications executes verification commands for all files and checks expected output
-func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileModel) error {
-	var verificationErrors []string
-	totalVerifications := 0
-	passedVerifications := 0
+// RunVerifications executes verification commands for all files and returns structured results
+func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileModel) (*VerificationReport, error) {
+	report := &VerificationReport{
+		Results: []VerificationResult{},
+	}
 
 	for _, file := range files {
 		path := file.Path.ValueString()
@@ -231,89 +270,82 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 		}
 
 		tflog.Debug(ctx, "Running verifications for file", map[string]interface{}{
-			"path": path,
+			"path":               path,
 			"verification_count": len(file.Verification),
 		})
 
-		for i, verification := range file.Verification {
+		for _, verification := range file.Verification {
 			command := verification.Command.ValueString()
-			expect := verification.Expect.ValueString()
+			expect := ""
+			if !verification.Expect.IsNull() && !verification.Expect.IsUnknown() {
+				expect = verification.Expect.ValueString()
+			}
 
 			if command == "" {
 				continue
 			}
 
-			totalVerifications++
+			result := VerificationResult{
+				FilePath: path,
+				Command:  command,
+				Expected: expect,
+			}
 
 			// Execute the verification command in the base directory
 			cmd := exec.Command("sh", "-c", command)
 			cmd.Dir = m.BaseDir
 
 			output, err := cmd.CombinedOutput()
-			outputStr := strings.TrimSpace(string(output))
+			result.Actual = strings.TrimSpace(string(output))
+			result.Error = err
 
 			tflog.Debug(ctx, "Verification command executed", map[string]interface{}{
-				"file": path,
-				"verification_index": i,
+				"file":    path,
 				"command": command,
-				"output": outputStr,
-				"expect": expect,
-				"error": err,
+				"output":  result.Actual,
+				"expect":  expect,
+				"error":   err,
 			})
 
-			// Check if command failed
+			// Determine if verification passed
 			if err != nil {
-				errMsg := fmt.Sprintf("File '%s' verification #%d failed: command '%s' returned error: %v (output: %s)",
-					path, i+1, command, err, outputStr)
-				verificationErrors = append(verificationErrors, errMsg)
+				result.Passed = false
+				report.FailedCount++
 				tflog.Warn(ctx, "Verification command failed", map[string]interface{}{
-					"file": path,
+					"file":    path,
 					"command": command,
-					"error": err.Error(),
-					"output": outputStr,
+					"error":   err.Error(),
+					"output":  result.Actual,
 				})
-				continue
-			}
-
-			// Check if output matches expected
-			if !strings.Contains(outputStr, expect) {
-				errMsg := fmt.Sprintf("File '%s' verification #%d failed: command '%s' output '%s' does not contain expected '%s'",
-					path, i+1, command, outputStr, expect)
-				verificationErrors = append(verificationErrors, errMsg)
+			} else if expect != "" && !strings.Contains(result.Actual, expect) {
+				result.Passed = false
+				report.FailedCount++
 				tflog.Warn(ctx, "Verification output mismatch", map[string]interface{}{
-					"file": path,
-					"command": command,
-					"output": outputStr,
+					"file":     path,
+					"command":  command,
+					"output":   result.Actual,
 					"expected": expect,
 				})
 			} else {
-				passedVerifications++
+				result.Passed = true
+				report.PassedCount++
 				tflog.Info(ctx, "Verification passed", map[string]interface{}{
-					"file": path,
+					"file":    path,
 					"command": command,
 				})
 			}
+
+			report.Results = append(report.Results, result)
 		}
 	}
 
-	// Report results
-	if len(verificationErrors) > 0 {
-		tflog.Error(ctx, "Verification failures detected", map[string]interface{}{
-			"total": totalVerifications,
-			"passed": passedVerifications,
-			"failed": len(verificationErrors),
-		})
+	report.AllPassed = report.FailedCount == 0
 
-		return fmt.Errorf("verification failed (%d/%d passed):\n%s",
-			passedVerifications, totalVerifications,
-			strings.Join(verificationErrors, "\n"))
-	}
+	tflog.Info(ctx, "Verification summary", map[string]interface{}{
+		"total":  report.PassedCount + report.FailedCount,
+		"passed": report.PassedCount,
+		"failed": report.FailedCount,
+	})
 
-	if totalVerifications > 0 {
-		tflog.Info(ctx, "All verifications passed", map[string]interface{}{
-			"total": totalVerifications,
-		})
-	}
-
-	return nil
+	return report, nil
 }
