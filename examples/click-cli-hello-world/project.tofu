@@ -36,17 +36,6 @@ module "click_app" {
 }
 
 # ========================================
-# MODULE: Documentation Kit
-# ========================================
-module "documentation" {
-  source = "../modules/tofukit-kit-documentation"
-
-  project_name        = local.project_name
-  project_version     = local.project_version
-  project_description = "Deterministic Python CLI application using Click framework"
-}
-
-# ========================================
 # PROJECT RESOURCE
 # ========================================
 resource "tofukit_project" "click_cli" {
@@ -57,25 +46,9 @@ resource "tofukit_project" "click_cli" {
   # Use Haiku model for fast, cheap execution
   model = "haiku"
 
-  # Reference the stacks from the modules
-  # The click_app stack includes all kits (python, pip, venv, click)
-  # The documentation stack adds comprehensive README generation
-  stacks = [
-    module.click_app.stack,
-    module.documentation.stack,
-  ]
-
-  # Optional: Add additional kits to extend the stack
-  # kits = [
-  #   tofukit_tool.pytest,
-  #   tofukit_tool.black,
-  # ]
-
-  # Optional: Add or override files from the stack
-  # file {
-  #   path = "custom-file.txt"
-  #   content = "Custom content"
-  # }
+  # Reference the click_app stack (includes Python, Click, app files, and README)
+  # The stack provides a complete Python Click CLI application template
+  stack = module.click_app.stack
 
   # Note: Terraform automatically creates dependencies from resource references
   # (stack reference creates implicit dependency on the module)

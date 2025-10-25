@@ -1087,11 +1087,9 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 		"count":        len(mergedFiles),
 		"project_name": data.Name.ValueString(),
 	})
-	files := []map[string]interface{}{}
+	files := map[string]interface{}{}
 	for _, file := range mergedFiles {
-		fileData := map[string]interface{}{
-			"path": file.Path,
-		}
+		fileData := map[string]interface{}{}
 
 		// Debug log
 		tflog.Debug(ctx, "Processing file for output", map[string]interface{}{
@@ -1144,7 +1142,7 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 			fileData["verification"] = verifications
 		}
 
-		files = append(files, fileData)
+		files[file.Path] = fileData
 	}
 	// Always include files, even if empty, for consistency
 	outputData["files"] = files

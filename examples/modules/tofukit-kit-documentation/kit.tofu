@@ -12,46 +12,52 @@ terraform {
 }
 
 # ========================================
-# DOCUMENTATION STACK
+# DOCUMENTATION KIT
 # ========================================
-resource "tofukit_stack" "documentation" {
+resource "tofukit_kit" "documentation" {
   name        = "comprehensive-documentation"
   description = "Generates comprehensive project documentation including README, setup instructions, and usage examples"
 
-  # README.md with comprehensive documentation
-  files = {
-    "README.md" = {
-      instructions = [
-        {
-          prompt = "Create comprehensive documentation for this project. Include the following sections: project overview, features, installation instructions, usage examples with command-line examples, configuration options, troubleshooting guide, and contributing guidelines. Make the documentation clear, professional, and easy to follow."
-          constraints = [
-            "Do NOT include emojis or badges",
-            "Use clear section headers (##) for main sections",
-            "Include code blocks with proper syntax highlighting",
-            "Keep explanations concise but complete",
-            "Must include project name '${var.project_name}' in the title",
-            var.project_description != "" ? "Must include description: ${var.project_description}" : "Include a brief project description",
-            "Include setup instructions specific to the tools and frameworks used",
-            "Include usage examples that demonstrate key features",
-            "Maximum 500 lines to keep it focused and maintainable"
-          ]
-        }
-      ]
+  requirement {
+    name = "Project Documentation"
 
-      verifications = [
-        {
-          command = "grep '${var.project_name}' README.md"
-          expect  = var.project_name
-        },
-        {
-          command = "test -f README.md && echo 'README exists'"
-          expect  = "README exists"
-        },
-        {
-          command = "grep -q '^# ' README.md && echo 'Has title'"
-          expect  = "Has title"
-        }
+    instruction {
+      prompt      = "Create comprehensive documentation for this project. Include the following sections: project overview, features, installation instructions, usage examples with command-line examples, configuration options, troubleshooting guide, and contributing guidelines. Make the documentation clear, professional, and easy to follow."
+      constraints = [
+        "Do NOT include emojis or badges",
+        "Use clear section headers (##) for main sections",
+        "Include code blocks with proper syntax highlighting",
+        "Keep explanations concise but complete",
+        "Must include project name '${var.project_name}' in the title",
+        var.project_description != "" ? "Must include description: ${var.project_description}" : "Include a brief project description",
+        "Include setup instructions specific to the tools and frameworks used",
+        "Include usage examples that demonstrate key features",
+        "Create README.md file with this documentation",
+        "Maximum 500 lines to keep it focused and maintainable"
       ]
     }
+
+    verification {
+      command = "grep '${var.project_name}' README.md"
+      expect  = var.project_name
+    }
+
+    verification {
+      command = "test -f README.md && echo 'README exists'"
+      expect  = "README exists"
+    }
+
+    verification {
+      command = "grep -q '^# ' README.md && echo 'Has title'"
+      expect  = "Has title"
+    }
   }
+}
+
+# ========================================
+# OUTPUTS
+# ========================================
+output "kit" {
+  value       = tofukit_kit.documentation
+  description = "The documentation kit resource"
 }

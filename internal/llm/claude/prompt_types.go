@@ -203,10 +203,10 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			Instructions:   instructions,
 			FileOperations: fileOperations,
 			FileDetails: &FileInstructions{
-				Description: "IMPORTANT: If the specification contains a \"files\" array, you MUST manage these files exactly as specified:",
+				Description: "IMPORTANT: If the specification contains a \"files\" object, you MUST manage these files exactly as specified:",
 				Rules: []string{
 					"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
-					"Create each file at the exact path specified in the files array (relative to current working directory)",
+					"Create each file at the exact path specified as a key in the files object (relative to current working directory)",
 					"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
 					"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
 					"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",

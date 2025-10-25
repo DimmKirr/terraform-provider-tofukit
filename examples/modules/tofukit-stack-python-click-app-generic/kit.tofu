@@ -206,8 +206,39 @@ resource "tofukit_stack" "click_app" {
         }
       ]
     }
-  }
 
-  # Note: README.md is now provided by the tofukit-kit-documentation module
-  # Use that module separately to add comprehensive documentation to your project
+    "README.md" = {
+      instructions = [
+        {
+          prompt = "Create comprehensive documentation for this Python Click CLI project. Include the following sections: project overview, features, installation instructions, usage examples with command-line examples, configuration options, troubleshooting guide, and contributing guidelines. Make the documentation clear, professional, and easy to follow."
+          constraints = [
+            "Do NOT include emojis or badges",
+            "Use clear section headers (##) for main sections",
+            "Include code blocks with proper syntax highlighting",
+            "Keep explanations concise but complete",
+            "Must include project name '${var.project_name}' in the title",
+            "Include description about Python Click CLI application",
+            "Include setup instructions for Python 3.12, pip, and Click framework",
+            "Include usage examples that demonstrate the CLI commands",
+            "Maximum 500 lines to keep it focused and maintainable"
+          ]
+        }
+      ]
+
+      verifications = [
+        {
+          command = "grep '${var.project_name}' README.md"
+          expect  = var.project_name
+        },
+        {
+          command = "test -f README.md && echo 'README exists'"
+          expect  = "README exists"
+        },
+        {
+          command = "grep -q '^# ' README.md && echo 'Has title'"
+          expect  = "Has title"
+        }
+      ]
+    }
+  }
 }
