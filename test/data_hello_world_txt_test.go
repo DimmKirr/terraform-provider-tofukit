@@ -23,8 +23,8 @@ func TestDataQuerySimple(t *testing.T) {
 	// Assume provider is already built and installed via `make install`
 	// Run `make install` manually before running tests if needed
 
-	// Step 3: Generate main.tofu with provider configuration and data query
-	mainTofuContent := `# Terraform configuration for data query test
+	// Step 1: Generate single project.tofu with all configuration
+	projectTofuContent := `# Terraform configuration for data query test
 terraform {
   required_providers {
     tofukit = {
@@ -94,10 +94,10 @@ output "rock_hardness_text" {
   description = "Text output from rock hardness query"
 }
 `
-	err := os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
-	require.NoError(t, err, "Failed to write main.tofu")
+	err := os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
+	require.NoError(t, err, "Failed to write project.tofu")
 
-	// Step 4: Check if terraform/tofu is available
+	// Step 2: Check if terraform/tofu is available
 	var iacTool string
 	if _, err := exec.LookPath("tofu"); err == nil {
 		iacTool = "tofu"

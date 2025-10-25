@@ -288,6 +288,43 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create - setting ID for project: %s\n", data.Name.ValueString())
 	data.ID = types.StringValue(fmt.Sprintf("project.%s", data.Name.ValueString()))
 
+	// Validate project has at least one content source
+	hasFiles := len(data.Files) > 0
+	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
+	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
+	hasRequirements := len(data.Requirements) > 0
+
+	if !hasFiles && !hasKits && !hasStack && !hasRequirements {
+		resp.Diagnostics.AddError(
+			"Empty Project Configuration",
+			fmt.Sprintf(
+				"Project '%s' must specify at least one of the following:\n"+
+					"  - file {} blocks (explicit files to create)\n"+
+					"  - kits (language/framework setup)\n"+
+					"  - stack (reference to a stack resource)\n"+
+					"  - requirement {} blocks (features to implement)\n\n"+
+					"Example - Bootstrap a new project using requirements:\n"+
+					"  requirement {\n"+
+					"    name = \"project-structure\"\n"+
+					"    instruction {\n"+
+					"      prompt = \"Create a %s\"\n"+
+					"    }\n"+
+					"  }",
+				data.Name.ValueString(),
+				data.Description.ValueString(),
+			),
+		)
+		return
+	}
+
+	tflog.Info(ctx, "Project validation passed", map[string]interface{}{
+		"project_name":     data.Name.ValueString(),
+		"has_files":        hasFiles,
+		"has_kits":         hasKits,
+		"has_stack":        hasStack,
+		"has_requirements": hasRequirements,
+	})
+
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
@@ -323,6 +360,14 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	// Initialize LastApplied with current time since files will be applied
 	data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 
+	// For Create, all files are "add" operations (no old state)
+	// Enrich files with action-based instructions
+	enrichedFiles := files.EnrichFilesWithInstructions([]schemas.FileModel{}, mergedFiles)
+	tflog.Info(ctx, "Enriched files with action-based instructions for Create", map[string]interface{}{
+		"project_name": data.Name.ValueString(),
+		"file_count":   len(enrichedFiles),
+	})
+
 	// Execute Claude Code - Claude will create all files based on files
 	data.ExecutionStatus = types.StringValue("pending")
 	data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
@@ -335,14 +380,15 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		debugFile.Close()
 	}
 
-	// Build output data AFTER collecting files to ensure they're included
-	outputData := r.buildOutputData(ctx, data)
+	// Build output data with enriched files
+	outputData := r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
+
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
 	// Note: Debug files are written during ModifyPlan (plan phase)
 	// Prompt is regenerated deterministically during Create (apply phase)
 
-	if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, false); err != nil {
+	if err := r.executeClaudeCode(ctx, &data, outputData, enrichedFiles, outputPath, claudeHomeDir, false); err != nil {
 		// Set error status and fail the resource creation
 		data.ExecutionStatus = types.StringValue("failed")
 		data.ExecutionError = types.StringValue(err.Error())
@@ -376,6 +422,10 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 			"output_hash":  outputHash,
 			"project_path": data.ProjectPath.ValueString(),
 		})
+
+		// NOTE: We don't store enrichedFiles (with action-based instructions) in state
+		// data.Files keeps the original user configuration
+		// Action-based instructions are computed fresh each time from the diff
 
 		// Generate and store the prompt that was actually used
 		// This happens after apply when all dependencies are resolved
@@ -535,6 +585,36 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		debug = provData.GetDebug()
 	}
 
+	// Validate project has at least one content source
+	hasFiles := len(data.Files) > 0
+	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
+	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
+	hasRequirements := len(data.Requirements) > 0
+
+	if !hasFiles && !hasKits && !hasStack && !hasRequirements {
+		resp.Diagnostics.AddError(
+			"Empty Project Configuration",
+			fmt.Sprintf(
+				"Project '%s' must specify at least one of the following:\n"+
+					"  - file {} blocks (explicit files to create)\n"+
+					"  - kits (language/framework setup)\n"+
+					"  - stack (reference to a stack resource)\n"+
+					"  - requirement {} blocks (features to implement)\n\n"+
+					"Cannot update to an empty project configuration.",
+				data.Name.ValueString(),
+			),
+		)
+		return
+	}
+
+	tflog.Info(ctx, "Project validation passed", map[string]interface{}{
+		"project_name":     data.Name.ValueString(),
+		"has_files":        hasFiles,
+		"has_kits":         hasKits,
+		"has_stack":        hasStack,
+		"has_requirements": hasRequirements,
+	})
+
 	// Compute new config hash from planned data (all dependencies are resolved now)
 	newConfigHash := r.computeConfigHash(ctx, data)
 	data.PromptHash = types.StringValue(newConfigHash)
@@ -548,8 +628,16 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	promptChanged := !state.PromptHash.Equal(data.PromptHash)
 
 	// Collect merged files early to detect file specification changes (including from stacks)
+	oldMergedFiles := r.collectAndMergeFiles(ctx, state)
 	mergedFiles := r.collectAndMergeFiles(ctx, data)
 	currentFileHash := r.computeFileHash(mergedFiles)
+
+	// Enrich files with action-based instructions
+	enrichedFiles := files.EnrichFilesWithInstructions(oldMergedFiles, mergedFiles)
+	tflog.Info(ctx, "Enriched files with action-based instructions", map[string]interface{}{
+		"project_id": state.ID.ValueString(),
+		"file_count": len(enrichedFiles),
+	})
 
 	// Detect file specification changes (files from project, stacks, kits)
 	fileSpecChanged := state.FileHash.IsNull() || state.FileHash.ValueString() != currentFileHash
@@ -605,16 +693,16 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		data.ExecutionStarted = state.ExecutionStarted
 		data.ExecutionCompleted = state.ExecutionCompleted
 
-		// mergedFiles already collected earlier for hash comparison
+		// Use enriched files (with action-based instructions) for output
+		// Build output data with enriched files
+		outputData = r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
 
-		// Build output data AFTER collecting files to ensure they're included
-		outputData = r.buildOutputData(ctx, data)
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
 		// Note: Debug files are written during ModifyPlan (plan phase)
 		// Prompt is regenerated deterministically during Update (apply phase)
 
-		if err := r.executeClaudeCode(ctx, &data, outputData, mergedFiles, outputPath, claudeHomeDir, true); err != nil {
+		if err := r.executeClaudeCode(ctx, &data, outputData, enrichedFiles, outputPath, claudeHomeDir, true); err != nil {
 			// Set error status and fail the resource update
 			data.ExecutionStatus = types.StringValue("failed")
 			data.ExecutionError = types.StringValue(err.Error())
@@ -649,6 +737,10 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			tflog.Info(ctx, "Computed output hash after successful update", map[string]interface{}{
 				"output_hash": outputHash,
 			})
+
+			// NOTE: We don't store enrichedFiles (with action-based instructions) in state
+			// data.Files keeps the original user configuration
+			// Action-based instructions are computed fresh each time from the diff
 
 			// Generate and store the prompt that was actually used
 			// This happens after apply when all dependencies are resolved
@@ -809,6 +901,12 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 
 // buildOutputData creates the output data structure from project model
 func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data ProjectModelFinal) map[string]interface{} {
+	// Collect merged files and use them
+	mergedFiles := r.collectAndMergeFiles(ctx, data)
+	return r.buildOutputDataWithFiles(ctx, data, mergedFiles)
+}
+
+func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, data ProjectModelFinal, filesToUse []schemas.FileModel) map[string]interface{} {
 
 	// Prepare output data structure
 	outputData := map[string]interface{}{
@@ -870,8 +968,8 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 		outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
 	}
 
-	// Add merged files from all sources
-	mergedFiles := r.collectAndMergeFiles(ctx, data)
+	// Use provided files (may be enriched with action-based instructions)
+	mergedFiles := filesToUse
 	tflog.Info(ctx, "Collected merged files for output", map[string]interface{}{
 		"count":        len(mergedFiles),
 		"project_name": data.Name.ValueString(),

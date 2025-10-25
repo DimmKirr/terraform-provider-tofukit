@@ -206,27 +206,6 @@ resource "tofukit_stack" "click_app" {
     }
   }
 
-  # README with LLM-generated content
-  file {
-    path = "README.md"
-
-    instruction {
-      prompt = "Create readme file typical for this project with sections: ## Quickstart, ## Installation, ## Usage, ## Contributing, ## License"
-      constraints = [
-        "Do NOT include emojis",
-        "Do NOT add badges or images",
-        "Keep it concise - maximum 200 lines",
-        "Must include project name '${var.project_name}' in the title"
-      ]
-    }
-
-    verification {
-      command = "grep '${var.project_name}' README.md"
-      expect  = var.project_name
-    }
-    verification {
-      command = "grep -c '^## ' README.md"
-      expect  = "5"
-    }
-  }
+  # Note: README.md is now provided by the tofukit-kit-documentation module
+  # Use that module separately to add comprehensive documentation to your project
 }

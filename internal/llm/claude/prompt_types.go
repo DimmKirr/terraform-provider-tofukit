@@ -15,13 +15,14 @@ type ProjectPrompt struct {
 
 // PromptRequest contains the actual project implementation request
 type PromptRequest struct {
-	Type          string                 `json:"type"`
-	ProjectInfo   ProjectInfo            `json:"project_info"`
-	Specification map[string]interface{} `json:"specification"`
-	Instructions  []string               `json:"instructions"`
-	FileDetails   *FileInstructions      `json:"file_details,omitempty"`
-	Guidelines    []string               `json:"guidelines"`
-	Deliverables  []string               `json:"deliverables"`
+	Type           string                   `json:"type"`
+	ProjectInfo    ProjectInfo              `json:"project_info"`
+	Specification  map[string]interface{}   `json:"specification"`
+	Instructions   []string                 `json:"instructions"`
+	FileDetails    *FileInstructions        `json:"file_details,omitempty"`
+	FileOperations []map[string]interface{} `json:"file_operations,omitempty"`
+	Guidelines     []string                 `json:"guidelines"`
+	Deliverables   []string                 `json:"deliverables"`
 }
 
 // ProjectInfo contains basic project metadata
@@ -67,7 +68,35 @@ The following JSON contains the full project specification:
 
 {{range $i, $instruction := .Request.Instructions}}{{add $i 1}}. {{$instruction}}
 {{end}}
-{{if .Request.FileDetails}}## File Files
+{{if .Request.FileOperations}}
+## File Operations
+
+**IMPORTANT**: You must perform the following operations in the order specified:
+
+{{range .Request.FileOperations}}{{if eq .action "remove"}}### REMOVE: {{.path}}
+- Delete this file from the project
+- If this is the last file in a directory, also remove the empty directory
+{{else if eq .action "rename"}}### RENAME: {{.old_path}} → {{.path}}
+- Rename/move the file from {{.old_path}} to {{.path}}
+- Preserve the content during the move
+- Create parent directories if needed for the new path
+{{else if eq .action "add"}}### ADD: {{.path}}
+{{if .instructions}}- Generate content following these instructions:
+{{range .instructions}}  - Prompt: {{.prompt}}
+{{if .constraints}}  - Constraints:
+{{range .constraints}}    - {{.}}
+{{end}}{{end}}{{end}}{{else}}- Create file with exact content (see specification JSON for content)
+{{end}}{{else if eq .action "modify"}}### MODIFY: {{.path}}
+{{if .instructions}}- Update content following these instructions:
+{{range .instructions}}  - Prompt: {{.prompt}}
+{{if .constraints}}  - Constraints:
+{{range .constraints}}    - {{.}}
+{{end}}{{end}}{{end}}{{else}}- Update file with new content (see specification JSON for content)
+{{end}}{{else if eq .action "unchanged"}}### UNCHANGED: {{.path}}
+- This file should remain as-is (no action needed)
+{{end}}
+{{end}}
+{{end}}{{if .Request.FileDetails}}## File Files
 
 {{.Request.FileDetails.Description}}
 
@@ -158,14 +187,21 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		}
 	}
 
+	// Extract file operations if present
+	var fileOperations []map[string]interface{}
+	if ops, ok := projectSpec["_file_operations"].([]map[string]interface{}); ok {
+		fileOperations = ops
+	}
+
 	// Build the structured prompt
 	prompt := &ProjectPrompt{
 		SystemPrompt: systemPrompt,
 		Request: PromptRequest{
-			Type:          "project_implementation",
-			ProjectInfo:   projectInfo,
-			Specification: projectSpec,
-			Instructions:  instructions,
+			Type:           "project_implementation",
+			ProjectInfo:    projectInfo,
+			Specification:  projectSpec,
+			Instructions:   instructions,
+			FileOperations: fileOperations,
 			FileDetails: &FileInstructions{
 				Description: "IMPORTANT: If the specification contains a \"files\" array, you MUST manage these files exactly as specified:",
 				Rules: []string{
@@ -199,7 +235,6 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 				"All file files created exactly as specified",
 				"Complete, working project implementation",
 				"All files and directories properly structured",
-				"Documentation explaining setup and usage",
 				"All requirements implemented and verified",
 				"Development environment ready for use",
 			},

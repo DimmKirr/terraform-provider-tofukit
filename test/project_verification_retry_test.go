@@ -23,9 +23,9 @@ func TestProjectVerificationRetry(t *testing.T) {
 
 	var err error
 
-	// Step 1: Generate main.tofu with provider configuration
+	// Step 1: Generate single project.tofu with all configuration
 	// Enable max_retries to test retry loop
-	mainTofuContent := `# Terraform configuration for verification-retry test
+	projectTofuContent := `# Terraform configuration for verification-retry test
 terraform {
   required_providers {
     tofukit = {
@@ -42,14 +42,8 @@ provider "tofukit" {
   debug         = true
   max_retries   = 3  # Enable retry loop for verification failures
 }
-`
-	err = os.WriteFile(filepath.Join(testDir, "main.tofu"), []byte(mainTofuContent), 0644)
-	require.NoError(t, err, "Failed to write main.tofu")
 
-	// Step 2: Generate project.tofu with CONTRADICTORY instructions
-	// The instructions say "make sure it's properly formatted"  which Claude interprets as adding newline
-	// But verification expects NO newline - guaranteed failure on first attempt
-	projectTofuContent := `resource "tofukit_project" "verification_test" {
+resource "tofukit_project" "verification_test" {
   name        = "verification-retry-test"
   description = "Test project that will fail verification on first attempt"
   version     = "1.0.0"
@@ -76,7 +70,7 @@ provider "tofukit" {
 	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
 	require.NoError(t, err, "Failed to write project.tofu")
 
-	// Step 3: Check if terraform/tofu is available
+	// Step 2: Check if terraform/tofu is available
 	var iacTool string
 	if _, err := exec.LookPath("tofu"); err == nil {
 		iacTool = "tofu"
@@ -237,12 +231,4 @@ provider "tofukit" {
 	})
 
 	t.Log("✅ All verification retry tests completed successfully!")
-}
-
-// Helper function to get minimum of two ints
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
