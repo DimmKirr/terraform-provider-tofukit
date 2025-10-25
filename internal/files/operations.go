@@ -30,6 +30,7 @@ const (
 
 // EnrichFilesWithInstructions enriches file models with action-based instructions
 // Returns new file models with instructions populated based on what changed
+// IMPORTANT: Also includes REMOVE operations so Claude knows which files to delete
 func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModelWithPath) []schemas.FileModelWithPath {
 	// Compute what operations need to happen
 	operations := ComputeFileOperations(oldFiles, newFiles)
@@ -48,6 +49,21 @@ func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModelWithPath)
 		if op, exists := operationsByPath[enrichedFiles[i].Path]; exists {
 			// Use instructions from the operation (which were smartly merged)
 			enrichedFiles[i].Instructions = op.Instructions
+		}
+	}
+
+	// CRITICAL: Add REMOVE operations to the enriched files list
+	// Without this, Claude never receives instructions to delete files
+	for _, op := range operations {
+		if op.Action == OpRemove {
+			// Create a FileModelWithPath entry for the removed file
+			removedFile := schemas.FileModelWithPath{
+				Path:          op.Path,
+				Content:       types.StringValue(""), // Empty content for removed files
+				Instructions:  op.Instructions,       // Contains "Delete file X" instruction
+				Verifications: []schemas.VerificationModel{},
+			}
+			enrichedFiles = append(enrichedFiles, removedFile)
 		}
 	}
 
