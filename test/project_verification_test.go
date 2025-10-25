@@ -41,14 +41,17 @@ resource "tofukit_stack" "test_stack" {
   name        = "test-verification-stack"
   description = "Stack with correct verification"
 
-  file {
-    path = "hello.txt"
-    content = "hello world"
+  files = {
+    "hello.txt" = {
+      content = "hello world"
 
-    # This verification will pass - content matches expectation
-    verification {
-      command = "cat hello.txt"
-      expect  = "hello world"
+      # This verification will pass - content matches expectation
+      verifications = [
+        {
+          command = "cat hello.txt"
+          expect  = "hello world"
+        }
+      ]
     }
   }
 }
@@ -147,14 +150,17 @@ resource "tofukit_stack" "test_stack" {
   name        = "test-verification-stack"
   description = "Stack with verification that should fail"
 
-  file {
-    path = "hello.txt"
-    content = "hello world"
+  files = {
+    "hello.txt" = {
+      content = "hello world"
 
-    # This verification will fail because the file contains "hello world" not "goodbye world"
-    verification {
-      command = "cat hello.txt"
-      expect  = "goodbye world"
+      # This verification will fail because the file contains "hello world" not "goodbye world"
+      verifications = [
+        {
+          command = "cat hello.txt"
+          expect  = "goodbye world"
+        }
+      ]
     }
   }
 }

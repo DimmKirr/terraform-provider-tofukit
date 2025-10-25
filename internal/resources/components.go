@@ -18,7 +18,7 @@ type ComponentResourceModel struct {
 	Description  types.String               `tfsdk:"description"`
 	Version      types.String               `tfsdk:"version"`
 	Requirements []schemas.RequirementModel `tfsdk:"requirement"`
-	Files        []schemas.FileModel        `tfsdk:"file"` // Files that this kit provides
+	Files        types.Map                  `tfsdk:"files"` // Files that this kit provides (map keyed by path)
 }
 
 // Generic component resource that can be used for all component types
@@ -31,14 +31,17 @@ func (r *ComponentResource) Metadata(ctx context.Context, req resource.MetadataR
 }
 
 func (r *ComponentResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	// Get base attributes and add files
+	attributes := schemas.GetBaseComponentAttributes()
+	attributes["files"] = schemas.GetFilesMapAttribute()
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: fmt.Sprintf("%s component for tofukit", r.Kind),
 
-		Attributes: schemas.GetBaseComponentAttributes(),
+		Attributes: attributes,
 
 		Blocks: map[string]schema.Block{
 			"requirement": schemas.GetRequirementBlock(),
-			"file":        schemas.GetFileBlock(),
 		},
 	}
 }

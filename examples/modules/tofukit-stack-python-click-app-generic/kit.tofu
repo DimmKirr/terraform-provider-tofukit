@@ -140,69 +140,71 @@ resource "tofukit_stack" "click_app" {
   ]
 
   # Main CLI Application
-  file {
-    path = "src/cli.py"
-    content = <<-EOF
-    #!/usr/bin/env python3
-    """
-    Simple CLI application using Click framework.
-    """
-    import click
+  files = {
+    "src/cli.py" = {
+      content = <<-EOF
+      #!/usr/bin/env python3
+      """
+      Simple CLI application using Click framework.
+      """
+      import click
 
 
-    @click.group()
-    @click.version_option(version='${var.project_version}', prog_name='${var.project_name}')
-    def cli() -> None:
-        """A simple Python CLI application."""
-        pass
+      @click.group()
+      @click.version_option(version='${var.project_version}', prog_name='${var.project_name}')
+      def cli() -> None:
+          """A simple Python CLI application."""
+          pass
 
 
-    @cli.command()
-    def hello() -> None:
-        """Output world text."""
-        click.echo("world")
+      @cli.command()
+      def hello() -> None:
+          """Output world text."""
+          click.echo("world")
 
 
-    if __name__ == '__main__':
-        cli()
-    EOF
+      if __name__ == '__main__':
+          cli()
+      EOF
 
-    verification {
-      command = "python3 src/cli.py hello"
-      expect  = "world"
+      verifications = [
+        {
+          command = "python3 src/cli.py hello"
+          expect  = "world"
+        },
+        {
+          command = "python3 src/cli.py --version"
+          expect  = var.project_version
+        }
+      ]
     }
 
-    verification {
-      command = "python3 src/cli.py --version"
-      expect  = var.project_version
+    "requirements.txt" = {
+      content = <<-EOF
+      click==${tofukit_framework.click.version}
+      EOF
+
+      verifications = [
+        {
+          command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
+        },
+        {
+          command = "test -f requirements.txt"
+        }
+      ]
     }
-  }
 
-  # Requirements File
-  file {
-    path = "requirements.txt"
-    content = <<-EOF
-    click==${tofukit_framework.click.version}
-    EOF
+    "demo2.txt" = {
+      content = <<-EOF
+      hello world
+      EOF
 
-    verification {
-      command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
-    }
-    verification {
-      command = "test -f requirements.txt"
-    }
-  }
-
-  # Demo file
-  file {
-    path = "demo2.txt"
-    content = <<-EOF
-    hello world
-    EOF
-
-    verification {
-      command = "cat demo2.txt"
-      expect  = "hello world"
+      verifications = [
+        {
+          command = "cat demo2.txt"
+          expect  = "hello world"
+        }
+      ]
     }
   }
 

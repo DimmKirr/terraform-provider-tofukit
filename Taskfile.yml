@@ -69,8 +69,8 @@ tasks:
       TF_LOG: INFO
     cmds:
       - go test ./test -v -run TestProjectHelloWorldTxtCreateSuccess
-#      - go test ./test -v -run TestProjectRecursiveFile
-#      - go test ./test -v -run TestProjectVerificationFailure
+      - go test ./test -v -run TestProjectHelloWorldTxtRemovalSuccess
+
 
   test:project_verification_retry_test:
     deps:

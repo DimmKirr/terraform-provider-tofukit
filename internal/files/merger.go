@@ -3,7 +3,6 @@ package files
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
@@ -21,31 +20,33 @@ const (
 
 // FileWithSource wraps a file with its source information
 type FileWithSource struct {
-	File   schemas.FileModel
+	File   schemas.FileModelWithPath
 	Source FileSource
 }
 
 // Merger handles merging files from multiple sources with precedence rules
 type Merger struct {
-	files map[string]FileWithSource // key is file path
+	files     map[string]FileWithSource // key is file path, for fast lookups
+	fileOrder []string                  // maintains insertion order of file paths
 }
 
 // NewMerger creates a new file merger
 func NewMerger() *Merger {
 	return &Merger{
-		files: make(map[string]FileWithSource),
+		files:     make(map[string]FileWithSource),
+		fileOrder: make([]string, 0),
 	}
 }
 
 // AddFiles adds files from a specific source
-func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModel, source FileSource) {
+func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModelWithPath, source FileSource) {
 	sourceName := m.getSourceName(source)
 
 	for _, file := range files {
-		path := file.Path.ValueString()
-		if path == "" {
+		if file.Path == "" {
 			continue
 		}
+		path := file.Path
 
 		// Check if this path already exists
 		if existing, exists := m.files[path]; exists {
@@ -60,6 +61,7 @@ func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModel, source
 					File:   file,
 					Source: source,
 				}
+				// Note: Don't add to fileOrder again - already exists
 			} else {
 				tflog.Debug(ctx, "Keeping existing file with higher precedence", map[string]interface{}{
 					"path":            path,
@@ -77,23 +79,23 @@ func (m *Merger) AddFiles(ctx context.Context, files []schemas.FileModel, source
 				File:   file,
 				Source: source,
 			}
+			// Track insertion order
+			m.fileOrder = append(m.fileOrder, path)
 		}
 	}
 }
 
-// GetMergedFiles returns the final merged list of files
-func (m *Merger) GetMergedFiles() []schemas.FileModel {
-	result := make([]schemas.FileModel, 0, len(m.files))
+// GetMergedFiles returns the final merged list of files in insertion order
+func (m *Merger) GetMergedFiles() []schemas.FileModelWithPath {
+	result := make([]schemas.FileModelWithPath, 0, len(m.files))
 
-	for _, fileWithSource := range m.files {
-		result = append(result, fileWithSource.File)
+	// Iterate in insertion order to preserve the order from the config
+	// This is critical for Terraform plan/apply consistency
+	for _, path := range m.fileOrder {
+		if fileWithSource, exists := m.files[path]; exists {
+			result = append(result, fileWithSource.File)
+		}
 	}
-
-	// Sort files by path to ensure deterministic ordering
-	// This is critical for plan/apply consistency
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Path.ValueString() < result[j].Path.ValueString()
-	})
 
 	return result
 }

@@ -50,19 +50,22 @@ resource "tofukit_project" "verification_test" {
 
   # CONTRADICTORY: Instructions say "properly formatted text file" (implies newline)
   # But verification expects NO trailing newline - this WILL fail first time
-  file {
-    path = "exact.txt"
-    instructions = [
-      "Create a simple text file containing the word 'exact'",
-      "Make sure it's a properly formatted text file",
-      "Follow standard text file conventions"
-    ]
-    verification {
-      # This expects EXACTLY "exact" with NO trailing newline (5 bytes)
-      # od -An -tx1 shows hex: "exact" = 6578616374 (no newline)
-      # But "exact\n" = 65786163740a (with newline) - will FAIL
-      command = "od -An -tx1 exact.txt | tr -d ' \\n'"
-      expect  = "6578616374"
+  files = {
+    "exact.txt" = {
+      instructions = [
+        "Create a simple text file containing the word 'exact'",
+        "Make sure it's a properly formatted text file",
+        "Follow standard text file conventions"
+      ]
+      verifications = [
+        {
+          # This expects EXACTLY "exact" with NO trailing newline (5 bytes)
+          # od -An -tx1 shows hex: "exact" = 6578616374 (no newline)
+          # But "exact\n" = 65786163740a (with newline) - will FAIL
+          command = "od -An -tx1 exact.txt | tr -d ' \\n'"
+          expect  = "6578616374"
+        }
+      ]
     }
   }
 }

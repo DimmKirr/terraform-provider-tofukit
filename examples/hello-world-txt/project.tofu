@@ -4,33 +4,23 @@ resource "tofukit_project" "hello_world" {
   version     = "1.0.0"
 
   # Simple files - no dependencies needed
-  file {
-    path = "hello.txt"
-    content = <<-EOF
-hello world
-EOF
-  }
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
 
-  file {
-    path = "hello2.txt"
-    content = <<-EOF
-hello world2
-EOF
-  }
+    "hello2.txt" = {
+      content = "hello world2\n"
+    }
 
-  file {
-    path = "demo/hello4.txt"
-    content = <<-EOF
-hello world4
-EOF
-  }
+    "demo/hello4.txt" = {
+      content = "hello world4\n"
+    }
 
-#   file {
-#     path = "hello3.txt"
-#     content = <<-EOF
-# hello world3
-# EOF
-#   }
+#     "hello3.txt" = {
+#       content = "hello world3\n"
+#     }
+  }
 
 }
 

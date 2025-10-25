@@ -30,7 +30,7 @@ const (
 
 // EnrichFilesWithInstructions enriches file models with action-based instructions
 // Returns new file models with instructions populated based on what changed
-func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModel) []schemas.FileModel {
+func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModelWithPath) []schemas.FileModelWithPath {
 	// Compute what operations need to happen
 	operations := ComputeFileOperations(oldFiles, newFiles)
 
@@ -41,12 +41,11 @@ func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModel) []schem
 	}
 
 	// Enrich new files with instructions from operations
-	enrichedFiles := make([]schemas.FileModel, len(newFiles))
+	enrichedFiles := make([]schemas.FileModelWithPath, len(newFiles))
 	copy(enrichedFiles, newFiles)
 
 	for i := range enrichedFiles {
-		path := enrichedFiles[i].Path.ValueString()
-		if op, exists := operationsByPath[path]; exists {
+		if op, exists := operationsByPath[enrichedFiles[i].Path]; exists {
 			// Use instructions from the operation (which were smartly merged)
 			enrichedFiles[i].Instructions = op.Instructions
 		}
@@ -57,24 +56,22 @@ func EnrichFilesWithInstructions(oldFiles, newFiles []schemas.FileModel) []schem
 
 // ComputeFileOperations compares old and new file lists and returns explicit operations
 // If files don't have user-provided instructions, auto-generates them based on the action
-func ComputeFileOperations(oldFiles, newFiles []schemas.FileModel) []FileOperation {
+func ComputeFileOperations(oldFiles, newFiles []schemas.FileModelWithPath) []FileOperation {
 	operations := []FileOperation{}
 
 	// Build maps for efficient lookup
-	oldMap := make(map[string]schemas.FileModel)
-	newMap := make(map[string]schemas.FileModel)
+	oldMap := make(map[string]schemas.FileModelWithPath)
+	newMap := make(map[string]schemas.FileModelWithPath)
 
 	for _, file := range oldFiles {
-		path := file.Path.ValueString()
-		if path != "" {
-			oldMap[path] = file
+		if file.Path != "" {
+			oldMap[file.Path] = file
 		}
 	}
 
 	for _, file := range newFiles {
-		path := file.Path.ValueString()
-		if path != "" {
-			newMap[path] = file
+		if file.Path != "" {
+			newMap[file.Path] = file
 		}
 	}
 
@@ -92,7 +89,7 @@ func ComputeFileOperations(oldFiles, newFiles []schemas.FileModel) []FileOperati
 					Path:         newPath,
 					Content:      newFile.Content.ValueString(),
 					Instructions: newFile.Instructions,
-					Verification: newFile.Verification,
+					Verification: newFile.Verifications,
 				}
 				// Merge/generate instructions based on action
 				op.Instructions = mergeInstructions(op, newFile.Instructions)
@@ -126,7 +123,7 @@ func ComputeFileOperations(oldFiles, newFiles []schemas.FileModel) []FileOperati
 					Path:         newPath,
 					Content:      newFile.Content.ValueString(),
 					Instructions: newFile.Instructions,
-					Verification: newFile.Verification,
+					Verification: newFile.Verifications,
 				}
 				// Merge/generate instructions based on action
 				op.Instructions = mergeInstructions(op, newFile.Instructions)
@@ -138,7 +135,7 @@ func ComputeFileOperations(oldFiles, newFiles []schemas.FileModel) []FileOperati
 					Path:         newPath,
 					Content:      newFile.Content.ValueString(),
 					Instructions: newFile.Instructions,
-					Verification: newFile.Verification,
+					Verification: newFile.Verifications,
 				}
 				// Merge/generate instructions based on action
 				op.Instructions = mergeInstructions(op, newFile.Instructions)
@@ -151,7 +148,7 @@ func ComputeFileOperations(oldFiles, newFiles []schemas.FileModel) []FileOperati
 				Path:         newPath,
 				Content:      newFile.Content.ValueString(),
 				Instructions: newFile.Instructions,
-				Verification: newFile.Verification,
+				Verification: newFile.Verifications,
 			}
 			// Auto-generate instruction if not provided by user
 			if len(op.Instructions) == 0 {
@@ -268,7 +265,7 @@ func generateInstructionForAction(op FileOperation) []schemas.InstructionModel {
 // Heuristics:
 // 1. For static files: exact content match
 // 2. For generated files: same instructions
-func findRename(oldFile schemas.FileModel, newMap map[string]schemas.FileModel) (string, schemas.FileModel, bool) {
+func findRename(oldFile schemas.FileModelWithPath, newMap map[string]schemas.FileModelWithPath) (string, schemas.FileModelWithPath, bool) {
 	oldContent := oldFile.Content.ValueString()
 	oldHasInstructions := len(oldFile.Instructions) > 0
 
@@ -293,11 +290,11 @@ func findRename(oldFile schemas.FileModel, newMap map[string]schemas.FileModel) 
 		}
 	}
 
-	return "", schemas.FileModel{}, false
+	return "", schemas.FileModelWithPath{}, false
 }
 
 // hasContentChanged checks if file content or instructions changed
-func hasContentChanged(oldFile, newFile schemas.FileModel) bool {
+func hasContentChanged(oldFile, newFile schemas.FileModelWithPath) bool {
 	// Check content hash
 	if computeContentHash(oldFile) != computeContentHash(newFile) {
 		return true
@@ -309,7 +306,7 @@ func hasContentChanged(oldFile, newFile schemas.FileModel) bool {
 	}
 
 	// Check verifications
-	if !verificationsMatch(oldFile.Verification, newFile.Verification) {
+	if !verificationsMatch(oldFile.Verifications, newFile.Verifications) {
 		return true
 	}
 
@@ -317,7 +314,7 @@ func hasContentChanged(oldFile, newFile schemas.FileModel) bool {
 }
 
 // computeContentHash creates a hash of file content
-func computeContentHash(file schemas.FileModel) string {
+func computeContentHash(file schemas.FileModelWithPath) string {
 	content := file.Content.ValueString()
 	hash := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(hash[:])
@@ -470,8 +467,8 @@ func FormatOperationsSummary(ops []FileOperation) string {
 // NormalizeFilesForState replaces action-based instructions with neutral ones for state storage
 // After successful Claude execution, we store neutral instructions that won't change on subsequent applies
 // This prevents Terraform from detecting drift when instructions are recomputed
-func NormalizeFilesForState(files []schemas.FileModel) []schemas.FileModel {
-	normalized := make([]schemas.FileModel, len(files))
+func NormalizeFilesForState(files []schemas.FileModelWithPath) []schemas.FileModelWithPath {
+	normalized := make([]schemas.FileModelWithPath, len(files))
 
 	for i, file := range files {
 		normalized[i] = file

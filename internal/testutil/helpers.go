@@ -48,9 +48,11 @@ func TestProjectModelFinal() resources.ProjectModelFinal {
 		Requirements: []schemas.RequirementModel{
 			{
 				Name: types.StringValue("Create hello.txt"),
-				Instructions: []types.String{
-					types.StringValue("Create a file named hello.txt"),
-					types.StringValue("Add content: Hello, World!"),
+				Instructions: []schemas.InstructionModel{
+					{
+						Prompt:      types.StringValue("Create a file named hello.txt with content: Hello, World!"),
+						Constraints: []types.String{},
+					},
 				},
 				Verification: []schemas.VerificationModel{
 					{

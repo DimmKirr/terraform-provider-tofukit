@@ -44,8 +44,8 @@ type ProjectModelFinal struct {
 	Version            types.String               `tfsdk:"version"`
 	Stack              types.Dynamic              `tfsdk:"stack"` // Reference to the stack (accepts resource reference or ID string)
 	Requirements       []schemas.RequirementModel `tfsdk:"requirement"`
-	Kits               types.Dynamic              `tfsdk:"kits"` // List of kit references or IDs
-	Files              []schemas.FileModel        `tfsdk:"file"` // Project-specific file overrides
+	Kits               types.Dynamic              `tfsdk:"kits"`  // List of kit references or IDs
+	Files              types.Map                  `tfsdk:"files"` // Map of files keyed by path
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
 	ExecutionStarted   types.String               `tfsdk:"execution_started"`
 	ExecutionCompleted types.String               `tfsdk:"execution_completed"`
@@ -172,10 +172,10 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "SHA256 hash of actual generated files for drift detection",
 				Computed:            true,
 			},
+			"files": schemas.GetFilesMapAttribute(),
 		},
 		Blocks: map[string]schema.Block{
 			"requirement": schemas.GetRequirementBlock(),
-			"file":        schemas.GetFileBlock(),
 		},
 	}
 }
@@ -273,6 +273,118 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 	// No hash computation in ModifyPlan - it happens during Create/Update
 	// This prevents inconsistencies when resource references are Unknown during plan
 	tflog.Debug(ctx, "ModifyPlan: Hash computation deferred to apply phase")
+
+	// FIX: Correct file list tracking by path instead of position
+	// This prevents Terraform from thinking a file was renamed when we remove a middle file
+
+	// Skip if this is resource creation (no state yet)
+	if req.State.Raw.IsNull() {
+		return
+	}
+
+	var state, plan, config ProjectModelFinal
+
+	// Get current state
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Get planned changes
+	diags = req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Get config
+	diags = req.Config.Get(ctx, &config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Convert maps to lists for processing
+	stateFilesList := schemas.FilesMapToList(ctx, state.Files)
+	configFilesList := schemas.FilesMapToList(ctx, config.Files)
+
+	// If no files in either state or config, nothing to fix
+	if len(stateFilesList) == 0 && len(configFilesList) == 0 {
+		return
+	}
+
+	tflog.Debug(ctx, "ModifyPlan: Analyzing file changes (map schema eliminates position-based issues)", map[string]interface{}{
+		"state_files":  len(stateFilesList),
+		"config_files": len(configFilesList),
+	})
+
+	// Build map of state files by path
+	stateFilesByPath := make(map[string]schemas.FileModelWithPath)
+	for _, file := range stateFilesList {
+		stateFilesByPath[file.Path] = file
+		tflog.Trace(ctx, "State file", map[string]interface{}{"path": file.Path})
+	}
+
+	// Build map of config files by path
+	configFilesByPath := make(map[string]schemas.FileModelWithPath)
+	for _, file := range configFilesList {
+		configFilesByPath[file.Path] = file
+		tflog.Trace(ctx, "Config file", map[string]interface{}{"path": file.Path})
+	}
+
+	// Determine operations using path-based comparison
+	added := []string{}
+	removed := []string{}
+	modified := []string{}
+	unchanged := []string{}
+
+	// Find removed files (in state but not in config)
+	for path := range stateFilesByPath {
+		if _, existsInConfig := configFilesByPath[path]; !existsInConfig {
+			removed = append(removed, path)
+		}
+	}
+
+	// Find added, modified, and unchanged files
+	for path, configFile := range configFilesByPath {
+		if stateFile, existsInState := stateFilesByPath[path]; existsInState {
+			// File exists in both - check if modified
+			stateContent := stateFile.Content.ValueString()
+			configContent := configFile.Content.ValueString()
+
+			if stateContent != configContent {
+				modified = append(modified, path)
+			} else {
+				unchanged = append(unchanged, path)
+			}
+		} else {
+			// New file
+			added = append(added, path)
+		}
+	}
+
+	tflog.Info(ctx, "ModifyPlan: File operations detected", map[string]interface{}{
+		"added":     added,
+		"removed":   removed,
+		"modified":  modified,
+		"unchanged": unchanged,
+	})
+
+	// NOTE: With map schema, files are keyed by path, eliminating position-based comparison issues.
+	// Terraform's MapAttribute compares by key (path), not position, so plan display is now accurate.
+
+	tflog.Debug(ctx, "ModifyPlan: File operations detected (map schema ensures accurate plan display)", map[string]interface{}{
+		"config_count": len(configFilesList),
+		"state_count":  len(stateFilesList),
+		"added":        added,
+		"removed":      removed,
+		"modified":     modified,
+	})
+
+	// Update the plan
+	diags = resp.Plan.Set(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
 }
 
 func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -289,7 +401,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.ID = types.StringValue(fmt.Sprintf("project.%s", data.Name.ValueString()))
 
 	// Validate project has at least one content source
-	hasFiles := len(data.Files) > 0
+	hasFiles := !data.Files.IsNull() && !data.Files.IsUnknown() && len(data.Files.Elements()) > 0
 	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
 	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
 	hasRequirements := len(data.Requirements) > 0
@@ -362,7 +474,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 
 	// For Create, all files are "add" operations (no old state)
 	// Enrich files with action-based instructions
-	enrichedFiles := files.EnrichFilesWithInstructions([]schemas.FileModel{}, mergedFiles)
+	enrichedFiles := files.EnrichFilesWithInstructions([]schemas.FileModelWithPath{}, mergedFiles)
 	tflog.Info(ctx, "Enriched files with action-based instructions for Create", map[string]interface{}{
 		"project_name": data.Name.ValueString(),
 		"file_count":   len(enrichedFiles),
@@ -586,7 +698,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	// Validate project has at least one content source
-	hasFiles := len(data.Files) > 0
+	hasFiles := !data.Files.IsNull() && !data.Files.IsUnknown() && len(data.Files.Elements()) > 0
 	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
 	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
 	hasRequirements := len(data.Requirements) > 0
@@ -840,12 +952,13 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 		projectPath := data.ProjectPath.ValueString()
 		if projectPath != "" {
 			// Remove file files
-			if len(data.Files) > 0 {
+			filesList := schemas.FilesMapToList(ctx, data.Files)
+			if len(filesList) > 0 {
 				fileManager := files.NewManager(projectPath)
-				fileManager.RemoveAllFiles(ctx, data.Files)
+				fileManager.RemoveAllFiles(ctx, filesList)
 				tflog.Info(ctx, "Removed file files", map[string]interface{}{
 					"project_path": projectPath,
-					"count":        len(data.Files),
+					"count":        len(filesList),
 				})
 			}
 
@@ -906,7 +1019,7 @@ func (r *ProjectResourceFinal) buildOutputData(ctx context.Context, data Project
 	return r.buildOutputDataWithFiles(ctx, data, mergedFiles)
 }
 
-func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, data ProjectModelFinal, filesToUse []schemas.FileModel) map[string]interface{} {
+func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, data ProjectModelFinal, filesToUse []schemas.FileModelWithPath) map[string]interface{} {
 
 	// Prepare output data structure
 	outputData := map[string]interface{}{
@@ -977,14 +1090,14 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 	files := []map[string]interface{}{}
 	for _, file := range mergedFiles {
 		fileData := map[string]interface{}{
-			"path": file.Path.ValueString(),
+			"path": file.Path,
 		}
 
 		// Debug log
 		tflog.Debug(ctx, "Processing file for output", map[string]interface{}{
-			"path":               file.Path.ValueString(),
-			"has_verifications":  len(file.Verification) > 0,
-			"verification_count": len(file.Verification),
+			"path":               file.Path,
+			"has_verifications":  len(file.Verifications) > 0,
+			"verification_count": len(file.Verifications),
 		})
 
 		if !file.Content.IsNull() && !file.Content.IsUnknown() {
@@ -1017,9 +1130,9 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 		}
 
 		// Add verifications if present
-		if len(file.Verification) > 0 {
+		if len(file.Verifications) > 0 {
 			verifications := []map[string]interface{}{}
-			for _, v := range file.Verification {
+			for _, v := range file.Verifications {
 				verif := map[string]interface{}{
 					"command": v.Command.ValueString(),
 				}
@@ -1184,7 +1297,7 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 // executeClaudeCode executes Claude Code with the project specification
 // If PlannedPromptJSON is available (from plan phase), it uses that exact prompt
 // Otherwise, it builds the prompt from outputData (legacy path)
-func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModel, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
+func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
 	// Check if debug mode is enabled
 	debug := false
 	if provData, ok := r.ProviderData.(interface {
@@ -1456,7 +1569,7 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 }
 
 // computeFileHash creates a fingerprint of file configuration for change detection
-func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string {
+func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModelWithPath) string {
 	if len(files) == 0 {
 		return ""
 	}
@@ -1475,7 +1588,7 @@ func (r *ProjectResourceFinal) computeFileHash(files []schemas.FileModel) string
 	var entries []fileEntry
 	for _, file := range files {
 		entry := fileEntry{
-			Path:    file.Path.ValueString(),
+			Path:    file.Path,
 			Content: file.Content.ValueString(),
 		}
 
@@ -1533,8 +1646,9 @@ func (r *ProjectResourceFinal) computeConfigHash(ctx context.Context, data Proje
 	var parts []string
 
 	// 1. Hash files from config (not merged, not from registry)
-	for _, file := range data.Files {
-		parts = append(parts, "file:"+file.Path.ValueString())
+	filesList := schemas.FilesMapToList(ctx, data.Files)
+	for _, file := range filesList {
+		parts = append(parts, "file:"+file.Path)
 		if !file.Content.IsNull() && !file.Content.IsUnknown() {
 			parts = append(parts, "content:"+file.Content.ValueString())
 		}
@@ -1688,7 +1802,7 @@ func (r *ProjectResourceFinal) computeOutputHash(ctx context.Context, projectPat
 }
 
 // detectFileChanges determines if files have meaningfully changed
-func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModel) bool {
+func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModelWithPath) bool {
 	oldHash := r.computeFileHash(oldFiles)
 	newHash := r.computeFileHash(newFiles)
 
@@ -1706,8 +1820,8 @@ func (r *ProjectResourceFinal) detectFileChanges(ctx context.Context, oldFiles, 
 }
 
 // getKitFilesFromRegistry fetches kit data from registry and extracts their files
-func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitIDs []string, reg *registry.Registry) []schemas.FileModel {
-	var allFiles []schemas.FileModel
+func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitIDs []string, reg *registry.Registry) []schemas.FileModelWithPath {
+	var allFiles []schemas.FileModelWithPath
 
 	if reg == nil || len(kitIDs) == 0 {
 		return allFiles
@@ -1716,12 +1830,18 @@ func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitI
 	for _, kitID := range kitIDs {
 		if kitData, exists := reg.GetComponent(kitID); exists {
 			if kit, ok := kitData.(ComponentResourceModel); ok {
+				fileCount := 0
+				if !kit.Files.IsNull() && !kit.Files.IsUnknown() {
+					fileCount = len(kit.Files.Elements())
+				}
 				tflog.Info(ctx, "Extracting files from kit", map[string]interface{}{
 					"kit_id":     kitID,
 					"kit_name":   kit.Name.ValueString(),
-					"file_count": len(kit.Files),
+					"file_count": fileCount,
 				})
-				allFiles = append(allFiles, kit.Files...)
+				// Convert map to list
+				kitFiles := schemas.FilesMapToList(ctx, kit.Files)
+				allFiles = append(allFiles, kitFiles...)
 			} else {
 				tflog.Warn(ctx, "Kit data is not ComponentResourceModel", map[string]interface{}{
 					"kit_id":      kitID,
@@ -1744,7 +1864,7 @@ func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitI
 }
 
 // collectAndMergeFiles collects files from all sources and merges them with proper precedence
-func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModel {
+func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
 	merger := files.NewMerger()
 
 	// Get the registry to access stacks
@@ -1786,32 +1906,14 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 			// Get the primary stack this project instantiates
 			if stackData, exists := reg.GetStack(stackID); exists {
 				if stack, ok := stackData.(StackResourceModel); ok {
+					// Convert stack files from map to list
+					stackFiles := schemas.FilesMapToList(ctx, stack.Files)
+
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
 						"stack_id":   stackID,
-						"file_count": len(stack.Files),
+						"file_count": len(stackFiles),
 						"stack_name": stack.Name.ValueString(),
 					})
-
-					// Log the actual files with verification details
-					for i, file := range stack.Files {
-						logData := map[string]interface{}{
-							"index":              i,
-							"path":               file.Path.ValueString(),
-							"has_verifications":  len(file.Verification) > 0,
-							"verification_count": len(file.Verification),
-						}
-
-						if len(file.Verification) > 0 {
-							for j, v := range file.Verification {
-								logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
-								if !v.Expect.IsNull() {
-									logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
-								}
-							}
-						}
-
-						tflog.Info(ctx, "Stack file retrieved from registry", logData)
-					}
 
 					// 1. First add files from kits within the primary stack (lowest precedence)
 					stackKitIDs := extractIDsFromDynamicList(ctx, stack.Kits)
@@ -1826,7 +1928,7 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 					}
 
 					// 2. Add the primary stack's own files (higher precedence than stack's kits)
-					merger.AddFiles(ctx, stack.Files, files.SourceStack)
+					merger.AddFiles(ctx, stackFiles, files.SourceStack)
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
 						"stack_id":    stackID,
@@ -1860,14 +1962,17 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 				})
 
 				if stack, ok := stackData.(StackResourceModel); ok {
+					// Convert stack files from map to list
+					stackFiles := schemas.FilesMapToList(ctx, stack.Files)
+
 					tflog.Info(ctx, "Processing stack files", map[string]interface{}{
 						"stack_id":   stackID,
-						"file_count": len(stack.Files),
+						"file_count": len(stackFiles),
 						"stack_name": stack.Name.ValueString(),
 					})
 
 					// Add stack's files
-					merger.AddFiles(ctx, stack.Files, files.SourceStack)
+					merger.AddFiles(ctx, stackFiles, files.SourceStack)
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
 						"stack_id":    stackID,
@@ -1890,8 +1995,9 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	}
 
 	// 4. Finally, add project's own files (highest precedence)
-	if data.Files != nil {
-		merger.AddFiles(ctx, data.Files, files.SourceProject)
+	projectFiles := schemas.FilesMapToList(ctx, data.Files)
+	if len(projectFiles) > 0 {
+		merger.AddFiles(ctx, projectFiles, files.SourceProject)
 	}
 
 	// Get the final merged list
@@ -1900,7 +2006,7 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	// Build log attributes safely
 	logAttrs := map[string]interface{}{
 		"total_count":   len(mergedFiles),
-		"project_count": len(data.Files),
+		"project_count": len(projectFiles),
 	}
 
 	// Only add stack if it's not null

@@ -64,26 +64,24 @@ func NewManager(baseDir string) *Manager {
 }
 
 // ProcessFileChanges handles file additions and removals
-func (m *Manager) ProcessFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModel) error {
+func (m *Manager) ProcessFileChanges(ctx context.Context, oldFiles, newFiles []schemas.FileModelWithPath) error {
 	// Create a map of new files for quick lookup
-	newFileMap := make(map[string]schemas.FileModel)
+	newFileMap := make(map[string]schemas.FileModelWithPath)
 	for _, file := range newFiles {
-		path := file.Path.ValueString()
-		if path != "" {
-			newFileMap[path] = file
+		if file.Path != "" {
+			newFileMap[file.Path] = file
 		}
 	}
 
 	// Check for removed files and delete their files
 	for _, oldFile := range oldFiles {
-		oldPath := oldFile.Path.ValueString()
-		if oldPath == "" {
+		if oldFile.Path == "" {
 			continue
 		}
 
 		// If this file is not in the new list, it was removed
-		if _, exists := newFileMap[oldPath]; !exists {
-			fullPath := filepath.Join(m.BaseDir, oldPath)
+		if _, exists := newFileMap[oldFile.Path]; !exists {
+			fullPath := filepath.Join(m.BaseDir, oldFile.Path)
 			tflog.Info(ctx, fmt.Sprintf("Removing file: %s", fullPath))
 
 			// Remove the file
@@ -104,7 +102,7 @@ func (m *Manager) ProcessFileChanges(ctx context.Context, oldFiles, newFiles []s
 	// Create or update files for new/modified files
 	for _, file := range newFiles {
 		if err := m.WriteFile(ctx, file); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", file.Path.ValueString(), err)
+			return fmt.Errorf("failed to write file %s: %w", file.Path, err)
 		}
 	}
 
@@ -112,13 +110,12 @@ func (m *Manager) ProcessFileChanges(ctx context.Context, oldFiles, newFiles []s
 }
 
 // WriteFile writes a single file
-func (m *Manager) WriteFile(ctx context.Context, file schemas.FileModel) error {
-	path := file.Path.ValueString()
-	if path == "" {
+func (m *Manager) WriteFile(ctx context.Context, file schemas.FileModelWithPath) error {
+	if file.Path == "" {
 		return nil // Skip empty paths
 	}
 
-	fullPath := filepath.Join(m.BaseDir, path)
+	fullPath := filepath.Join(m.BaseDir, file.Path)
 
 	// Create parent directory if it doesn't exist
 	parentDir := filepath.Dir(fullPath)
@@ -137,14 +134,13 @@ func (m *Manager) WriteFile(ctx context.Context, file schemas.FileModel) error {
 }
 
 // RemoveAllFiles removes all files
-func (m *Manager) RemoveAllFiles(ctx context.Context, files []schemas.FileModel) {
+func (m *Manager) RemoveAllFiles(ctx context.Context, files []schemas.FileModelWithPath) {
 	for _, file := range files {
-		path := file.Path.ValueString()
-		if path == "" {
+		if file.Path == "" {
 			continue
 		}
 
-		fullPath := filepath.Join(m.BaseDir, path)
+		fullPath := filepath.Join(m.BaseDir, file.Path)
 		tflog.Debug(ctx, fmt.Sprintf("Removing file: %s", fullPath))
 
 		if err := os.Remove(fullPath); err != nil {
@@ -201,28 +197,27 @@ func hasPrefix(path, prefix string) bool {
 }
 
 // VerifyFiles checks that all files exist with correct content
-func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModel) error {
+func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModelWithPath) error {
 	var missingFiles []string
 	var wrongContent []string
 
 	for _, file := range files {
-		path := file.Path.ValueString()
-		if path == "" {
+		if file.Path == "" {
 			continue
 		}
 
-		fullPath := filepath.Join(m.BaseDir, path)
+		fullPath := filepath.Join(m.BaseDir, file.Path)
 
 		// Check if file exists
 		fileContent, err := os.ReadFile(fullPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				missingFiles = append(missingFiles, path)
+				missingFiles = append(missingFiles, file.Path)
 				tflog.Warn(ctx, "File file missing", map[string]interface{}{
 					"path": fullPath,
 				})
 			} else {
-				return fmt.Errorf("error reading file %s: %w", path, err)
+				return fmt.Errorf("error reading file %s: %w", file.Path, err)
 			}
 			continue
 		}
@@ -230,7 +225,7 @@ func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModel) er
 		// Check content matches
 		expectedContent := file.Content.ValueString()
 		if string(fileContent) != expectedContent {
-			wrongContent = append(wrongContent, path)
+			wrongContent = append(wrongContent, file.Path)
 			tflog.Warn(ctx, "File content mismatch", map[string]interface{}{
 				"path":            fullPath,
 				"expected_length": len(expectedContent),
@@ -258,23 +253,22 @@ func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModel) er
 }
 
 // RunVerifications executes verification commands for all files and returns structured results
-func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileModel) (*VerificationReport, error) {
+func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileModelWithPath) (*VerificationReport, error) {
 	report := &VerificationReport{
 		Results: []VerificationResult{},
 	}
 
 	for _, file := range files {
-		path := file.Path.ValueString()
-		if path == "" || len(file.Verification) == 0 {
+		if file.Path == "" || len(file.Verifications) == 0 {
 			continue
 		}
 
 		tflog.Debug(ctx, "Running verifications for file", map[string]interface{}{
-			"path":               path,
-			"verification_count": len(file.Verification),
+			"path":               file.Path,
+			"verification_count": len(file.Verifications),
 		})
 
-		for _, verification := range file.Verification {
+		for _, verification := range file.Verifications {
 			command := verification.Command.ValueString()
 			expect := ""
 			if !verification.Expect.IsNull() && !verification.Expect.IsUnknown() {
@@ -286,7 +280,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 			}
 
 			result := VerificationResult{
-				FilePath: path,
+				FilePath: file.Path,
 				Command:  command,
 				Expected: expect,
 			}
@@ -300,7 +294,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 			result.Error = err
 
 			tflog.Debug(ctx, "Verification command executed", map[string]interface{}{
-				"file":    path,
+				"file":    file.Path,
 				"command": command,
 				"output":  result.Actual,
 				"expect":  expect,
@@ -312,7 +306,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 				result.Passed = false
 				report.FailedCount++
 				tflog.Warn(ctx, "Verification command failed", map[string]interface{}{
-					"file":    path,
+					"file":    file.Path,
 					"command": command,
 					"error":   err.Error(),
 					"output":  result.Actual,
@@ -321,7 +315,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 				result.Passed = false
 				report.FailedCount++
 				tflog.Warn(ctx, "Verification output mismatch", map[string]interface{}{
-					"file":     path,
+					"file":     file.Path,
 					"command":  command,
 					"output":   result.Actual,
 					"expected": expect,
@@ -330,7 +324,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 				result.Passed = true
 				report.PassedCount++
 				tflog.Info(ctx, "Verification passed", map[string]interface{}{
-					"file":    path,
+					"file":    file.Path,
 					"command": command,
 				})
 			}

@@ -27,11 +27,11 @@ type VerificationModel struct {
 }
 
 // FileModel represents a file entry
+// Note: Path is now the map key, not a field in the struct
 type FileModel struct {
-	Path         types.String        `tfsdk:"path"`
-	Content      types.String        `tfsdk:"content"`
-	Instructions []InstructionModel  `tfsdk:"instruction"`
-	Verification []VerificationModel `tfsdk:"verification"`
+	Content       types.String        `tfsdk:"content"`
+	Instructions  []InstructionModel  `tfsdk:"instructions"`
+	Verifications []VerificationModel `tfsdk:"verifications"`
 }
 
 // ScaffoldModel is deprecated, use FileModel instead
@@ -86,25 +86,21 @@ func GetRequirementBlock() schema.ListNestedBlock {
 	}
 }
 
-// GetFileBlock returns the schema for file blocks
-func GetFileBlock() schema.ListNestedBlock {
-	return schema.ListNestedBlock{
-		MarkdownDescription: "File entries for generation and management",
-		NestedObject: schema.NestedBlockObject{
+// GetFilesMapAttribute returns the schema for the files map attribute
+func GetFilesMapAttribute() schema.MapNestedAttribute {
+	return schema.MapNestedAttribute{
+		MarkdownDescription: "Files to generate and manage, keyed by file path",
+		Optional:            true,
+		NestedObject: schema.NestedAttributeObject{
 			Attributes: map[string]schema.Attribute{
-				"path": schema.StringAttribute{
-					MarkdownDescription: "Path where the file should be created",
-					Required:            true,
-				},
 				"content": schema.StringAttribute{
-					MarkdownDescription: "Content of the file (mutually exclusive with instruction block)",
+					MarkdownDescription: "Static content of the file (mutually exclusive with instructions)",
 					Optional:            true,
 				},
-			},
-			Blocks: map[string]schema.Block{
-				"instruction": schema.ListNestedBlock{
-					MarkdownDescription: "Instructions for generating the file content (mutually exclusive with content attribute)",
-					NestedObject: schema.NestedBlockObject{
+				"instructions": schema.ListNestedAttribute{
+					MarkdownDescription: "Instructions for generating the file content (mutually exclusive with content)",
+					Optional:            true,
+					NestedObject: schema.NestedAttributeObject{
 						Attributes: map[string]schema.Attribute{
 							"prompt": schema.StringAttribute{
 								MarkdownDescription: "LLM-facing instruction describing what to generate",
@@ -118,9 +114,10 @@ func GetFileBlock() schema.ListNestedBlock {
 						},
 					},
 				},
-				"verification": schema.ListNestedBlock{
+				"verifications": schema.ListNestedAttribute{
 					MarkdownDescription: "Verification commands for this file",
-					NestedObject: schema.NestedBlockObject{
+					Optional:            true,
+					NestedObject: schema.NestedAttributeObject{
 						Attributes: map[string]schema.Attribute{
 							"command": schema.StringAttribute{
 								MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
@@ -128,6 +125,59 @@ func GetFileBlock() schema.ListNestedBlock {
 							},
 							"expect": schema.StringAttribute{
 								MarkdownDescription: "Expected output or pattern",
+								Optional:            true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// GetFileBlock is deprecated - kept for backward compatibility
+// Use GetFilesMapAttribute instead
+func GetFileBlock() schema.ListNestedBlock {
+	return schema.ListNestedBlock{
+		MarkdownDescription: "DEPRECATED: Use 'files' map attribute instead",
+		NestedObject: schema.NestedBlockObject{
+			Attributes: map[string]schema.Attribute{
+				"path": schema.StringAttribute{
+					MarkdownDescription: "Path where the file should be created",
+					Required:            true,
+				},
+				"content": schema.StringAttribute{
+					MarkdownDescription: "Content of the file",
+					Optional:            true,
+				},
+			},
+			Blocks: map[string]schema.Block{
+				"instruction": schema.ListNestedBlock{
+					MarkdownDescription: "Instructions for generating content",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"prompt": schema.StringAttribute{
+								MarkdownDescription: "Instruction prompt",
+								Required:            true,
+							},
+							"constraints": schema.ListAttribute{
+								MarkdownDescription: "Constraints",
+								Optional:            true,
+								ElementType:         types.StringType,
+							},
+						},
+					},
+				},
+				"verification": schema.ListNestedBlock{
+					MarkdownDescription: "Verification commands",
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"command": schema.StringAttribute{
+								MarkdownDescription: "Verification command",
+								Required:            true,
+							},
+							"expect": schema.StringAttribute{
+								MarkdownDescription: "Expected output",
 								Optional:            true,
 							},
 						},

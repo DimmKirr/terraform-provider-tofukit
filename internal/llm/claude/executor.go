@@ -230,7 +230,7 @@ func (e *Executor) ExecuteWithVerification(
 	ctx context.Context,
 	projectSpec map[string]interface{},
 	outputDir string,
-	filesToVerify []schemas.FileModel,
+	filesToVerify []schemas.FileModelWithPath,
 	maxRetries int,
 ) (*ExecutionStatus, *files.VerificationReport, error) {
 	var lastStatus *ExecutionStatus
@@ -346,7 +346,7 @@ func (e *Executor) ExecuteWithPromptJSON(
 	ctx context.Context,
 	promptJSON string,
 	outputDir string,
-	filesToVerify []schemas.FileModel,
+	filesToVerify []schemas.FileModelWithPath,
 	maxRetries int,
 ) (*ExecutionStatus, *files.VerificationReport, error) {
 	// Parse the prompt JSON to extract project specification

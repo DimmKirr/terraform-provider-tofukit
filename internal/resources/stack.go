@@ -24,11 +24,11 @@ type StackResource struct {
 }
 
 type StackResourceModel struct {
-	ID          types.String        `tfsdk:"id"`
-	Name        types.String        `tfsdk:"name"`
-	Description types.String        `tfsdk:"description"`
-	Kits        types.Dynamic       `tfsdk:"kits"` // Kits that compose this stack (list of kit references)
-	Files       []schemas.FileModel `tfsdk:"file"` // Stack's own files
+	ID          types.String  `tfsdk:"id"`
+	Name        types.String  `tfsdk:"name"`
+	Description types.String  `tfsdk:"description"`
+	Kits        types.Dynamic `tfsdk:"kits"`  // Kits that compose this stack (list of kit references)
+	Files       types.Map     `tfsdk:"files"` // Stack's own files (map keyed by path)
 	// Removed OutputPath - stacks now contribute files to project, not separate directories
 }
 
@@ -62,10 +62,7 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_framework.click])",
 				Optional:            true,
 			},
-		},
-
-		Blocks: map[string]schema.Block{
-			"file": schemas.GetFileBlock(),
+			"files": schemas.GetFilesMapAttribute(),
 		},
 	}
 }
@@ -83,29 +80,15 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// Stacks no longer create files directly - they only contribute files to the project
 	// The project resource will handle merging and writing all files with proper precedence
 
-	// Debug: Log files in Create
-	for i, file := range data.Files {
-		logData := map[string]interface{}{
-			"stack_id":           data.ID.ValueString(),
-			"index":              i,
-			"path":               file.Path.ValueString(),
-			"has_verifications":  len(file.Verification) > 0,
-			"verification_count": len(file.Verification),
-		}
-
-		if len(file.Verification) > 0 {
-			for j, v := range file.Verification {
-				logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
-				if !v.Expect.IsNull() {
-					logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
-				}
-			}
-		}
-
-		tflog.Info(ctx, "Stack file in Create", logData)
+	fileCount := 0
+	if !data.Files.IsNull() && !data.Files.IsUnknown() {
+		fileCount = len(data.Files.Elements())
 	}
 
-	tflog.Trace(ctx, fmt.Sprintf("created stack resource: %s", data.ID.ValueString()))
+	tflog.Info(ctx, "Created stack resource", map[string]interface{}{
+		"stack_id":   data.ID.ValueString(),
+		"file_count": fileCount,
+	})
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -120,33 +103,15 @@ func (r *StackResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	// Save to registry so it's available for other resources
 	// This is important when resources already exist in state
+	fileCount := 0
+	if !data.Files.IsNull() && !data.Files.IsUnknown() {
+		fileCount = len(data.Files.Elements())
+	}
+
 	tflog.Info(ctx, "Stack Read: Saving to registry", map[string]interface{}{
 		"stack_id":   data.ID.ValueString(),
-		"file_count": len(data.Files),
+		"file_count": fileCount,
 	})
-
-	// Debug: Print files with verification details
-	for i, file := range data.Files {
-		logData := map[string]interface{}{
-			"stack_id":           data.ID.ValueString(),
-			"index":              i,
-			"path":               file.Path.ValueString(),
-			"content_length":     len(file.Content.ValueString()),
-			"has_verifications":  len(file.Verification) > 0,
-			"verification_count": len(file.Verification),
-		}
-
-		if len(file.Verification) > 0 {
-			for j, v := range file.Verification {
-				logData[fmt.Sprintf("verification_%d_command", j)] = v.Command.ValueString()
-				if !v.Expect.IsNull() {
-					logData[fmt.Sprintf("verification_%d_expect", j)] = v.Expect.ValueString()
-				}
-			}
-		}
-
-		tflog.Info(ctx, "Stack file in Read", logData)
-	}
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 

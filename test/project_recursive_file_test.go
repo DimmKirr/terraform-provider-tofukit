@@ -38,9 +38,10 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
   }
 }
 `
@@ -128,9 +129,10 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
   }
 }
 `
@@ -195,14 +197,14 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
-  }
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
 
-  file {
-    path    = "demo/hello2.txt"
-    content = "hello2 from demo\n"
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
   }
 }
 `
@@ -259,14 +261,14 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
-  }
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
 
-  file {
-    path    = "demo/hello2.txt"
-    content = "hello2 from demo\n"
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
   }
 }
 `
@@ -332,19 +334,18 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
-  }
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
 
-  file {
-    path    = "demo/hello2.txt"
-    content = "hello2 from demo\n"
-  }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
 
-  file {
-    path    = "demo/subdir/deep/hello3.txt"
-    content = "hello3 from deep\n"
+    "demo/subdir/deep/hello3.txt" = {
+      content = "hello3 from deep\n"
+    }
   }
 }
 `
@@ -403,19 +404,18 @@ resource "tofukit_project" "recursive_test" {
   description = "Test recursive/nested file handling"
   version     = "1.0.0"
 
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
-  }
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
 
-  file {
-    path    = "demo/hello2.txt"
-    content = "hello2 from demo\n"
-  }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
 
-  file {
-    path    = "demo/subdir/deep/hello3.txt"
-    content = "hello3 from deep\n"
+    "demo/subdir/deep/hello3.txt" = {
+      content = "hello3 from deep\n"
+    }
   }
 }
 `
@@ -491,9 +491,10 @@ resource "tofukit_project" "recursive_test" {
   version     = "1.0.0"
 
   # Only keep the first file - removing hello2.txt and hello3.txt
-  file {
-    path    = "demo/hello.txt"
-    content = "hello from demo\n"
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
   }
 }
 `
