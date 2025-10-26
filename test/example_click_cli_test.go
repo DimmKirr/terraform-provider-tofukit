@@ -11,28 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProjectClickCLI tests the Python Click CLI project generation and management
-func TestProjectClickCLI(t *testing.T) {
+// TestExampleClickCliSuccess validates that the /examples/click-cli-hello-world example works end-to-end
+func TestExampleClickCliSuccess(t *testing.T) {
 	// Set debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestProjectClickCLI")
+	testDir := createTestDirectory(t, "TestExampleClickCliSuccess")
 
 	// Get project root
 	projectRoot, err := filepath.Abs("..")
 	require.NoError(t, err)
 
-	// Step 1: Build and install the provider locally
-	t.Log("Building and installing provider...")
-	buildCmd := exec.Command("task", "install")
-	buildCmd.Dir = projectRoot
-	output, err := buildCmd.CombinedOutput()
-	require.NoError(t, err, "Failed to build provider: %s", output)
-	t.Log("✓ Provider built and installed successfully")
-
-	// Step 2: Copy the example configuration files
+	// Step 1: Copy the example configuration files
 	exampleDir := filepath.Join(projectRoot, "examples", "click-cli-hello-world")
 
 	// Copy the unified project.tofu (contains terraform, provider, module, project, data, outputs)
@@ -65,7 +57,7 @@ func TestProjectClickCLI(t *testing.T) {
 	}
 	t.Logf("Copied modules from %s to %s", moduleDir, testModuleDir)
 
-	// Step 3: Check if terraform/tofu is available
+	// Step 2: Check if terraform/tofu is available
 	var iacTool string
 	if _, err := exec.LookPath("tofu"); err == nil {
 		iacTool = "tofu"
@@ -92,7 +84,7 @@ func TestProjectClickCLI(t *testing.T) {
 		}
 	}()
 
-	// Step 4: Run init to set up the provider
+	// Step 3: Run init to set up the provider
 	t.Log("Running tofu init...")
 	initCmd := exec.Command(iacTool, "init", "-no-color")
 	initCmd.Dir = testDir
@@ -103,7 +95,7 @@ func TestProjectClickCLI(t *testing.T) {
 	require.NoError(t, err, "Failed to run init")
 	t.Log("✓ Init completed successfully")
 
-	// Step 5: Run plan
+	// Step 4: Run plan
 	t.Log("Running tofu plan...")
 	planCmd := exec.Command(iacTool, "plan", "-no-color")
 	planCmd.Dir = testDir
@@ -112,7 +104,7 @@ func TestProjectClickCLI(t *testing.T) {
 	t.Logf("Plan output:\n%s", planOutput)
 	t.Log("✓ Plan completed successfully")
 
-	// Step 6: Run apply
+	// Step 5: Run apply
 	t.Log("Running tofu apply --auto-approve...")
 	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
 	applyCmd.Dir = testDir

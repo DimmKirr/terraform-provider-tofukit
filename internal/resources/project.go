@@ -162,6 +162,7 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 			"planned_prompt_json": schema.StringAttribute{
 				MarkdownDescription: "Internal: Complete Claude prompt JSON generated and stored during apply for reference.",
 				Computed:            true,
+				Sensitive:           true,
 			},
 			"prompt_hash": schema.StringAttribute{
 				MarkdownDescription: "SHA256 hash of the configuration for change detection",

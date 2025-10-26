@@ -4,15 +4,18 @@ includes:
   claude:
     taskfile: ~/dev/Taskfile.yml
     flatten: true
-
+env:
+  ASDF_GOLANG_MOD_VERSION_ENABLED: true
 vars:
   VERSION: 0.1.0
   BIN_DIR: bin
   BINARY_NAME: terraform-provider-tofukit_v0.1.0
+
   GOOS:
     sh: go env GOOS
   GOARCH:
     sh: go env GOARCH
+
 
 tasks:
   build:
@@ -40,144 +43,12 @@ tasks:
         fi
 
   test:
+
     deps:
       - build
       - install
 #      - test:data_hello_world_txt_test # no data test for now
-      - test:project_hello_world_txt_test
-
-
-  ### Tests ###
-  test:data_hello_world_txt_test:
-    deps:
-      - build
-      - install
-
-    desc: Run data_hello_world_txt_test
-    env:
-      TF_LOG: INFO
+#      - test:project_hello_world_txt_test
     cmds:
-      - go test ./test -v -run TestDataQuerySimple
+      - go test ./test -v
 
-  test:project_hello_world_txt_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_hello_world_txt_test
-    env:
-      TF_LOG: INFO
-    cmds:
-      - go test ./test -v -run TestProjectHelloWorldTxtCreateSuccess
-      - go test ./test -v -run TestProjectHelloWorldTxtRemovalSuccess
-
-
-  test:project_verification_retry_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_verification_retry_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectVerificationRetry
-
-  test:project_click_cli_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_click_cli_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectClickCLI
-
-  test:project_rename_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_hello_world_txt_rename_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectHelloWorldTxtRenameSuccess
-
-  test:project_removal_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_hello_world_txt_removal_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectHelloWorldTxtRemovalSuccess
-
-  test:project_recursive_file_create_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_recursive_file_create_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectRecursiveFileCreateSuccess
-
-  test:project_recursive_file_add_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_recursive_file_add_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectRecursiveFileAddSuccess
-
-  test:project_recursive_file_deeper_nesting_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_recursive_file_deeper_nesting_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectRecursiveFileDeeperNestingSuccess
-
-  test:project_recursive_file_removal_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_recursive_file_removal_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectRecursiveFileRemovalSuccess
-
-  test:project_verification_success_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_verification_success_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectVerificationSuccess
-
-  test:project_verification_failure_test:
-    deps:
-      - build
-      - install
-
-    desc: Run project_verification_failure_test
-    env:
-      TF_LOG: DEBUG
-    cmds:
-      - go test ./test -v -run TestProjectVerificationFailure
