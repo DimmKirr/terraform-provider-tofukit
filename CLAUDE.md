@@ -26,22 +26,20 @@ task install            # Build and install provider locally to ~/.terraform.d/p
 # Don't build directly, use task
 ```
 
+**Build Output Location**:
+Binaries are built to platform-specific directories to prevent confusion when switching between environments:
+```
+bin/linux_arm64/terraform-provider-tofukit_v0.1.0    # Linux builds (container)
+bin/darwin_arm64/terraform-provider-tofukit_v0.1.0   # macOS builds (host)
+```
+
 ### Testing
 ```bash
 # Run all tests
 task test
 
-# Run specific test suites
-task test:project_hello_world_txt_test           # Basic file creation
-task test:project_rename_test                     # File renaming with diff detection
-task test:project_removal_test                    # File removal
-task test:project_recursive_file_create_test      # Nested directory creation
-task test:project_recursive_file_add_test         # Adding nested files
-task test:project_recursive_file_deeper_nesting_test  # Deep nesting
-task test:project_recursive_file_removal_test     # Removing nested files with cleanup
-task test:project_verification_success_test       # Verification passing
-task test:project_verification_failure_test       # Verification failure detection
-task test:data_hello_world_txt_test              # Data source tests
+# Note: Individual test tasks are not defined. Run specific tests with:
+# go test ./test -v -run TestProjectFileNestedCreateSuccess
 
 # Don't run tests directly if task exists, use task
 
@@ -282,7 +280,7 @@ This approach:
 
 - **Granular Tests**: One test per operation (create, add, remove, rename, etc.)
 - **Mock Setup**: Use `os.MkdirAll()` + `os.WriteFile()` for existing files
-- **Descriptive Names**: All tests end with "Success" (e.g., `TestProjectRecursiveFileCreateSuccess`)
+- **Descriptive Names**: All tests end with "Success" (e.g., `TestProjectFileNestedCreateSuccess`)
 - **Independent**: Each test runs in isolated directory (`test-output/TestName-<random>/`)
 - **Preserved Output**: Test directories kept for inspection (set `CLEANUP_TEST_OUTPUT=true` to remove)
 

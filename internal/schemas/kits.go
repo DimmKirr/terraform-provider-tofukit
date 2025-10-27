@@ -66,9 +66,9 @@ func KitModelType() map[string]attr.Type {
 // RequirementModelType returns the attribute types for RequirementModel
 func RequirementModelType() map[string]attr.Type {
 	return map[string]attr.Type{
-		"name":         types.StringType,
-		"instruction":  types.ListType{ElemType: types.ObjectType{AttrTypes: InstructionModelType()}},
-		"verification": types.ListType{ElemType: types.ObjectType{AttrTypes: VerificationModelType()}},
+		"name":          types.StringType,
+		"instructions":  types.ListType{ElemType: types.ObjectType{AttrTypes: InstructionModelType()}},
+		"verifications": types.ListType{ElemType: types.ObjectType{AttrTypes: VerificationModelType()}},
 	}
 }
 
@@ -107,11 +107,11 @@ func (r RequirementModel) ToObjectValue() (types.Object, error) {
 		instructionValue = types.ListNull(types.ObjectType{AttrTypes: InstructionModelType()})
 	}
 
-	// Convert verification if present
+	// Convert verifications if present
 	var verificationValue attr.Value
-	if len(r.Verification) > 0 {
+	if len(r.Verifications) > 0 {
 		verValues := []attr.Value{}
-		for _, v := range r.Verification {
+		for _, v := range r.Verifications {
 			verObj, err := v.ToObjectValue()
 			if err != nil {
 				return types.ObjectNull(RequirementModelType()), err
@@ -127,9 +127,9 @@ func (r RequirementModel) ToObjectValue() (types.Object, error) {
 	objVal, objDiag := types.ObjectValue(
 		RequirementModelType(),
 		map[string]attr.Value{
-			"name":         r.Name,
-			"instruction":  instructionValue,
-			"verification": verificationValue,
+			"name":          r.Name,
+			"instructions":  instructionValue,
+			"verifications": verificationValue,
 		},
 	)
 	if objDiag.HasError() {

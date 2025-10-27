@@ -4,37 +4,42 @@ includes:
   claude:
     taskfile: ~/dev/Taskfile.yml
     flatten: true
-env:
-  ASDF_GOLANG_MOD_VERSION_ENABLED: true
+
 vars:
   VERSION: 0.1.0
   BIN_DIR: bin
   BINARY_NAME: terraform-provider-tofukit_v0.1.0
-
+  # We dont' destroy resources in tests for now
+  SKIP_DESTROY: true
   GOOS:
     sh: go env GOOS
   GOARCH:
     sh: go env GOARCH
 
+env:
+  ASDF_GOLANG_MOD_VERSION_ENABLED: true
+  SKIP_DESTROY: "{{.SKIP_DESTROY}}"
 
 tasks:
   build:
     desc: Build the provider binary
     vars:
       BINARY: terraform-provider-tofukit_v0.1.0
+      BIN_PLATFORM_DIR: bin/{{.GOOS}}_{{.GOARCH}}
     cmds:
-      - mkdir -p bin
-      - CGO_ENABLED=0 go build -o bin/{{.BINARY}} .
+      - mkdir -p {{.BIN_PLATFORM_DIR}}
+      - CGO_ENABLED=0 go build -o {{.BIN_PLATFORM_DIR}}/{{.BINARY}} .
 
   install:
     desc: Install the provider locally
     deps: [build]
     vars:
       BINARY: terraform-provider-tofukit_v0.1.0
+      BIN_PLATFORM_DIR: bin/{{.GOOS}}_{{.GOARCH}}
       PLUGIN_DIR: ~/.terraform.d/plugins/registry.terraform.io/DimmKirr/tofukit/0.1.0
     cmds:
       - mkdir -p {{.PLUGIN_DIR}}/{{.GOOS}}_{{.GOARCH}}
-      - cp bin/{{.BINARY}} {{.PLUGIN_DIR}}/{{.GOOS}}_{{.GOARCH}}/{{.BINARY}}
+      - cp {{.BIN_PLATFORM_DIR}}/{{.BINARY}} {{.PLUGIN_DIR}}/{{.GOOS}}_{{.GOARCH}}/{{.BINARY}}
       - |
         if [ "{{.GOOS}}" = "darwin" ]; then
           echo "Signing binary on macOS..."
@@ -50,5 +55,5 @@ tasks:
 #      - test:data_hello_world_txt_test # no data test for now
 #      - test:project_hello_world_txt_test
     cmds:
-      - go test ./test -v
+      - go test ./test -v -timeout=20m
 

@@ -794,12 +794,12 @@ resource "tofukit_project" "hello_world" {
 // RECURSIVE/NESTED FILE OPERATIONS
 // =============================================================================
 
-// TestProjectFileRecursiveCreateSuccess tests creating an initial nested file
-func TestProjectFileRecursiveCreateSuccess(t *testing.T) {
+// TestProjectFileNestedCreateSuccess tests creating an initial nested file
+func TestProjectFileNestedCreateSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileRecursiveCreateSuccess")
+	testDir := createTestDirectory(t, "TestProjectFileNestedCreateSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	// Step 1: Generate single project.tofu with all configuration
@@ -813,8 +813,9 @@ func TestProjectFileRecursiveCreateSuccess(t *testing.T) {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -882,12 +883,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Initial nested file created successfully!")
 }
 
-// TestProjectFileRecursiveAddSuccess tests adding another nested file
-func TestProjectFileRecursiveAddSuccess(t *testing.T) {
+// TestProjectFileNestedAddSuccess tests adding another nested file
+func TestProjectFileNestedAddSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileRecursiveAddSuccess")
+	testDir := createTestDirectory(t, "TestProjectFileNestedAddSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -904,8 +905,9 @@ func TestProjectFileRecursiveAddSuccess(t *testing.T) {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -972,8 +974,9 @@ resource "tofukit_project" "recursive_test" {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -1014,12 +1017,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Additional nested file added successfully!")
 }
 
-// TestProjectFileRecursiveDeeperNestingSuccess tests creating deeply nested directories
-func TestProjectFileRecursiveDeeperNestingSuccess(t *testing.T) {
+// TestProjectFileNestedDeeperNestingSuccess tests creating deeply nested directories
+func TestProjectFileNestedDeeperNestingSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileRecursiveDeeperNestingSuccess")
+	testDir := createTestDirectory(t, "TestProjectFileNestedDeeperNestingSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1036,8 +1039,9 @@ func TestProjectFileRecursiveDeeperNestingSuccess(t *testing.T) {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -1109,8 +1113,9 @@ resource "tofukit_project" "recursive_test" {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -1157,12 +1162,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Deeper nested file created successfully!")
 }
 
-// TestProjectFileRecursiveRemovalSuccess tests removing nested files and cleaning up empty directories
-func TestProjectFileRecursiveRemovalSuccess(t *testing.T) {
+// TestProjectFileNestedRemovalSuccess tests removing nested files and cleaning up empty directories
+func TestProjectFileNestedRemovalSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileRecursiveRemovalSuccess")
+	testDir := createTestDirectory(t, "TestProjectFileNestedRemovalSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1179,8 +1184,9 @@ func TestProjectFileRecursiveRemovalSuccess(t *testing.T) {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -1265,8 +1271,9 @@ resource "tofukit_project" "recursive_test" {
 }
 
 provider "tofukit" {
-  output_path = "output"
-  debug       = true
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
 }
 
 resource "tofukit_project" "recursive_test" {
@@ -1347,12 +1354,10 @@ resource "tofukit_stack" "test_stack" {
       content = "hello world"
 
       # This verification will pass - content matches expectation
-      verifications = [
-        {
-          command = "cat hello.txt"
-          expect  = "hello world"
-        }
-      ]
+      verifications = [{
+        command = "cat hello.txt"
+        expect  = "hello world"
+      }]
     }
   }
 }
@@ -1362,7 +1367,7 @@ resource "tofukit_project" "verification_test" {
   description = "Project to test verification success"
   version     = "1.0.0"
 
-  depends_on = [tofukit_stack.test_stack]
+  stack = tofukit_stack.test_stack
 }
 `
 	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
@@ -1544,8 +1549,17 @@ func TestProjectFileVerificationRetrySuccess(t *testing.T) {
 
 	var err error
 
-	// Step 1: Generate single project.tofu with all configuration
-	// Enable max_retries to test retry loop
+	// Step 1: Enable test hook to force first verification failure
+	// This uses TOFUKIT_TEST_FORCE_VERIFY_FAIL_FIRST env var to guarantee retry triggers
+	// Much cleaner than bash scripts - Claude can't interfere with this approach
+	t.Setenv("TOFUKIT_TEST_FORCE_VERIFY_FAIL_FIRST", "true")
+
+	// Clean up counter file from any previous test runs
+	counterFile := "/tmp/tofukit_test_verify_counter"
+	os.Remove(counterFile) // Ignore errors if file doesn't exist
+
+	// Step 2: Generate simple project.tofu with verification
+	// The test hook will force first verification to fail, triggering retry
 	projectTofuContent := `# Terraform configuration for verification-retry test
 terraform {
   required_providers {
@@ -1566,27 +1580,26 @@ provider "tofukit" {
 
 resource "tofukit_project" "verification_test" {
   name        = "verification-retry-test"
-  description = "Test project that will fail verification on first attempt"
+  description = "Test that uses TOFUKIT_TEST_FORCE_VERIFY_FAIL_FIRST to guarantee retry triggers"
   version     = "1.0.0"
 
-  # CONTRADICTORY: Instructions say "properly formatted text file" (implies newline)
-  # But verification expects NO trailing newline - this WILL fail first time
+  # RETRY TRAP: Test hook forces first verification to fail
+  # Claude creates correct content, but provider forces failure on first attempt
+  # On retry, verification runs normally and passes
   files = {
-    "exact.txt" = {
-      instructions = [
-        "Create a simple text file containing the word 'exact'",
-        "Make sure it's a properly formatted text file",
-        "Follow standard text file conventions"
-      ]
-      verifications = [
-        {
-          # This expects EXACTLY "exact" with NO trailing newline (5 bytes)
-          # od -An -tx1 shows hex: "exact" = 6578616374 (no newline)
-          # But "exact\n" = 65786163740a (with newline) - will FAIL
-          command = "od -An -tx1 exact.txt | tr -d ' \\n'"
-          expect  = "6578616374"
-        }
-      ]
+    "greeting.txt" = {
+      instructions = [{
+        prompt = "Create a text file containing 'hello world'"
+        constraints = [
+          "Content must be exactly: hello world",
+          "Keep it simple"
+        ]
+      }]
+      verifications = [{
+        # Simple verification - check file contains "hello world"
+        command = "cat greeting.txt"
+        expect  = "hello world"
+      }]
     }
   }
 }
@@ -1658,26 +1671,26 @@ resource "tofukit_project" "verification_test" {
 	t.Log("✓ Apply completed successfully")
 
 	// Project path for verification
-	projectPath := filepath.Join(testDir, "output", "verification-retry-test")
+	projectPath := filepath.Join(testDir, "output")
 
 	// === SUBTEST 1: Verify File Created Correctly ===
 	t.Run("VerifyFileCreated", func(t *testing.T) {
-		t.Log("Verifying exact.txt was created correctly...")
+		t.Log("Verifying greeting.txt was created correctly...")
 
-		// Verify exact.txt exists
-		exactPath := filepath.Join(projectPath, "exact.txt")
-		assert.FileExists(t, exactPath, "exact.txt should exist")
+		// Verify greeting.txt exists
+		greetingPath := filepath.Join(projectPath, "greeting.txt")
+		assert.FileExists(t, greetingPath, "greeting.txt should exist")
 
 		// Read the file content
-		exactContent, err := os.ReadFile(exactPath)
-		require.NoError(t, err, "Failed to read exact.txt")
-		t.Logf("exact.txt content: %q (length: %d bytes)", string(exactContent), len(exactContent))
+		greetingContent, err := os.ReadFile(greetingPath)
+		require.NoError(t, err, "Failed to read greeting.txt")
+		t.Logf("greeting.txt content: %q (length: %d bytes)", string(greetingContent), len(greetingContent))
 
-		// Verify it's exactly "exact" with NO trailing newline
-		assert.Equal(t, "exact", string(exactContent), "exact.txt should contain exactly 'exact' with no newline")
-		assert.Equal(t, 5, len(exactContent), "exact.txt should be exactly 5 bytes")
+		// After retry, Claude should have corrected to "hello world" based on verification failure message
+		assert.Equal(t, "hello world\n", string(greetingContent), "greeting.txt should contain 'hello world' with trailing newline after retry")
+		assert.Equal(t, 12, len(greetingContent), "greeting.txt should be exactly 12 bytes (11 chars + newline)")
 
-		t.Log("✓ File created with correct content (verification passed after retry)")
+		t.Log("✓ File created with 'hello world\\n' after verification retry")
 	})
 
 	// === SUBTEST 2: Verify Debug Files Show Retry Activity ===
@@ -1700,17 +1713,21 @@ resource "tofukit_project" "verification_test" {
 
 		t.Logf("Found %d execution metadata file(s): %v", len(metadataFiles), metadataFiles)
 
-		// If we have multiple metadata files, it means retry happened
+		// ASSERT that retry happened - we expect multiple execution attempts
+		assert.Greater(t, len(metadataFiles), 1, "Expected retry to trigger - should have multiple execution metadata files")
+
 		if len(metadataFiles) > 1 {
 			t.Logf("✓ Retry loop was triggered! Found %d execution attempts", len(metadataFiles))
 
-			// Read first metadata to see the failure
+			// Read first metadata to see the initial failure
 			firstMetadata, err := os.ReadFile(filepath.Join(debugDir, metadataFiles[0]))
-			if err == nil {
-				t.Logf("First execution metadata:\n%s", string(firstMetadata))
-			}
-		} else if len(metadataFiles) == 1 {
-			t.Log("ℹ️  Only one execution - Claude passed verification on first attempt")
+			require.NoError(t, err, "Failed to read first execution metadata")
+			t.Logf("First execution metadata (should show verification failure):\n%s", string(firstMetadata))
+
+			// Read last metadata to see the successful retry
+			lastMetadata, err := os.ReadFile(filepath.Join(debugDir, metadataFiles[len(metadataFiles)-1]))
+			require.NoError(t, err, "Failed to read last execution metadata")
+			t.Logf("Last execution metadata (should show verification success):\n%s", string(lastMetadata))
 		}
 
 		// Check for verification logs in prompt files

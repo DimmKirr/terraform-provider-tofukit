@@ -21,56 +21,54 @@ provider "tofukit" {
 # LOCALS
 # ========================================
 locals {
-  project_name    = "python-click-cli"
-  project_version = "1.0.0"
+  project_name        = "go-hello"
+  project_version     = "1.0.0"
+  project_module_path = "example.com/go-hello"
 }
 
 # ========================================
-# MODULE: Python Click CLI Stack
+# MODULE: Go CLI Stack
 # ========================================
-module "click_app" {
-  source = "../modules/tofukit-stack-python-click-app-generic"
+module "go_cli" {
+  source = "../stacks/tofukit-stack-go-viper-cobra-pterm"
 
-  project_name    = local.project_name
-  project_version = local.project_version
+  project_name        = local.project_name
+  project_version     = local.project_version
+  project_module_path = local.project_module_path
+
+  # Optional: Override default versions
+  # go_version     = "1.23.1"
+  # cobra_version  = "1.8.1"
+  # viper_version  = "1.19.0"
+  # pterm_version  = "0.12.80"
 }
 
 # ========================================
 # PROJECT RESOURCE
 # ========================================
-resource "tofukit_project" "click_cli" {
+resource "tofukit_project" "go_hello" {
   name        = local.project_name
-  description = "Deterministic Python CLI application using Click framework - TEST"
+  description = "Simple Go CLI application using Cobra, Viper, and pterm"
   version     = local.project_version
 
   # Use Haiku model for fast, cheap execution
   model = "haiku"
 
-  # Reference the click_app stack (includes Python, Click, app files, and README)
-  # The stack provides a complete Python Click CLI application template
-  stack = module.click_app.stack
+  # Reference the go_cli stack (includes Go, Cobra, Viper, pterm, app files, and README)
+  # The stack provides a complete Go CLI application template
+  stack = module.go_cli.stack
 
   # Note: Terraform automatically creates dependencies from resource references
   # (stack reference creates implicit dependency on the module)
 }
 
 # ========================================
-# DATA SOURCES
-# ========================================
-data "tofukit_query" "ls" {
-  instruction {
-    prompt = "What color is sky?"
-    constraints = [
-      "Answer with exactly one word",
-      "Use lowercase only",
-      "Do NOT include any punctuation or additional text"
-    ]
-  }
-}
-
-# ========================================
 # OUTPUTS
 # ========================================
-output "ls" {
-  value = data.tofukit_query.ls
+output "project_info" {
+  value = {
+    name    = tofukit_project.go_hello.name
+    version = tofukit_project.go_hello.version
+    path    = tofukit_project.go_hello.project_path
+  }
 }

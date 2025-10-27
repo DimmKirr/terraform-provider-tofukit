@@ -386,6 +386,16 @@ func (e *Executor) ExecuteWithPromptJSON(
 			"max_retries": maxRetries,
 		})
 
+		// Save the prompt JSON if debug is enabled (so we can see fix requests on retry)
+		if e.debug {
+			if err := e.savePromptJSON(ctx, promptJSON, outputDir, attempt); err != nil {
+				tflog.Warn(ctx, "Failed to save prompt JSON", map[string]interface{}{
+					"error":   err.Error(),
+					"attempt": attempt,
+				})
+			}
+		}
+
 		// Execute using the pre-built prompt
 		result, err := e.client.ExecuteProjectWithPrompt(ctx, promptJSON, projectPath, e.model)
 		if err != nil {
@@ -418,6 +428,15 @@ func (e *Executor) ExecuteWithPromptJSON(
 		}
 
 		lastStatus = execStatus
+
+		// Save execution metadata if debug is enabled
+		if e.debug {
+			if err := e.saveExecutionMetadata(ctx, execStatus, outputDir); err != nil {
+				tflog.Warn(ctx, "Failed to save execution metadata", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+		}
 
 		// Run verifications if we have files to verify
 		if len(filesToVerify) > 0 {
@@ -465,14 +484,18 @@ func (e *Executor) ExecuteWithPromptJSON(
 					spec["_fix_request"] = map[string]interface{}{
 						"attempt":  attempt,
 						"failures": report.GetFailureSummary(),
-						"instructions": "🔧 **VERIFICATION FAILURES DETECTED**\n\n" +
-							"Your previous implementation had verification failures.\n\n" +
-							"**What went wrong:**\n" + report.GetFailureSummary() + "\n\n" +
-							"**What you need to do:**\n" +
-							"1. Analyze the verification failures carefully\n" +
-							"2. Identify the root cause of each failure\n" +
-							"3. Fix the issues in the affected files\n" +
-							"4. Ensure ALL verification commands will pass",
+						"instructions": "🔧 **CRITICAL VERIFICATION FAILURES - IMMEDIATE FIX REQUIRED**\n\n" +
+							"❌ Your previous implementation FAILED verification checks.\n\n" +
+							"**FAILED VERIFICATIONS:**\n" + report.GetFailureSummary() + "\n\n" +
+							"**CRITICAL INSTRUCTIONS - PAY CLOSE ATTENTION:**\n" +
+							"1. READ the verification failure output CAREFULLY - it shows EXACTLY what's wrong\n" +
+							"2. CHECK the file constraints you were given - you may have IGNORED them\n" +
+							"3. For example: If a constraint says 'NO newline', the file must NOT end with \\n\n" +
+							"4. If a constraint says 'properly formatted', follow the FORMAT specified in verifications\n" +
+							"5. FIX each failed file to satisfy BOTH the instructions AND the verification commands\n" +
+							"6. VERIFY your fixes will pass by checking the verification command expectations\n\n" +
+							"This is attempt " + fmt.Sprintf("%d", attempt) + " of " + fmt.Sprintf("%d", maxRetries) + ". " +
+							"You MUST fix these issues or the operation will FAIL.",
 					}
 
 					// Rebuild the prompt with fix request
@@ -565,6 +588,83 @@ func (e *Executor) saveExecutionMetadata(ctx context.Context, status *ExecutionS
 	})
 
 	return nil
+}
+
+// savePromptJSON saves the prompt JSON sent to Claude for debugging
+func (e *Executor) savePromptJSON(ctx context.Context, promptJSON string, outputDir string, attempt int) error {
+	debugDir := filepath.Join(outputDir, ".debug")
+
+	// Create debug directory if it doesn't exist
+	if err := os.MkdirAll(debugDir, 0755); err != nil {
+		return fmt.Errorf("failed to create debug directory: %w", err)
+	}
+
+	timestamp := time.Now().Unix()
+	promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt%d-%d.json", attempt, timestamp))
+
+	// Write raw JSON to file
+	if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err != nil {
+		return fmt.Errorf("failed to write prompt JSON: %w", err)
+	}
+
+	// Parse and extract fix request if present
+	var promptData map[string]interface{}
+	if err := json.Unmarshal([]byte(promptJSON), &promptData); err == nil {
+		// Create human-readable markdown version
+		markdownPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt%d-%d.md", attempt, timestamp))
+		if err := e.generatePromptMarkdown(promptData, markdownPath, attempt); err != nil {
+			tflog.Warn(ctx, "Failed to generate prompt markdown", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+
+	tflog.Debug(ctx, "Saved prompt JSON", map[string]interface{}{
+		"prompt_path": promptPath,
+		"attempt":     attempt,
+	})
+
+	return nil
+}
+
+// generatePromptMarkdown creates a human-readable markdown version of the prompt
+func (e *Executor) generatePromptMarkdown(promptData map[string]interface{}, markdownPath string, attempt int) error {
+	var content strings.Builder
+
+	content.WriteString(fmt.Sprintf("# Claude Prompt - Attempt %d\n\n", attempt))
+	content.WriteString(fmt.Sprintf("**Generated:** %s\n\n", time.Now().Format(time.RFC3339)))
+
+	// Check if this is a retry with fix request
+	if request, ok := promptData["request"].(map[string]interface{}); ok {
+		if spec, ok := request["specification"].(map[string]interface{}); ok {
+			if fixReq, ok := spec["_fix_request"].(map[string]interface{}); ok {
+				content.WriteString("## 🔧 FIX REQUEST (Retry)\n\n")
+				content.WriteString("**This is a retry attempt after verification failure.**\n\n")
+
+				if attemptNum, ok := fixReq["attempt"]; ok {
+					content.WriteString(fmt.Sprintf("**Attempt:** %v\n\n", attemptNum))
+				}
+
+				if failures, ok := fixReq["failures"].(string); ok {
+					content.WriteString("### Failed Verifications:\n\n")
+					content.WriteString("```\n")
+					content.WriteString(failures)
+					content.WriteString("\n```\n\n")
+				}
+
+				if instructions, ok := fixReq["instructions"].(string); ok {
+					content.WriteString("### Instructions to Claude:\n\n")
+					content.WriteString(instructions)
+					content.WriteString("\n\n")
+				}
+			}
+		}
+	}
+
+	content.WriteString("## Full Prompt JSON\n\n")
+	content.WriteString("See the `.json` file for complete prompt structure.\n")
+
+	return os.WriteFile(markdownPath, []byte(content.String()), 0644)
 }
 
 // generateExecutionMarkdown creates a human-readable markdown version of the execution metadata

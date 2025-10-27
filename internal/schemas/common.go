@@ -7,11 +7,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// RequirementModel represents a requirement block
+// RequirementModel represents a requirement entry
+// Note: For map-based requirements, the key is separate from the model
 type RequirementModel struct {
-	Name         types.String        `tfsdk:"name"`
-	Instructions []InstructionModel  `tfsdk:"instruction"`
-	Verification []VerificationModel `tfsdk:"verification"`
+	Name          types.String        `tfsdk:"name"`
+	Instructions  []InstructionModel  `tfsdk:"instructions"`
+	Verifications []VerificationModel `tfsdk:"verifications"`
 }
 
 // InstructionModel represents an instruction block
@@ -38,10 +39,60 @@ type FileModel struct {
 // Kept for backward compatibility during migration
 type ScaffoldModel = FileModel
 
-// GetRequirementBlock returns the schema for requirement blocks
+// GetRequirementsListAttribute returns the schema for the requirements list attribute
+func GetRequirementsListAttribute() schema.ListNestedAttribute {
+	return schema.ListNestedAttribute{
+		MarkdownDescription: "Requirements for this component (ordered list)",
+		Optional:            true,
+		NestedObject: schema.NestedAttributeObject{
+			Attributes: map[string]schema.Attribute{
+				"name": schema.StringAttribute{
+					MarkdownDescription: "Display name of the requirement",
+					Required:            true,
+				},
+				"instructions": schema.ListNestedAttribute{
+					MarkdownDescription: "Instruction steps for implementing this requirement (executed sequentially)",
+					Optional:            true,
+					NestedObject: schema.NestedAttributeObject{
+						Attributes: map[string]schema.Attribute{
+							"prompt": schema.StringAttribute{
+								MarkdownDescription: "LLM-facing instruction describing what to do",
+								Required:            true,
+							},
+							"constraints": schema.ListAttribute{
+								MarkdownDescription: "Constraints that must be respected (what NOT to do)",
+								Optional:            true,
+								ElementType:         types.StringType,
+							},
+						},
+					},
+				},
+				"verifications": schema.ListNestedAttribute{
+					MarkdownDescription: "Verification commands for this requirement",
+					Optional:            true,
+					NestedObject: schema.NestedAttributeObject{
+						Attributes: map[string]schema.Attribute{
+							"command": schema.StringAttribute{
+								MarkdownDescription: "Command to run for verification",
+								Required:            true,
+							},
+							"expect": schema.StringAttribute{
+								MarkdownDescription: "Expected output or pattern",
+								Optional:            true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// GetRequirementBlock is deprecated - kept for backward compatibility
+// Use GetRequirementsMapAttribute instead
 func GetRequirementBlock() schema.ListNestedBlock {
 	return schema.ListNestedBlock{
-		MarkdownDescription: "Requirements for this component",
+		MarkdownDescription: "DEPRECATED: Use 'requirements' map attribute instead",
 		NestedObject: schema.NestedBlockObject{
 			Attributes: map[string]schema.Attribute{
 				"name": schema.StringAttribute{

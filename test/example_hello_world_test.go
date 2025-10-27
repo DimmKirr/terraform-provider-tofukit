@@ -24,7 +24,7 @@ func TestExampleHelloWorldSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 1: Copy the example configuration
-	exampleDir := filepath.Join(projectRoot, "examples", "hello-world")
+	exampleDir := filepath.Join(projectRoot, "examples", "projects", "hello-world")
 	projectContent, err := os.ReadFile(filepath.Join(exampleDir, "project.tofu"))
 	if err != nil {
 		t.Fatalf("Failed to read project.tofu from example: %v", err)

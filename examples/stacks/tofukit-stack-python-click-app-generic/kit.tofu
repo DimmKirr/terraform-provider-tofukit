@@ -19,18 +19,24 @@ resource "tofukit_language" "python" {
   description = "Python high-level programming language runtime"
   version     = "3.12.6"
 
-  requirement {
-    name = "Python Runtime Verification"
+  requirements = [
+    {
+      name = "Python Runtime Verification"
 
-    instruction {
-      prompt = "Verify Python 3.12+ is available on the system. If not installed, Python must be installed manually: Ubuntu/Debian: sudo apt install python3 python3-dev, macOS: brew install python@3.12, Windows: Download from python.org"
-    }
+      instructions = [
+        {
+          prompt = "Verify Python 3.12+ is available on the system. If not installed, Python must be installed manually: Ubuntu/Debian: sudo apt install python3 python3-dev, macOS: brew install python@3.12, Windows: Download from python.org"
+        }
+      ]
 
-    verification {
-      command = "python3 --version"
-      expect  = "Python 3.12"
+      verifications = [
+        {
+          command = "python3 --version"
+          expect  = "Python 3.12"
+        }
+      ]
     }
-  }
+  ]
 }
 
 # ========================================
@@ -43,31 +49,40 @@ resource "tofukit_tool" "pip" {
 
   depends_on = [tofukit_language.python]
 
-  requirement {
-    name = "Pip Installation"
+  requirements = [
+    {
+      name = "Pip Installation"
 
-    instruction {
-      prompt = "Ensure pip is available by running: python3 -m ensurepip --upgrade"
+      instructions = [
+        {
+          prompt = "Ensure pip is available by running: python3 -m ensurepip --upgrade"
+        }
+      ]
+
+      verifications = [
+        {
+          command = "python3 -m pip --version"
+          expect  = "pip"
+        }
+      ]
+    },
+    {
+      name = "Pip Upgrade"
+
+      instructions = [
+        {
+          prompt = "Upgrade pip to latest version: python3 -m pip install --upgrade pip"
+        }
+      ]
+
+      verifications = [
+        {
+          command = "python3 -m pip --version"
+          expect  = "24."
+        }
+      ]
     }
-
-    verification {
-      command = "python3 -m pip --version"
-      expect  = "pip"
-    }
-  }
-
-  requirement {
-    name = "Pip Upgrade"
-
-    instruction {
-      prompt = "Upgrade pip to latest version: python3 -m pip install --upgrade pip"
-    }
-
-    verification {
-      command = "python3 -m pip --version"
-      expect  = "24."
-    }
-  }
+  ]
 }
 
 resource "tofukit_tool" "venv" {
@@ -77,22 +92,28 @@ resource "tofukit_tool" "venv" {
 
   depends_on = [tofukit_language.python]
 
-  requirement {
-    name = "Virtual Environment Creation"
+  requirements = [
+    {
+      name = "Virtual Environment Creation"
 
-    instruction {
-      prompt      = "Create Python virtual environment in .venv directory: python3 -m venv .venv"
-      constraints = [
-        "Do NOT create outside current working directory",
-        "Do NOT use alternative tools (virtualenv, conda)"
+      instructions = [
+        {
+          prompt      = "Create Python virtual environment in .venv directory: python3 -m venv .venv"
+          constraints = [
+            "Do NOT create outside current working directory",
+            "Do NOT use alternative tools (virtualenv, conda)"
+          ]
+        }
+      ]
+
+      verifications = [
+        {
+          command = "test -d .venv && echo 'venv exists'"
+          expect  = "venv exists"
+        }
       ]
     }
-
-    verification {
-      command = "test -d .venv && echo 'venv exists'"
-      expect  = "venv exists"
-    }
-  }
+  ]
 }
 
 # ========================================
@@ -105,23 +126,29 @@ resource "tofukit_framework" "click" {
 
   depends_on = [tofukit_tool.pip]
 
-  requirement {
-    name = "CLI Framework Installation"
+  requirements = [
+    {
+      name = "CLI Framework Installation"
 
-    instruction {
-      prompt      = "Install Click framework version 8.1.7: pip install click==8.1.7"
-      constraints = [
-        "Do NOT install any version other than 8.1.7",
-        "Do NOT use --user flag (install to project environment only)",
-        "Do NOT install from git or source (use official PyPI only)"
+      instructions = [
+        {
+          prompt      = "Install Click framework version 8.1.7: pip install click==8.1.7"
+          constraints = [
+            "Do NOT install any version other than 8.1.7",
+            "Do NOT use --user flag (install to project environment only)",
+            "Do NOT install from git or source (use official PyPI only)"
+          ]
+        }
+      ]
+
+      verifications = [
+        {
+          command = "pip show click | grep Version"
+          expect  = "8.1.7"
+        }
       ]
     }
-
-    verification {
-      command = "pip show click | grep Version"
-      expect  = "8.1.7"
-    }
-  }
+  ]
 }
 
 # ========================================

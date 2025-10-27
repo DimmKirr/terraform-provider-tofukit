@@ -32,7 +32,7 @@ type LanguageResourceModel struct {
 	Name         types.String               `tfsdk:"name"`
 	Description  types.String               `tfsdk:"description"`
 	Version      types.String               `tfsdk:"version"`
-	Requirements []schemas.RequirementModel `tfsdk:"requirement"`
+	Requirements []schemas.RequirementModel `tfsdk:"requirements"`
 }
 
 func (r *LanguageResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -40,14 +40,12 @@ func (r *LanguageResource) Metadata(ctx context.Context, req resource.MetadataRe
 }
 
 func (r *LanguageResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	attrs := schemas.GetBaseComponentAttributes()
+	attrs["requirements"] = schemas.GetRequirementsListAttribute()
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Language component for tofukit",
-
-		Attributes: schemas.GetBaseComponentAttributes(),
-
-		Blocks: map[string]schema.Block{
-			"requirement": schemas.GetRequirementBlock(),
-		},
+		Attributes:          attrs,
 	}
 }
 

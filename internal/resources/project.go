@@ -43,7 +43,7 @@ type ProjectModelFinal struct {
 	Description        types.String               `tfsdk:"description"`
 	Version            types.String               `tfsdk:"version"`
 	Stack              types.Dynamic              `tfsdk:"stack"` // Reference to the stack (accepts resource reference or ID string)
-	Requirements       []schemas.RequirementModel `tfsdk:"requirement"`
+	Requirements       []schemas.RequirementModel `tfsdk:"requirements"`
 	Kits               types.Dynamic              `tfsdk:"kits"`  // List of kit references or IDs
 	Files              types.Map                  `tfsdk:"files"` // Map of files keyed by path
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
@@ -173,10 +173,8 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "SHA256 hash of actual generated files for drift detection",
 				Computed:            true,
 			},
-			"files": schemas.GetFilesMapAttribute(),
-		},
-		Blocks: map[string]schema.Block{
-			"requirement": schemas.GetRequirementBlock(),
+			"files":        schemas.GetFilesMapAttribute(),
+			"requirements": schemas.GetRequirementsListAttribute(),
 		},
 	}
 }
@@ -280,6 +278,11 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 
 	// Skip if this is resource creation (no state yet)
 	if req.State.Raw.IsNull() {
+		return
+	}
+
+	// Skip if this is resource destruction (no plan for new state)
+	if req.Plan.Raw.IsNull() {
 		return
 	}
 
@@ -1065,9 +1068,9 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 		reqData["instructions"] = instructions
 
 		// Add verifications if present
-		if len(req.Verification) > 0 {
+		if len(req.Verifications) > 0 {
 			verifications := []map[string]string{}
-			for _, v := range req.Verification {
+			for _, v := range req.Verifications {
 				verif := map[string]string{
 					"command": v.Command.ValueString(),
 				}
@@ -1678,7 +1681,7 @@ func (r *ProjectResourceFinal) computeConfigHash(ctx context.Context, data Proje
 				}
 			}
 		}
-		for _, ver := range req.Verification {
+		for _, ver := range req.Verifications {
 			parts = append(parts, "verification:"+ver.Command.ValueString())
 			if !ver.Expect.IsNull() && !ver.Expect.IsUnknown() {
 				parts = append(parts, "expect:"+ver.Expect.ValueString())

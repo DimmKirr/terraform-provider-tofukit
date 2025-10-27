@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -258,6 +259,47 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 		Results: []VerificationResult{},
 	}
 
+	// TEST HOOK: Force first verification to fail for testing retry mechanism
+	// This allows us to test the retry flow without Claude being able to predict/avoid the failure
+	if os.Getenv("TOFUKIT_TEST_FORCE_VERIFY_FAIL_FIRST") == "true" {
+		counterFile := "/tmp/tofukit_test_verify_counter"
+		count := 0
+
+		// Read current counter
+		if data, err := os.ReadFile(counterFile); err == nil {
+			count, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+		}
+
+		// First call - force failure
+		if count == 0 {
+			tflog.Warn(ctx, "TEST HOOK: Forcing first verification to fail", map[string]interface{}{
+				"hook": "TOFUKIT_TEST_FORCE_VERIFY_FAIL_FIRST",
+			})
+
+			// Increment counter for next call
+			os.WriteFile(counterFile, []byte("1"), 0644)
+
+			// Return a forced failure for the first file
+			if len(files) > 0 {
+				report.Results = append(report.Results, VerificationResult{
+					FilePath: files[0].Path,
+					Command:  "TEST_HOOK_FORCED_FAILURE",
+					Expected: "PASS",
+					Actual:   "FAIL",
+					Passed:   false,
+				})
+				report.FailedCount = 1
+				report.AllPassed = false
+
+				return report, nil
+			}
+		}
+
+		tflog.Info(ctx, "TEST HOOK: Counter > 0, running normal verification", map[string]interface{}{
+			"count": count,
+		})
+	}
+
 	for _, file := range files {
 		if file.Path == "" || len(file.Verifications) == 0 {
 			continue
@@ -290,7 +332,9 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 			cmd.Dir = m.BaseDir
 
 			output, err := cmd.CombinedOutput()
-			result.Actual = strings.TrimSpace(string(output))
+			// IMPORTANT: Do NOT use TrimSpace - it removes trailing newlines that we need to detect!
+			// Only trim the final newline that shell commands naturally add
+			result.Actual = strings.TrimSuffix(string(output), "\n")
 			result.Error = err
 
 			tflog.Debug(ctx, "Verification command executed", map[string]interface{}{
@@ -311,7 +355,7 @@ func (m *Manager) RunVerifications(ctx context.Context, files []schemas.FileMode
 					"error":   err.Error(),
 					"output":  result.Actual,
 				})
-			} else if expect != "" && !strings.Contains(result.Actual, expect) {
+			} else if expect != "" && result.Actual != expect {
 				result.Passed = false
 				report.FailedCount++
 				tflog.Warn(ctx, "Verification output mismatch", map[string]interface{}{
