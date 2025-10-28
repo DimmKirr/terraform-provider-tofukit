@@ -46,6 +46,10 @@ func (r *BaseComponent) SaveToRegistry(ctx context.Context, id string, data inte
 		switch r.Kind {
 		case "stack":
 			registry.SetStack(id, data)
+		case "file":
+			registry.SetFile(id, data)
+		case "feature":
+			registry.SetFeature(id, data)
 		default:
 			registry.SetComponent(id, data)
 		}
@@ -63,6 +67,10 @@ func (r *BaseComponent) GetFromRegistry(ctx context.Context, id string) (interfa
 		switch r.Kind {
 		case "stack":
 			return registry.GetStack(id)
+		case "file":
+			return registry.GetFile(id)
+		case "feature":
+			return registry.GetFeature(id)
 		default:
 			return registry.GetComponent(id)
 		}
@@ -81,6 +89,10 @@ func (r *BaseComponent) RemoveFromRegistry(ctx context.Context, id string) {
 		switch r.Kind {
 		case "stack":
 			registry.RemoveStack(id)
+		case "file":
+			registry.RemoveFile(id)
+		case "feature":
+			registry.RemoveFeature(id)
 		default:
 			registry.RemoveComponent(id)
 		}

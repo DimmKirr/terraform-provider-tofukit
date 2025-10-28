@@ -27,6 +27,15 @@ type VerificationModel struct {
 	Expect  types.String `tfsdk:"expect"`
 }
 
+// FeatureModel represents a feature (inline or from resource reference)
+type FeatureModel struct {
+	Prompt        types.String        `tfsdk:"prompt"`
+	Constraints   []types.String      `tfsdk:"constraints"`
+	Files         types.Map           `tfsdk:"files"`
+	Kits          types.Dynamic       `tfsdk:"kits"`
+	Verifications []VerificationModel `tfsdk:"verifications"`
+}
+
 // FileModel represents a file entry
 // Note: Path is now the map key, not a field in the struct
 type FileModel struct {
@@ -172,6 +181,48 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 						Attributes: map[string]schema.Attribute{
 							"command": schema.StringAttribute{
 								MarkdownDescription: "Command to run for verification (e.g., 'python src/cli.py --version')",
+								Required:            true,
+							},
+							"expect": schema.StringAttribute{
+								MarkdownDescription: "Expected output or pattern",
+								Optional:            true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// GetFeaturesMapAttribute returns the schema for the features map
+func GetFeaturesMapAttribute() schema.MapNestedAttribute {
+	return schema.MapNestedAttribute{
+		MarkdownDescription: "Features to implement (capabilities bundled with files, kits, and verifications)",
+		Optional:            true,
+		NestedObject: schema.NestedAttributeObject{
+			Attributes: map[string]schema.Attribute{
+				"prompt": schema.StringAttribute{
+					MarkdownDescription: "What the feature does (LLM-facing requirement)",
+					Required:            true,
+				},
+				"constraints": schema.ListAttribute{
+					MarkdownDescription: "Implementation constraints (what NOT to do)",
+					Optional:            true,
+					ElementType:         types.StringType,
+				},
+				"files": GetFilesMapAttribute(),
+				"kits": schema.DynamicAttribute{
+					MarkdownDescription: "Kit dependencies for this feature",
+					Optional:            true,
+				},
+				"verifications": schema.ListNestedAttribute{
+					MarkdownDescription: "Verification commands for this feature",
+					Optional:            true,
+					NestedObject: schema.NestedAttributeObject{
+						Attributes: map[string]schema.Attribute{
+							"command": schema.StringAttribute{
+								MarkdownDescription: "Command to run for verification",
 								Required:            true,
 							},
 							"expect": schema.StringAttribute{

@@ -11,6 +11,7 @@ vars:
   BINARY_NAME: terraform-provider-tofukit_v0.1.0
   # We dont' destroy resources in tests for now
   SKIP_DESTROY: true
+  TEST_TIMEOUT: 20m
   GOOS:
     sh: go env GOOS
   GOARCH:
@@ -48,12 +49,42 @@ tasks:
         fi
 
   test:
-
+    desc: Run all tests
     deps:
-      - build
-      - install
-#      - test:data_hello_world_txt_test # no data test for now
-#      - test:project_hello_world_txt_test
+      - test:query
+      - test:example_hello_world
+      - test:example_click_cli
+      - test:example_go_viper_cli
+      - test:project_files
+
+
+  test:query:
+    desc: Run query tests
+    deps: [build, install]
     cmds:
-      - go test ./test -v -timeout=20m
+      - go test ./test -v -run TestQuery -timeout={{.TEST_TIMEOUT}}
+
+  test:example_hello_world:
+    desc: Run example hello world tests
+    deps: [build, install]
+    cmds:
+      - go test ./test -v -run TestExampleHelloWorld -timeout={{.TEST_TIMEOUT}}
+
+  test:example_click_cli:
+    desc: Run example click CLI tests
+    deps: [build, install]
+    cmds:
+      - go test ./test -v -run TestExampleClickCli -timeout={{.TEST_TIMEOUT}}
+
+  test:example_go_viper_cli:
+    desc: Run example Go Viper CLI tests
+    deps: [build, install]
+    cmds:
+      - go test ./test -v -run TestExampleGoViperCliHelloWorld -timeout={{.TEST_TIMEOUT}}
+
+  test:project_files:
+    desc: Run project files tests
+    deps: [build, install]
+    cmds:
+      - go test ./test -v -run TestProject -timeout={{.TEST_TIMEOUT}}
 

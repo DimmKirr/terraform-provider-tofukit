@@ -17,13 +17,19 @@ resource "tofukit_project" "hello_world" {
       content = "hello world4\n"
     }
 
+    "linked.txt" = {
+      content = "More info in ${tofukit_file.target_file}"
+    }
+
 #     "hello3.txt" = {
 #       content = "hello world3\n"
 #     }
   }
+}
 
-
-
+resource "tofukit_file" "target_file" {
+  name = "target_file.txt"
+  content = "hello world linked\n"
 }
 
 

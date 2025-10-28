@@ -44,8 +44,9 @@ type ProjectModelFinal struct {
 	Version            types.String               `tfsdk:"version"`
 	Stack              types.Dynamic              `tfsdk:"stack"` // Reference to the stack (accepts resource reference or ID string)
 	Requirements       []schemas.RequirementModel `tfsdk:"requirements"`
-	Kits               types.Dynamic              `tfsdk:"kits"`  // List of kit references or IDs
-	Files              types.Map                  `tfsdk:"files"` // Map of files keyed by path
+	Kits               types.Dynamic              `tfsdk:"kits"`     // List of kit references or IDs
+	Files              types.Map                  `tfsdk:"files"`    // Map of files keyed by path
+	Features           types.Dynamic              `tfsdk:"features"` // Map of features keyed by feature name
 	ExecutionStatus    types.String               `tfsdk:"execution_status"`
 	ExecutionStarted   types.String               `tfsdk:"execution_started"`
 	ExecutionCompleted types.String               `tfsdk:"execution_completed"`
@@ -173,7 +174,11 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "SHA256 hash of actual generated files for drift detection",
 				Computed:            true,
 			},
-			"files":        schemas.GetFilesMapAttribute(),
+			"files": schemas.GetFilesMapAttribute(),
+			"features": schema.DynamicAttribute{
+				MarkdownDescription: "Features to implement (capabilities bundled with files, kits, and verifications). Can be inline definitions or references to feature resources.",
+				Optional:            true,
+			},
 			"requirements": schemas.GetRequirementsListAttribute(),
 		},
 	}
@@ -596,12 +601,15 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
+	dangerouslySkipPermissions := false
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
+		GetDangerouslySkipPermissions() bool
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
+		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 	}
 
 	// Always update output files with current configuration (including files from stacks)
@@ -641,7 +649,7 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	if !data.ProjectPath.IsNull() && !data.ProjectPath.IsUnknown() {
 		projectPath := data.ProjectPath.ValueString()
 		if projectPath != "" {
-			executor := claude.NewExecutor(claudeHomeDir)
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
 			if !executor.IsProjectGenerated(ctx, projectPath) {
 				// Project no longer exists, update the state
 				tflog.Warn(ctx, "Generated project no longer exists", map[string]interface{}{
@@ -691,6 +699,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	debug := false
+	_ = false // dangerouslySkipPermissions - reserved for future use
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
@@ -943,12 +952,15 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
+	dangerouslySkipPermissions := false
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
+		GetDangerouslySkipPermissions() bool
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
+		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 	}
 
 	// Clean up files and project directory
@@ -967,7 +979,7 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 			}
 
 			// Clean up any generated project
-			executor := claude.NewExecutor(claudeHomeDir)
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
 			if err := executor.CleanupProject(ctx, projectPath); err != nil {
 				tflog.Warn(ctx, "Failed to cleanup generated project", map[string]interface{}{
 					"project_id":   data.ID.ValueString(),
@@ -1084,6 +1096,61 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 
 		outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
 	}
+
+	// NEW: Add feature requirements
+	featureRequirements := r.convertFeaturesToRequirements(ctx, data)
+	for _, req := range featureRequirements {
+		reqData := map[string]interface{}{
+			"name": req.Name.ValueString(),
+		}
+
+		// Add instructions
+		instructions := []map[string]interface{}{}
+		for _, inst := range req.Instructions {
+			instData := map[string]interface{}{
+				"prompt": inst.Prompt.ValueString(),
+			}
+
+			// Add constraints if present
+			if inst.Constraints != nil && len(inst.Constraints) > 0 {
+				constraints := []string{}
+				for _, c := range inst.Constraints {
+					if !c.IsNull() && !c.IsUnknown() {
+						constraints = append(constraints, c.ValueString())
+					}
+				}
+				if len(constraints) > 0 {
+					instData["constraints"] = constraints
+				}
+			}
+
+			instructions = append(instructions, instData)
+		}
+		reqData["instructions"] = instructions
+
+		// Add verifications if present
+		if len(req.Verifications) > 0 {
+			verifications := []map[string]string{}
+			for _, v := range req.Verifications {
+				verif := map[string]string{
+					"command": v.Command.ValueString(),
+				}
+				if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+					verif["expect"] = v.Expect.ValueString()
+				}
+				verifications = append(verifications, verif)
+			}
+			reqData["verification"] = verifications
+		}
+
+		outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
+	}
+
+	tflog.Info(ctx, "Added requirements to output", map[string]interface{}{
+		"project_requirements": len(data.Requirements),
+		"feature_requirements": len(featureRequirements),
+		"total_requirements":   len(data.Requirements) + len(featureRequirements),
+	})
 
 	// Use provided files (may be enriched with action-based instructions)
 	mergedFiles := filesToUse
@@ -1302,10 +1369,13 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
 	// Check if debug mode is enabled
 	debug := false
+	dangerouslySkipPermissions := false
 	if provData, ok := r.ProviderData.(interface {
 		GetDebug() bool
+		GetDangerouslySkipPermissions() bool
 	}); ok {
 		debug = provData.GetDebug()
+		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 	}
 
 	// Get system prompt from resource data
@@ -1320,7 +1390,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		model = data.Model.ValueString()
 	}
 
-	executor := claude.NewExecutor(claudeHomeDir)
+	executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
 	executor.SetDebug(debug)
 	executor.SetOutputPath(outputPath)
 	executor.SetSystemPrompt(systemPrompt)
@@ -1444,10 +1514,12 @@ func (r *ProjectResourceFinal) ValidateConfig(ctx context.Context, req resource.
 	if r.ProviderData != nil {
 		if provData, ok := r.ProviderData.(interface {
 			GetClaudeHomeDirectory() string
+			GetDangerouslySkipPermissions() bool
 		}); ok {
 			// Validate Claude Code availability
 			claudeHomeDir := provData.GetClaudeHomeDirectory()
-			executor := claude.NewExecutor(claudeHomeDir)
+			dangerouslySkipPermissions := provData.GetDangerouslySkipPermissions()
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
 			if err := executor.Validate(ctx); err != nil {
 				resp.Diagnostics.AddWarning(
 					"Claude Code Validation",
@@ -1526,7 +1598,7 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	}
 
 	// Build the actual JSON prompt that will be sent to Claude
-	claudeClient := claude.NewClient("") // temp client just for building prompt
+	claudeClient := claude.NewClient("", false) // temp client just for building prompt
 	jsonPrompt, _ := claudeClient.BuildPrompt(projectSpec)
 
 	// Write claude-prompt-{timestamp}.json - the actual JSON prompt
@@ -1865,6 +1937,224 @@ func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitI
 	return allFiles
 }
 
+// parseFeature extracts FeatureModel from either resource reference or inline definition
+func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue attr.Value) (*schemas.FeatureModel, error) {
+	// Cast to types.Object
+	featureObj, ok := featureValue.(types.Object)
+	if !ok {
+		return nil, fmt.Errorf("feature value is not an object: %T", featureValue)
+	}
+
+	attrs := featureObj.Attributes()
+
+	// Build FeatureModel from attributes
+	featureModel := &schemas.FeatureModel{}
+
+	// Extract prompt (required)
+	if promptVal, exists := attrs["prompt"]; exists {
+		if promptStr, ok := promptVal.(types.String); ok {
+			featureModel.Prompt = promptStr
+		}
+	}
+
+	// Extract constraints (optional)
+	if constraintsVal, exists := attrs["constraints"]; exists {
+		if constraintsList, ok := constraintsVal.(types.List); ok {
+			elements := constraintsList.Elements()
+			featureModel.Constraints = make([]types.String, 0, len(elements))
+			for _, elem := range elements {
+				if strVal, ok := elem.(types.String); ok {
+					featureModel.Constraints = append(featureModel.Constraints, strVal)
+				}
+			}
+		}
+	}
+
+	// Extract files (optional)
+	if filesVal, exists := attrs["files"]; exists {
+		if filesMap, ok := filesVal.(types.Map); ok {
+			featureModel.Files = filesMap
+		}
+	}
+
+	// Extract kits (optional)
+	if kitsVal, exists := attrs["kits"]; exists {
+		if kitsDyn, ok := kitsVal.(types.Dynamic); ok {
+			featureModel.Kits = kitsDyn
+		}
+	}
+
+	// Extract verifications (optional)
+	if verifsVal, exists := attrs["verifications"]; exists {
+		if verifsList, ok := verifsVal.(types.List); ok {
+			elements := verifsList.Elements()
+			featureModel.Verifications = make([]schemas.VerificationModel, 0, len(elements))
+			for _, elem := range elements {
+				if verifObj, ok := elem.(types.Object); ok {
+					verifAttrs := verifObj.Attributes()
+					verif := schemas.VerificationModel{}
+					if cmd, exists := verifAttrs["command"]; exists {
+						if cmdStr, ok := cmd.(types.String); ok {
+							verif.Command = cmdStr
+						}
+					}
+					if exp, exists := verifAttrs["expect"]; exists {
+						if expStr, ok := exp.(types.String); ok {
+							verif.Expect = expStr
+						}
+					}
+					featureModel.Verifications = append(featureModel.Verifications, verif)
+				}
+			}
+		}
+	}
+
+	return featureModel, nil
+}
+
+// collectFeatureFiles extracts files from all features in the project
+func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
+	if data.Features.IsNull() || data.Features.IsUnknown() {
+		return []schemas.FileModelWithPath{}
+	}
+
+	// Extract the underlying value from Dynamic
+	underlyingVal := data.Features.UnderlyingValue()
+
+	// Try to cast to types.Map (for map structure)
+	featuresMap, ok := underlyingVal.(types.Map)
+	if !ok {
+		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+			"type": fmt.Sprintf("%T", underlyingVal),
+		})
+		return []schemas.FileModelWithPath{}
+	}
+
+	var allFiles []schemas.FileModelWithPath
+
+	for featureName, featureValue := range featuresMap.Elements() {
+		feature, err := r.parseFeature(ctx, featureValue)
+		if err != nil {
+			tflog.Warn(ctx, "Failed to parse feature", map[string]interface{}{
+				"feature_name": featureName,
+				"error":        err.Error(),
+			})
+			continue
+		}
+
+		if feature.Files.IsNull() || feature.Files.IsUnknown() {
+			continue
+		}
+
+		// Convert feature files from map to list
+		featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+		allFiles = append(allFiles, featureFiles...)
+
+		tflog.Debug(ctx, "Collected files from feature", map[string]interface{}{
+			"feature_name": featureName,
+			"file_count":   len(featureFiles),
+		})
+	}
+
+	return allFiles
+}
+
+// convertFeaturesToRequirements transforms features into requirements for Claude
+func (r *ProjectResourceFinal) convertFeaturesToRequirements(ctx context.Context, data ProjectModelFinal) []schemas.RequirementModel {
+	if data.Features.IsNull() || data.Features.IsUnknown() {
+		return []schemas.RequirementModel{}
+	}
+
+	// Extract the underlying value from Dynamic
+	underlyingVal := data.Features.UnderlyingValue()
+
+	// Try to cast to types.Map (for map structure)
+	featuresMap, ok := underlyingVal.(types.Map)
+	if !ok {
+		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+			"type": fmt.Sprintf("%T", underlyingVal),
+		})
+		return []schemas.RequirementModel{}
+	}
+
+	var requirements []schemas.RequirementModel
+
+	for featureName, featureValue := range featuresMap.Elements() {
+		feature, err := r.parseFeature(ctx, featureValue)
+		if err != nil {
+			continue
+		}
+
+		req := schemas.RequirementModel{
+			Name: types.StringValue(fmt.Sprintf("Feature: %s", featureName)),
+			Instructions: []schemas.InstructionModel{
+				{
+					Prompt:      feature.Prompt,
+					Constraints: feature.Constraints,
+				},
+			},
+			Verifications: feature.Verifications,
+		}
+
+		requirements = append(requirements, req)
+
+		tflog.Debug(ctx, "Converted feature to requirement", map[string]interface{}{
+			"feature_name": featureName,
+			"prompt":       feature.Prompt.ValueString(),
+		})
+	}
+
+	return requirements
+}
+
+// collectFeatureKitIDs extracts kit IDs from all features
+func (r *ProjectResourceFinal) collectFeatureKitIDs(ctx context.Context, data ProjectModelFinal) []string {
+	if data.Features.IsNull() || data.Features.IsUnknown() {
+		return []string{}
+	}
+
+	// Extract the underlying value from Dynamic
+	underlyingVal := data.Features.UnderlyingValue()
+
+	// Try to cast to types.Map (for map structure)
+	featuresMap, ok := underlyingVal.(types.Map)
+	if !ok {
+		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+			"type": fmt.Sprintf("%T", underlyingVal),
+		})
+		return []string{}
+	}
+
+	var allKitIDs []string
+	seen := make(map[string]bool)
+
+	for featureName, featureValue := range featuresMap.Elements() {
+		feature, err := r.parseFeature(ctx, featureValue)
+		if err != nil {
+			continue
+		}
+
+		if feature.Kits.IsNull() || feature.Kits.IsUnknown() {
+			continue
+		}
+
+		kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+		for _, kitID := range kitIDs {
+			if !seen[kitID] {
+				allKitIDs = append(allKitIDs, kitID)
+				seen[kitID] = true
+			}
+		}
+
+		tflog.Debug(ctx, "Collected kits from feature", map[string]interface{}{
+			"feature_name": featureName,
+			"kit_count":    len(kitIDs),
+		})
+	}
+
+	return allKitIDs
+}
+
 // collectAndMergeFiles collects files from all sources and merges them with proper precedence
 func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
 	merger := files.NewMerger()
@@ -1986,17 +2276,42 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	}
 
 	// 3. Add files from project's additional kits (override stack kits)
+	// Also include kits from features
 	projectKitIDs := extractIDsFromDynamicList(ctx, data.Kits)
-	if reg != nil && len(projectKitIDs) > 0 {
-		projectKitFiles := r.getKitFilesFromRegistry(ctx, projectKitIDs, reg)
+	featureKitIDs := r.collectFeatureKitIDs(ctx, data)
+	allKitIDs := append(projectKitIDs, featureKitIDs...)
+
+	// Deduplicate kit IDs
+	seenKits := make(map[string]bool)
+	uniqueKitIDs := []string{}
+	for _, id := range allKitIDs {
+		if !seenKits[id] {
+			uniqueKitIDs = append(uniqueKitIDs, id)
+			seenKits[id] = true
+		}
+	}
+
+	if reg != nil && len(uniqueKitIDs) > 0 {
+		projectKitFiles := r.getKitFilesFromRegistry(ctx, uniqueKitIDs, reg)
 		merger.AddFiles(ctx, projectKitFiles, files.SourceProject)
-		tflog.Info(ctx, "Added files from project kits", map[string]interface{}{
-			"kit_count":      len(projectKitIDs),
-			"kit_file_count": len(projectKitFiles),
+		tflog.Info(ctx, "Added files from project and feature kits", map[string]interface{}{
+			"project_kit_count": len(projectKitIDs),
+			"feature_kit_count": len(featureKitIDs),
+			"total_kit_count":   len(uniqueKitIDs),
+			"kit_file_count":    len(projectKitFiles),
 		})
 	}
 
-	// 4. Finally, add project's own files (highest precedence)
+	// 4. NEW: Add feature files (higher precedence than kits)
+	featureFiles := r.collectFeatureFiles(ctx, data)
+	if len(featureFiles) > 0 {
+		merger.AddFiles(ctx, featureFiles, files.SourceFeature)
+		tflog.Info(ctx, "Added files from features", map[string]interface{}{
+			"feature_file_count": len(featureFiles),
+		})
+	}
+
+	// 5. Finally, add project's own files (highest precedence)
 	projectFiles := schemas.FilesMapToList(ctx, data.Files)
 	if len(projectFiles) > 0 {
 		merger.AddFiles(ctx, projectFiles, files.SourceProject)

@@ -17,8 +17,9 @@ import (
 
 // Client needs systemPrompt field
 type Client struct {
-	claudeHomeDir string
-	systemPrompt  string
+	claudeHomeDir              string
+	systemPrompt               string
+	dangerouslySkipPermissions bool
 }
 
 // min returns the minimum of two integers
@@ -30,7 +31,7 @@ func min(a, b int) int {
 }
 
 // NewClient creates a new Claude Code client
-func NewClient(claudeHomeDir string) *Client {
+func NewClient(claudeHomeDir string, dangerouslySkipPermissions bool) *Client {
 	// Expand home directory
 	if strings.HasPrefix(claudeHomeDir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -38,7 +39,8 @@ func NewClient(claudeHomeDir string) *Client {
 	}
 
 	return &Client{
-		claudeHomeDir: claudeHomeDir,
+		claudeHomeDir:              claudeHomeDir,
+		dangerouslySkipPermissions: dangerouslySkipPermissions,
 	}
 }
 
@@ -211,11 +213,16 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	fmt.Printf("🔧 DEBUG: Claude execution configuration:\n")
 	fmt.Printf("🔧 DEBUG:   - Working dir: %s\n", absOutputPath)
 	fmt.Printf("🔧 DEBUG:   - System prompt length: %d chars\n", len(systemPrompt))
-	fmt.Printf("🔧 DEBUG:   - MaxTurns: 10\n")
-	fmt.Printf("🔧 DEBUG:   - Using --dangerously-skip-permissions flag\n")
+	fmt.Printf("🔧 DEBUG:   - MaxTurns: 30\n")
+	fmt.Printf("🔧 DEBUG:   - Access restriction: --add-dir %s\n", absOutputPath)
+	if c.dangerouslySkipPermissions {
+		fmt.Printf("🔧 DEBUG:   - Permissions: --dangerously-skip-permissions (enabled)\n")
+	} else {
+		fmt.Printf("🔧 DEBUG:   - Permissions: prompts enabled (secure mode)\n")
+	}
 
-	// Execute Claude with unbuffer and --dangerously-skip-permissions
-	fmt.Printf("🔧 DEBUG: Executing claude with unbuffer and --dangerously-skip-permissions\n")
+	// Execute Claude with unbuffer
+	fmt.Printf("🔧 DEBUG: Executing claude with unbuffer\n")
 
 	// For very long prompts, truncate and provide instructions to read from file
 	actualPrompt := prompt
@@ -237,11 +244,16 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	commandArgs := []string{
 		"claude",
 		"-p",
-		actualPrompt, // Pass prompt as argument
-		"--dangerously-skip-permissions",
+		actualPrompt,               // Pass prompt as argument
+		"--add-dir", absOutputPath, // Restrict access to output directory
 		"--max-turns", "30",
 		"--system-prompt", systemPrompt,
 		"--model", model,
+	}
+
+	// Conditionally add --dangerously-skip-permissions flag
+	if c.dangerouslySkipPermissions {
+		commandArgs = append(commandArgs, "--dangerously-skip-permissions")
 	}
 
 	fmt.Printf("🔧 DEBUG: Command: unbuffer claude -p <prompt> ...\n")
@@ -260,10 +272,6 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	// Use unbuffer as the main command
 	cmd := exec.CommandContext(execCtx, "unbuffer", commandArgs...)
 	cmd.Dir = absOutputPath
-
-	// CLAUDE_HOME is not needed when using --dangerously-skip-permissions
-	// The flag bypasses all authentication and permission checks
-	fmt.Printf("🔧 DEBUG: CLAUDE_HOME not set (not needed with --dangerously-skip-permissions)\n")
 
 	// Execute and capture output
 	output, cmdErr := cmd.CombinedOutput()
@@ -403,10 +411,15 @@ func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string
 		"claude",
 		"-p",
 		actualPrompt,
-		"--dangerously-skip-permissions",
+		"--add-dir", absOutputPath, // Restrict access to output directory
 		"--max-turns", "30",
 		"--system-prompt", systemPrompt,
 		"--model", model,
+	}
+
+	// Conditionally add --dangerously-skip-permissions flag
+	if c.dangerouslySkipPermissions {
+		commandArgs = append(commandArgs, "--dangerously-skip-permissions")
 	}
 
 	fmt.Printf("🔧 DEBUG: Executing claude with pre-built prompt from plan\n")
@@ -606,10 +619,14 @@ func (c *Client) ExecuteQuery(ctx context.Context, prompt string, model string) 
 		"claude",
 		"-p",
 		fullPrompt,
-		"--dangerously-skip-permissions",
 		"--output-format=json",
 		"--model", model,
 		"--max-turns", "3", // Fewer turns for simple queries
+	}
+
+	// Conditionally add --dangerously-skip-permissions flag
+	if c.dangerouslySkipPermissions {
+		commandArgs = append(commandArgs, "--dangerously-skip-permissions")
 	}
 
 	tflog.Info(ctx, "Executing Claude CLI", map[string]interface{}{

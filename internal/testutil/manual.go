@@ -64,7 +64,7 @@ func RunManualTest(config *ManualTestConfig) error {
 	}
 
 	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir)
+	executor := claude.NewExecutor(config.ClaudeHomeDir, true) // Skip permissions for tests
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -201,7 +201,7 @@ func RunComplexProjectTest() error {
 	}
 
 	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir)
+	executor := claude.NewExecutor(config.ClaudeHomeDir, true) // Skip permissions for tests
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -238,7 +238,7 @@ func RunComplexProjectTest() error {
 func TestClaudeValidation() error {
 	fmt.Printf("🔍 Testing Claude CLI validation...\n")
 
-	executor := claude.NewExecutor("~/.claude")
+	executor := claude.NewExecutor("~/.claude", true) // Skip permissions for tests
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

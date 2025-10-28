@@ -36,3 +36,9 @@ variable "pterm_version" {
   type        = string
   default     = "0.12.80"
 }
+
+variable "task_version" {
+  description = "Task runner (go-task) version"
+  type        = string
+  default     = "3.39.2"
+}

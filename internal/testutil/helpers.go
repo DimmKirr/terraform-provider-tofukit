@@ -54,7 +54,7 @@ func TestProjectModelFinal() resources.ProjectModelFinal {
 						Constraints: []types.String{},
 					},
 				},
-				Verification: []schemas.VerificationModel{
+				Verifications: []schemas.VerificationModel{
 					{
 						Command: types.StringValue("test -f hello.txt"),
 						Expect:  types.StringValue("success"),

@@ -94,6 +94,7 @@ internal/
 ├── resources/         # Terraform resources
 │   ├── project.go    # Main project resource (Create/Read/Update/Delete)
 │   ├── stack.go      # Stack resource (reusable file collections)
+│   ├── feature.go    # Feature resource (reusable capability bundles)
 │   └── base_component.go # Shared component logic
 ├── datasources/       # Terraform data sources
 │   └── query.go      # Execute Claude queries for ad-hoc tasks
@@ -141,7 +142,19 @@ Main Terraform resource managing project lifecycle:
   - Line 638-676: Executes Claude with enriched files
 - `Read()` - Refreshes state from filesystem
 - `Delete()` - Removes generated files
-- `collectAndMergeFiles()` - Merges files from stacks, kits, and project (with precedence)
+- `collectAndMergeFiles()` - Merges files from stacks, kits, features, and project (with precedence)
+
+**Feature Processing Functions** (lines ~1940-2160):
+- `parseFeature()` - Extracts FeatureModel from Dynamic attribute (handles both inline and resource references)
+- `collectFeatureFiles()` - Gathers all files from features for merging
+- `convertFeaturesToRequirements()` - Transforms features into requirements for Claude execution
+- `collectFeatureKitIDs()` - Extracts and deduplicates kit dependencies from features
+
+**IMPORTANT: Dynamic Type Handling**
+- The `features` field uses `types.Dynamic` instead of `types.Map` to comply with Terraform's framework restrictions
+- Dynamic types cannot be nested inside collection types (map/list)
+- All feature-processing functions must first extract the underlying value: `data.Features.UnderlyingValue()`, then cast to `types.Map`
+- This pattern is critical for avoiding "Dynamic types inside collections" schema validation errors
 
 #### `/internal/llm/claude/prompt_types.go`
 Structures the JSON prompt sent to Claude:
@@ -173,8 +186,15 @@ provider "tofukit" {
   llm = "claude"  # or "openai", "gemini"
   api_key = "..."  # Required for openai/gemini
   debug = true     # Enable debug output
+  dangerously_skip_permissions = true  # Default: skip Claude CLI permission prompts
+  max_retries = 3  # Verification retry attempts (default: 3)
 }
 ```
+
+**Security Note: Claude CLI Permissions**
+- `dangerously_skip_permissions = true` (default): Claude CLI skips all permission prompts and has full filesystem access. Use for non-interactive automation.
+- `dangerously_skip_permissions = false`: Claude CLI will prompt for permissions before file operations. More secure but requires interactive mode (may hang in automated environments).
+- The `--add-dir` flag is always passed to restrict access to the output directory, but it is ignored when `--dangerously-skip-permissions` is enabled.
 
 ### Test Structure and Mock Setup
 
@@ -202,20 +222,123 @@ This approach:
 ### Resource Schemas
 
 **Project Resource** (`tofukit_project`)
-- `file {}` blocks - Explicit files with optional `instruction {}` and `verification {}` blocks
+- `files` - Map of files keyed by path with optional `instructions` and `verifications`
 - `kits` - Language/framework configurations (merged into files)
 - `stack` - Reference to reusable stack resource
-- `requirement {}` - Features to implement with instructions
-- **Validation**: Must have at least one of: files, kits, stack, or requirements
+- `features` - Map of feature definitions (inline or resource references) keyed by feature name
+- `requirements` - List of requirements with instructions and verifications
+- **Validation**: Must have at least one of: files, kits, stack, features, or requirements
 
 **Stack Resource** (`tofukit_stack`)
 - Reusable collections of files
 - Saved to registry for use by projects
-- Same `file {}` structure as projects
+- Same `files` structure as projects
+
+**Feature Resource** (`tofukit_feature`) - **NEW**
+- Bundles capabilities (files + kits + verifications) into reusable components
+- Can be used as standalone registry entries or inline definitions in projects
+- **Key properties**:
+  - `prompt` - What the feature does (LLM-facing requirement)
+  - `constraints` - Implementation constraints (what NOT to do)
+  - `files` - Map of files keyed by path
+  - `kits` - Kit dependencies for this feature
+  - `verifications` - Verification commands for this feature
+- **Usage patterns**:
+  - **Standalone resource**: Define once, reference in multiple projects via `tofukit_feature.name`
+  - **Inline definition**: Define directly in project's `features` map
+- **Registry behavior**: Features save themselves to registry on Create/Update, enabling cross-project reuse
+- **Validation**: Must have at least one of: files, kits, or verifications
+- **Example**:
+  ```hcl
+  resource "tofukit_feature" "logging" {
+    name   = "structured-logging"
+    prompt = "Add structured logging capability"
+
+    files = {
+      "logger.py" = {
+        content = "# Logging configuration\n"
+      }
+    }
+
+    verifications = [{
+      command = "python -m pytest tests/test_logger.py"
+    }]
+  }
+
+  resource "tofukit_project" "app" {
+    features = {
+      "logging" = tofukit_feature.logging  # Reference
+    }
+  }
+  ```
+
+**File Resource** (`tofukit_file`)
+- Defines individual reusable files that can be shared across projects
+- Saved to registry with unique `name` identifier
+- Supports both static `content` and dynamic `instructions` (mutually exclusive)
+- Can include `verifications` for validation
+- Referenced in project/stack `files` maps: `files = { "path" = tofukit_file.name }`
+- **Example use cases**:
+  - Share common files (.gitignore, LICENSE) across multiple projects
+  - Break down large stack definitions into manageable file resources
+  - Create libraries of reusable file templates
+- **Validation**: Must have either `content` OR `instructions`, but not both
 
 **Query Data Source** (`tofukit_query`)
 - Execute ad-hoc Claude queries
 - Returns output directly without file management
+
+### File Merge Precedence Hierarchy
+
+**IMPORTANT: File Precedence Order** (internal/files/merger.go)
+
+Files are merged using a precedence hierarchy where higher layers override lower layers:
+
+```
+1. Stack files        (SourceStack)      - Lowest precedence
+2. Kit files          (SourceProject)    - From stack and project kits
+3. Feature files      (SourceFeature)    - NEW: Feature-defined files
+4. Project files      (SourceProject)    - Highest precedence
+```
+
+**How it works:**
+- If the same file path appears in multiple layers, the highest precedence wins
+- Stack provides base files
+- Kits add/override with language/framework-specific files
+- Features add/override with capability-specific files
+- Project always has final say (can customize anything)
+
+**Example:**
+```hcl
+resource "tofukit_stack" "base" {
+  files = {
+    "config.txt" = { content = "From stack\n" }
+  }
+}
+
+resource "tofukit_project" "app" {
+  stack = tofukit_stack.base.id
+
+  features = {
+    "custom_config" = {
+      prompt = "Customize configuration"
+      files = {
+        "config.txt" = { content = "From feature\n" }  # Overrides stack
+      }
+    }
+  }
+
+  files = {
+    "config.txt" = { content = "From project\n" }  # Overrides feature AND stack
+  }
+}
+# Result: config.txt contains "From project\n"
+```
+
+**Key Implementation:**
+- `internal/files/merger.go` defines `FileSource` constants
+- `collectAndMergeFiles()` in project.go adds files in precedence order
+- Features were added as a new layer between kits and project files
 
 ### File Instruction Flow
 
@@ -231,7 +354,7 @@ This approach:
 ### Important Implementation Details
 
 **Empty Project Validation**
-- Projects MUST specify at least one of: `file {}`, `kits`, `stack`, or `requirement {}`
+- Projects MUST specify at least one of: `files`, `kits`, `stack`, `features`, or `requirements`
 - Prevents ambiguous/unpredictable Claude execution
 - Validation occurs in both `Create()` and `Update()` at lines 291-318, 588-616
 
@@ -246,10 +369,14 @@ This approach:
 - `prompt_hash` - Hash of entire prompt (includes files, kits, requirements, system prompt)
 
 **Registry Pattern**
-- Thread-safe registry (`internal/registry/`) stores stacks and components
-- Enables cross-resource dependencies (projects can reference stacks)
-- Components save themselves to registry on Create/Update
-- Components remove themselves on Delete
+- Thread-safe registry (`internal/registry/`) stores stacks, files, features, and components
+- Enables cross-resource dependencies (projects can reference stacks, files, and features)
+- Resources save themselves to registry on Create/Update
+- Resources remove themselves on Delete
+- Resource-specific methods:
+  - File resources: SetFile/GetFile/RemoveFile
+  - Feature resources: SetFeature/GetFeature/RemoveFeature
+  - Stack resources: SetStack/GetStack/RemoveStack
 
 ## Common Pitfalls
 
@@ -275,6 +402,13 @@ This approach:
    - Rename detection uses content matching for static files
    - Rename detection uses instruction matching for generated files
    - Always check `/internal/files/operations.go` for operation logic
+
+6. **Dynamic Type Usage for Features**
+   - The `features` field in ProjectModelFinal MUST be `types.Dynamic`, not `types.Map`
+   - Terraform framework does not allow dynamic types nested inside collections
+   - When processing features, always extract underlying value first: `data.Features.UnderlyingValue()`
+   - Then cast to `types.Map` before iterating: `featuresMap, ok := underlyingVal.(types.Map)`
+   - This pattern prevents "Dynamic types inside collections" schema validation errors
 
 ## Testing Philosophy
 

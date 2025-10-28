@@ -30,13 +30,14 @@ type TofukitProvider struct {
 
 // TofukitProviderModel describes the provider data model.
 type TofukitProviderModel struct {
-	OutputFormat        types.String `tfsdk:"output_format"`
-	OutputPath          types.String `tfsdk:"output_path"`
-	LLM                 types.String `tfsdk:"llm"`
-	APIKey              types.String `tfsdk:"api_key"`
-	ClaudeHomeDirectory types.String `tfsdk:"claude_home_directory"`
-	Debug               types.Bool   `tfsdk:"debug"`
-	MaxRetries          types.Int64  `tfsdk:"max_retries"`
+	OutputFormat               types.String `tfsdk:"output_format"`
+	OutputPath                 types.String `tfsdk:"output_path"`
+	LLM                        types.String `tfsdk:"llm"`
+	APIKey                     types.String `tfsdk:"api_key"`
+	ClaudeHomeDirectory        types.String `tfsdk:"claude_home_directory"`
+	Debug                      types.Bool   `tfsdk:"debug"`
+	MaxRetries                 types.Int64  `tfsdk:"max_retries"`
+	DangerouslySkipPermissions types.Bool   `tfsdk:"dangerously_skip_permissions"`
 }
 
 func (p *TofukitProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -76,6 +77,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Maximum number of verification retry attempts (default: 3). If verification fails, Claude will receive the errors and retry until success or max retries.",
 				Optional:            true,
 			},
+			"dangerously_skip_permissions": schema.BoolAttribute{
+				MarkdownDescription: "Skip Claude CLI permission prompts (default: true). When enabled, Claude can create/modify files without prompting. When combined with --add-dir, Claude's access is still restricted to the output directory.",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -96,7 +101,8 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	apiKey := ""
 	claudeHomeDir := "~/.claude" // Default Claude home directory
 	debug := false
-	maxRetries := 3 // Default to 3 verification retry attempts
+	maxRetries := 3                    // Default to 3 verification retry attempts
+	dangerouslySkipPermissions := true // Default to true for backward compatibility
 
 	if !data.OutputFormat.IsNull() {
 		outputFormat = data.OutputFormat.ValueString()
@@ -129,6 +135,10 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		}
 	}
 
+	if !data.DangerouslySkipPermissions.IsNull() {
+		dangerouslySkipPermissions = data.DangerouslySkipPermissions.ValueBool()
+	}
+
 	// Create LLM executor based on type
 	var llmExecutor llm.LLMExecutor
 	switch llmType {
@@ -141,7 +151,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 			)
 			return
 		}
-		llmExecutor = newClaudeAdapter(claude.NewExecutor(claudeHomeDir))
+		llmExecutor = newClaudeAdapter(claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions))
 	case "openai":
 		if apiKey == "" {
 			resp.Diagnostics.AddError(
@@ -174,14 +184,15 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	// Create provider data that will be passed to resources
 	providerData := &ProviderData{
-		OutputFormat:        outputFormat,
-		OutputPath:          outputPath,
-		LLM:                 llmType,
-		ClaudeHomeDirectory: claudeHomeDir,
-		Debug:               debug,
-		MaxRetries:          maxRetries,
-		Registry:            registry.New(),
-		LLMExecutor:         llmExecutor,
+		OutputFormat:               outputFormat,
+		OutputPath:                 outputPath,
+		LLM:                        llmType,
+		ClaudeHomeDirectory:        claudeHomeDir,
+		Debug:                      debug,
+		MaxRetries:                 maxRetries,
+		DangerouslySkipPermissions: dangerouslySkipPermissions,
+		Registry:                   registry.New(),
+		LLMExecutor:                llmExecutor,
 	}
 
 	resp.DataSourceData = providerData
@@ -192,6 +203,8 @@ func (p *TofukitProvider) Resources(ctx context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		resources.NewProjectResourceFinal,
 		resources.NewStackResource,
+		resources.NewFileResource,
+		resources.NewFeatureResource,
 		resources.NewBlueprintResource,
 		resources.NewLanguageResource,
 		resources.NewFrameworkResource,
@@ -219,14 +232,15 @@ func New(version string) func() provider.Provider {
 
 // ProviderData contains data that is passed to all resources
 type ProviderData struct {
-	OutputFormat        string
-	OutputPath          string
-	LLM                 string
-	ClaudeHomeDirectory string
-	Debug               bool
-	MaxRetries          int
-	Registry            *registry.Registry
-	LLMExecutor         llm.LLMExecutor
+	OutputFormat               string
+	OutputPath                 string
+	LLM                        string
+	ClaudeHomeDirectory        string
+	Debug                      bool
+	MaxRetries                 int
+	DangerouslySkipPermissions bool
+	Registry                   *registry.Registry
+	LLMExecutor                llm.LLMExecutor
 }
 
 // GetClaudeHomeDirectory returns the Claude home directory
@@ -262,6 +276,11 @@ func (p *ProviderData) GetDebug() bool {
 // GetMaxRetries returns the maximum number of verification retry attempts
 func (p *ProviderData) GetMaxRetries() int {
 	return p.MaxRetries
+}
+
+// GetDangerouslySkipPermissions returns whether to skip Claude CLI permission prompts
+func (p *ProviderData) GetDangerouslySkipPermissions() bool {
+	return p.DangerouslySkipPermissions
 }
 
 // GetLLMExecutor returns the LLM executor

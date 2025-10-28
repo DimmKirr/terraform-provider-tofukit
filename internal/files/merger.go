@@ -15,6 +15,7 @@ const (
 	SourceLanguage FileSource = iota // Lowest precedence
 	SourceFramework
 	SourceStack
+	SourceFeature // Feature files (between stack and project)
 	SourceProject // Highest precedence
 )
 
@@ -119,6 +120,8 @@ func (m *Merger) getSourceName(source FileSource) string {
 		return "framework"
 	case SourceStack:
 		return "stack"
+	case SourceFeature:
+		return "feature"
 	case SourceProject:
 		return "project"
 	default:

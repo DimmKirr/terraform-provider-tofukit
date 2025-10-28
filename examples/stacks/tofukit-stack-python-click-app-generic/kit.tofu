@@ -167,105 +167,12 @@ resource "tofukit_stack" "click_app" {
   ]
 
   # Main CLI Application
+  # Files now use reusable file resources defined in files.tofu
+  # This demonstrates the file resource pattern for better modularity and reusability
   files = {
-    "src/cli.py" = {
-      content = <<-EOF
-      #!/usr/bin/env python3
-      """
-      Simple CLI application using Click framework.
-      """
-      import click
-
-
-      @click.group()
-      @click.version_option(version='${var.project_version}', prog_name='${var.project_name}')
-      def cli() -> None:
-          """A simple Python CLI application."""
-          pass
-
-
-      @cli.command()
-      def hello() -> None:
-          """Output world text."""
-          click.echo("world")
-
-
-      if __name__ == '__main__':
-          cli()
-      EOF
-
-      verifications = [
-        {
-          command = "python3 src/cli.py hello"
-          expect  = "world"
-        },
-        {
-          command = "python3 src/cli.py --version"
-          expect  = var.project_version
-        }
-      ]
-    }
-
-    "requirements.txt" = {
-      content = <<-EOF
-      click==${tofukit_framework.click.version}
-      EOF
-
-      verifications = [
-        {
-          command = "grep -q 'click==${tofukit_framework.click.version}' requirements.txt"
-        },
-        {
-          command = "test -f requirements.txt"
-        }
-      ]
-    }
-
-    "demo2.txt" = {
-      content = <<-EOF
-      hello world
-      EOF
-
-      verifications = [
-        {
-          command = "cat demo2.txt"
-          expect  = "hello world"
-        }
-      ]
-    }
-
-    "README.md" = {
-      instructions = [
-        {
-          prompt = "Create comprehensive documentation for this Python Click CLI project. Include the following sections: project overview, features, installation instructions, usage examples with command-line examples, configuration options, troubleshooting guide, and contributing guidelines. Make the documentation clear, professional, and easy to follow."
-          constraints = [
-            "Do NOT include emojis or badges",
-            "Use clear section headers (##) for main sections",
-            "Include code blocks with proper syntax highlighting",
-            "Keep explanations concise but complete",
-            "Must include project name '${var.project_name}' in the title",
-            "Include description about Python Click CLI application",
-            "Include setup instructions for Python 3.12, pip, and Click framework",
-            "Include usage examples that demonstrate the CLI commands",
-            "Maximum 500 lines to keep it focused and maintainable"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep '${var.project_name}' README.md"
-          expect  = var.project_name
-        },
-        {
-          command = "test -f README.md && echo 'README exists'"
-          expect  = "README exists"
-        },
-        {
-          command = "grep -q '^# ' README.md && echo 'Has title'"
-          expect  = "Has title"
-        }
-      ]
-    }
+    "src/cli.py"       = tofukit_file.python_click_cli
+    "requirements.txt" = tofukit_file.python_requirements
+    "demo2.txt"        = tofukit_file.demo_file
+    "README.md"        = tofukit_file.readme_docs
   }
 }

@@ -24,9 +24,9 @@ type Executor struct {
 }
 
 // NewExecutor creates a new Claude Code executor
-func NewExecutor(claudeHomeDir string) *Executor {
+func NewExecutor(claudeHomeDir string, dangerouslySkipPermissions bool) *Executor {
 	return &Executor{
-		client:     NewClient(claudeHomeDir),
+		client:     NewClient(claudeHomeDir, dangerouslySkipPermissions),
 		debug:      false,
 		outputPath: "",
 	}
