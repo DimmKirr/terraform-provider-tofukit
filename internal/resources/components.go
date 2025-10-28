@@ -15,6 +15,7 @@ import (
 type ComponentResourceModel struct {
 	ID           types.String               `tfsdk:"id"`
 	Name         types.String               `tfsdk:"name"`
+	Link         types.String               `tfsdk:"link"`
 	Description  types.String               `tfsdk:"description"`
 	Version      types.String               `tfsdk:"version"`
 	Requirements []schemas.RequirementModel `tfsdk:"requirements"`
@@ -52,8 +53,10 @@ func (r *ComponentResource) Create(ctx context.Context, req resource.CreateReque
 
 	// Generate ID from kind and name
 	data.ID = types.StringValue(fmt.Sprintf("%s.%s", r.Kind, data.Name.ValueString()))
+	// Generate link URI: tofukit://kit/<kind>/<name>
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
 
-	tflog.Trace(ctx, fmt.Sprintf("created %s resource: %s", r.Kind, data.ID.ValueString()))
+	tflog.Trace(ctx, fmt.Sprintf("created %s resource: %s (link: %s)", r.Kind, data.ID.ValueString(), data.Link.ValueString()))
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -74,6 +77,8 @@ func (r *ComponentResource) Update(ctx context.Context, req resource.UpdateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Recompute link in case name changed
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

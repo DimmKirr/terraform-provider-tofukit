@@ -58,6 +58,10 @@ resource "tofukit_project" "go_hello" {
   # The stack provides a complete Go CLI application template
   stack = module.go_cli.stack
 
+  # Reference features from the stack module
+  # Features provide the application files (config, version, logger, etc.)
+  features = module.go_cli.features
+
   # Note: Terraform automatically creates dependencies from resource references
   # (stack reference creates implicit dependency on the module)
 }

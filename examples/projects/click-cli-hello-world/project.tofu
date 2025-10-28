@@ -29,7 +29,7 @@ locals {
 # MODULE: Python Click CLI Stack
 # ========================================
 module "click_app" {
-  source = "../stacks/tofukit-stack-python-click-app-generic"
+  source = "../stacks/tofukit-stack-python-click-app"
 
   project_name    = local.project_name
   project_version = local.project_version
@@ -46,12 +46,53 @@ resource "tofukit_project" "click_cli" {
   # Use Haiku model for fast, cheap execution
   model = "haiku"
 
-  # Reference the click_app stack (includes Python, Click, app files, and README)
+  # Reference the click_app stack (includes kits, features, and files)
   # The stack provides a complete Python Click CLI application template
   stack = module.click_app.stack
 
-  # Note: Terraform automatically creates dependencies from resource references
-  # (stack reference creates implicit dependency on the module)
+  # Note: Stack includes features, so no separate features attribute needed
+  # Project can add additional features here if needed (merged with stack features)
+
+  # Add a status command feature (merges with stack's version and readme features)
+  features = {
+    "status" = {
+      prompt      = "Add a status command that shows 'Status: OK'"
+      description = "Status check command for the CLI"
+      constraints = [
+        "Use click.echo() to output the status",
+        "Create a @cli.command() decorated function",
+        "Keep it simple - just output 'Status: OK'"
+      ]
+
+      files = {
+        "src/cli.py" = {
+          instructions = [{
+            prompt = <<-EOT
+              Add a status command to the existing CLI:
+
+              @cli.command()
+              def status() -> None:
+                  """Show the current status."""
+                  click.echo("Status: OK")
+
+              This should be added after the version command.
+            EOT
+            constraints = [
+              "Do NOT remove existing commands",
+              "Add the status command function after the version command",
+              "Use click.echo() for output",
+              "Include type hint (-> None)"
+            ]
+          }]
+
+          verifications = [{
+            command = "python3 src/cli.py status | grep -q 'Status: OK' && echo 'ok'"
+            expect  = "ok"
+          }]
+        }
+      }
+    }
+  }
 }
 
 # ========================================

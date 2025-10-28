@@ -26,9 +26,11 @@ type StackResource struct {
 type StackResourceModel struct {
 	ID          types.String  `tfsdk:"id"`
 	Name        types.String  `tfsdk:"name"`
+	Link        types.String  `tfsdk:"link"`
 	Description types.String  `tfsdk:"description"`
-	Kits        types.Dynamic `tfsdk:"kits"`  // Kits that compose this stack (list of kit references)
-	Files       types.Map     `tfsdk:"files"` // Stack's own files (map keyed by path)
+	Kits        types.Dynamic `tfsdk:"kits"`     // Kits that compose this stack (list of kit references)
+	Features    types.Dynamic `tfsdk:"features"` // Features that compose this stack (list of feature references)
+	Files       types.Map     `tfsdk:"files"`    // Stack's own files (map keyed by path)
 	// Removed OutputPath - stacks now contribute files to project, not separate directories
 }
 
@@ -54,12 +56,20 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Name of the stack",
 				Required:            true,
 			},
+			"link": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://stack/name)",
+			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of the stack",
 				Optional:            true,
 			},
 			"kits": schema.DynamicAttribute{
 				MarkdownDescription: "List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_framework.click])",
+				Optional:            true,
+			},
+			"features": schema.DynamicAttribute{
+				MarkdownDescription: "List of feature references to include in the stack (e.g., [tofukit_feature.readme, tofukit_feature.version_command])",
 				Optional:            true,
 			},
 			"files": schemas.GetFilesMapAttribute(),
@@ -76,6 +86,7 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	data.ID = types.StringValue(fmt.Sprintf("stack.%s", data.Name.ValueString()))
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://stack/%s", data.Name.ValueString()))
 
 	// Stacks no longer create files directly - they only contribute files to the project
 	// The project resource will handle merging and writing all files with proper precedence
@@ -87,6 +98,7 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	tflog.Info(ctx, "Created stack resource", map[string]interface{}{
 		"stack_id":   data.ID.ValueString(),
+		"link":       data.Link.ValueString(),
 		"file_count": fileCount,
 	})
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
@@ -134,6 +146,7 @@ func (r *StackResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	// Preserve computed fields from state
 	data.ID = state.ID
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://stack/%s", data.Name.ValueString()))
 
 	// Stacks no longer manage files directly - just save updated file configuration
 	// The project resource will handle merging and applying changes

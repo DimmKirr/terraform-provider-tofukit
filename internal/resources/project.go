@@ -20,11 +20,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/uri"
 )
 
 // NewProjectResourceFinal creates the final project resource
@@ -261,8 +263,38 @@ func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []st
 				}
 			}
 		}
+	} else if tupleVal, ok := underlying.(types.Tuple); ok && !tupleVal.IsNull() {
+		// Handle Tuple type (Terraform sometimes stores resource lists as tuples)
+		fmt.Printf("DEBUG extractIDsFromDynamicList: got tuple with %d elements\n", len(tupleVal.Elements()))
+
+		// Iterate through tuple elements
+		for i, elem := range tupleVal.Elements() {
+			fmt.Printf("DEBUG extractIDsFromDynamicList: tuple element[%d] type = %T\n", i, elem)
+
+			// Try as string first
+			if strVal, ok := elem.(types.String); ok && !strVal.IsNull() {
+				id := strVal.ValueString()
+				fmt.Printf("DEBUG extractIDsFromDynamicList: extracted string ID from tuple = %s\n", id)
+				ids = append(ids, id)
+				continue
+			}
+
+			// Try as object with .id
+			if objVal, ok := elem.(types.Object); ok && !objVal.IsNull() {
+				attrs := objVal.Attributes()
+				fmt.Printf("DEBUG extractIDsFromDynamicList: tuple object has %d attributes\n", len(attrs))
+
+				if idAttr, exists := attrs["id"]; exists {
+					if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
+						id := idStr.ValueString()
+						fmt.Printf("DEBUG extractIDsFromDynamicList: extracted object ID from tuple = %s\n", id)
+						ids = append(ids, id)
+					}
+				}
+			}
+		}
 	} else {
-		fmt.Printf("DEBUG extractIDsFromDynamicList: not a list or list is null\n")
+		fmt.Printf("DEBUG extractIDsFromDynamicList: not a list/tuple or is null (type: %T)\n", underlying)
 	}
 
 	fmt.Printf("DEBUG extractIDsFromDynamicList: returning %d IDs: %v\n", len(ids), ids)
@@ -501,8 +533,47 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		debugFile.Close()
 	}
 
+	// Scan for URIs and build resource registry
+	stringFields := r.collectStringFields(ctx, data)
+	uriScanner := uri.NewScanner()
+	foundURIs := uriScanner.ExtractURIs(stringFields)
+
+	var resourceRegistry map[string]interface{}
+	if len(foundURIs) > 0 {
+		tflog.Info(ctx, "Found resource URIs in project", map[string]interface{}{
+			"project_name": data.Name.ValueString(),
+			"uri_count":    len(foundURIs),
+			"uris":         foundURIs,
+		})
+
+		// Get registry from provider data
+		if provData, ok := r.ProviderData.(interface{ GetRegistry() *registry.Registry }); ok {
+			reg := provData.GetRegistry()
+			registryBuilder := uri.NewRegistryBuilder(reg)
+			var err error
+			resourceRegistry, err = registryBuilder.BuildRegistry(foundURIs)
+			if err != nil {
+				resp.Diagnostics.AddWarning(
+					"Resource Registry Build Failed",
+					fmt.Sprintf("Failed to build resource registry for URIs: %s\n"+
+						"The project will proceed without resource metadata. "+
+						"Ensure all referenced resources exist.", err.Error()),
+				)
+			} else {
+				tflog.Debug(ctx, "Built resource registry", map[string]interface{}{
+					"registry_entry_count": len(resourceRegistry),
+				})
+			}
+		}
+	}
+
 	// Build output data with enriched files
 	outputData := r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
+
+	// Add resource registry to output data if present
+	if resourceRegistry != nil && len(resourceRegistry) > 0 {
+		outputData["_resource_registry"] = resourceRegistry
+	}
 
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
@@ -818,9 +889,48 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		data.ExecutionStarted = state.ExecutionStarted
 		data.ExecutionCompleted = state.ExecutionCompleted
 
+		// Scan for URIs and build resource registry
+		stringFields := r.collectStringFields(ctx, data)
+		uriScanner := uri.NewScanner()
+		foundURIs := uriScanner.ExtractURIs(stringFields)
+
+		var resourceRegistry map[string]interface{}
+		if len(foundURIs) > 0 {
+			tflog.Info(ctx, "Found resource URIs in project", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+				"uri_count":  len(foundURIs),
+				"uris":       foundURIs,
+			})
+
+			// Get registry from provider data
+			if provData, ok := r.ProviderData.(interface{ GetRegistry() *registry.Registry }); ok {
+				reg := provData.GetRegistry()
+				registryBuilder := uri.NewRegistryBuilder(reg)
+				var err error
+				resourceRegistry, err = registryBuilder.BuildRegistry(foundURIs)
+				if err != nil {
+					resp.Diagnostics.AddWarning(
+						"Resource Registry Build Failed",
+						fmt.Sprintf("Failed to build resource registry for URIs: %s\n"+
+							"The project will proceed without resource metadata. "+
+							"Ensure all referenced resources exist.", err.Error()),
+					)
+				} else {
+					tflog.Debug(ctx, "Built resource registry", map[string]interface{}{
+						"registry_entry_count": len(resourceRegistry),
+					})
+				}
+			}
+		}
+
 		// Use enriched files (with action-based instructions) for output
 		// Build output data with enriched files
 		outputData = r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
+
+		// Add resource registry to output data if present
+		if resourceRegistry != nil && len(resourceRegistry) > 0 {
+			outputData["_resource_registry"] = resourceRegistry
+		}
 
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
@@ -1937,17 +2047,210 @@ func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitI
 	return allFiles
 }
 
+// convertListToStringSlice converts a types.List to []types.String
+func convertListToStringSlice(ctx context.Context, list types.List) []types.String {
+	if list.IsNull() || list.IsUnknown() {
+		return nil
+	}
+
+	elements := list.Elements()
+	result := make([]types.String, 0, len(elements))
+	for _, elem := range elements {
+		if strVal, ok := elem.(types.String); ok {
+			result = append(result, strVal)
+		}
+	}
+	return result
+}
+
+// convertVerificationsList converts a types.List of verification objects to []schemas.VerificationModel
+func convertVerificationsList(ctx context.Context, list types.List) []schemas.VerificationModel {
+	if list.IsNull() || list.IsUnknown() {
+		return nil
+	}
+
+	elements := list.Elements()
+	result := make([]schemas.VerificationModel, 0, len(elements))
+	for _, elem := range elements {
+		if verifObj, ok := elem.(types.Object); ok {
+			verifAttrs := verifObj.Attributes()
+			verif := schemas.VerificationModel{}
+			if cmd, exists := verifAttrs["command"]; exists {
+				if cmdStr, ok := cmd.(types.String); ok {
+					verif.Command = cmdStr
+				}
+			}
+			if exp, exists := verifAttrs["expect"]; exists {
+				if expStr, ok := exp.(types.String); ok {
+					verif.Expect = expStr
+				}
+			}
+			result = append(result, verif)
+		}
+	}
+	return result
+}
+
 // parseFeature extracts FeatureModel from either resource reference or inline definition
 func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue attr.Value) (*schemas.FeatureModel, error) {
+	tflog.Info(ctx, "=== parseFeature START ===", map[string]interface{}{
+		"feature_value_type": fmt.Sprintf("%T", featureValue),
+	})
+
+	// NEW: Check if this is a String (feature ID from module output)
+	if featureStr, ok := featureValue.(types.String); ok {
+		if featureStr.IsNull() || featureStr.IsUnknown() {
+			tflog.Warn(ctx, "Feature ID is null or unknown", nil)
+			return nil, fmt.Errorf("feature ID is null or unknown")
+		}
+
+		featureID := featureStr.ValueString()
+		tflog.Info(ctx, "Feature is a string ID, looking up in registry", map[string]interface{}{
+			"feature_id": featureID,
+		})
+
+		// Look up feature in registry
+		if provData, ok := r.ProviderData.(interface {
+			GetRegistry() *registry.Registry
+		}); ok {
+			reg := provData.GetRegistry()
+			if reg != nil {
+				if featureData, exists := reg.GetFeature(featureID); exists {
+					tflog.Info(ctx, "Found feature in registry by ID", map[string]interface{}{
+						"feature_id": featureID,
+					})
+
+					if feature, ok := featureData.(FeatureResourceModel); ok {
+						// Convert FeatureResourceModel to FeatureModel
+						return &schemas.FeatureModel{
+							Prompt:        feature.Prompt,
+							Constraints:   convertListToStringSlice(ctx, feature.Constraints),
+							Files:         feature.Files,
+							Kits:          feature.Kits,
+							Verifications: feature.Verifications,
+						}, nil
+					}
+				} else {
+					tflog.Warn(ctx, "Feature not found in registry", map[string]interface{}{
+						"feature_id": featureID,
+					})
+					return nil, fmt.Errorf("feature %s not found in registry", featureID)
+				}
+			}
+		}
+		return nil, fmt.Errorf("registry not available for feature lookup")
+	}
+
 	// Cast to types.Object
 	featureObj, ok := featureValue.(types.Object)
 	if !ok {
-		return nil, fmt.Errorf("feature value is not an object: %T", featureValue)
+		err := fmt.Errorf("feature value is neither string nor object: %T", featureValue)
+		tflog.Error(ctx, "parseFeature failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil, err
 	}
 
 	attrs := featureObj.Attributes()
+	tflog.Info(ctx, "Feature object attributes", map[string]interface{}{
+		"attribute_count": len(attrs),
+		"has_id":          attrs["id"] != nil,
+		"has_prompt":      attrs["prompt"] != nil,
+		"has_files":       attrs["files"] != nil,
+	})
 
-	// Build FeatureModel from attributes
+	// Check if this is a resource reference (has an 'id' attribute)
+	if idAttr, hasID := attrs["id"]; hasID {
+		tflog.Info(ctx, "Feature has ID attribute - checking if it's a resource reference", map[string]interface{}{
+			"id_attr_type":    fmt.Sprintf("%T", idAttr),
+			"id_attr_is_null": idAttr == nil,
+		})
+
+		if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() && !idStr.IsUnknown() {
+			featureID := idStr.ValueString()
+			tflog.Info(ctx, "Feature is a resource reference - looking up in registry", map[string]interface{}{
+				"feature_id": featureID,
+			})
+
+			// Get the registry to look up the feature
+			if provData, ok := r.ProviderData.(interface {
+				GetRegistry() *registry.Registry
+			}); ok {
+				reg := provData.GetRegistry()
+				tflog.Info(ctx, "Got registry from provider", map[string]interface{}{
+					"registry_not_nil": reg != nil,
+				})
+
+				if reg != nil {
+					// Log all features in registry for debugging
+					allFeatures := reg.GetAllFeatures()
+					tflog.Info(ctx, "Features in registry", map[string]interface{}{
+						"feature_count": len(allFeatures),
+						"feature_ids": func() []string {
+							ids := make([]string, 0, len(allFeatures))
+							for id := range allFeatures {
+								ids = append(ids, id)
+							}
+							return ids
+						}(),
+					})
+
+					if featureData, exists := reg.GetFeature(featureID); exists {
+						tflog.Info(ctx, "Found feature in registry", map[string]interface{}{
+							"feature_id":   featureID,
+							"feature_type": fmt.Sprintf("%T", featureData),
+						})
+
+						if feature, ok := featureData.(FeatureResourceModel); ok {
+							tflog.Info(ctx, "Successfully cast to FeatureResourceModel", map[string]interface{}{
+								"feature_id":    featureID,
+								"feature_name":  feature.Name.ValueString(),
+								"has_files":     !feature.Files.IsNull(),
+								"files_count":   len(feature.Files.Elements()),
+								"has_prompt":    !feature.Prompt.IsNull(),
+								"prompt_length": len(feature.Prompt.ValueString()),
+							})
+
+							// Convert FeatureResourceModel to FeatureModel
+							return &schemas.FeatureModel{
+								Prompt:        feature.Prompt,
+								Constraints:   convertListToStringSlice(ctx, feature.Constraints),
+								Files:         feature.Files,
+								Kits:          feature.Kits,
+								Verifications: feature.Verifications, // Already the correct type
+							}, nil
+						} else {
+							tflog.Warn(ctx, "Feature data is not FeatureResourceModel", map[string]interface{}{
+								"feature_id":  featureID,
+								"actual_type": fmt.Sprintf("%T", featureData),
+							})
+						}
+					} else {
+						tflog.Warn(ctx, "Feature resource not found in registry", map[string]interface{}{
+							"feature_id": featureID,
+						})
+					}
+				} else {
+					tflog.Warn(ctx, "Registry is nil", nil)
+				}
+			} else {
+				tflog.Warn(ctx, "Provider data doesn't support GetRegistry", map[string]interface{}{
+					"provider_data_type": fmt.Sprintf("%T", r.ProviderData),
+				})
+			}
+		} else {
+			tflog.Info(ctx, "ID attribute is not a valid string", map[string]interface{}{
+				"id_ok":         ok,
+				"id_is_null":    idStr.IsNull(),
+				"id_is_unknown": idStr.IsUnknown(),
+			})
+		}
+	} else {
+		tflog.Info(ctx, "Feature has no ID attribute - treating as inline definition", nil)
+	}
+
+	// No ID or registry lookup failed - parse as inline definition
+	tflog.Info(ctx, "Parsing as inline feature definition", nil)
 	featureModel := &schemas.FeatureModel{}
 
 	// Extract prompt (required)
@@ -2012,14 +2315,151 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	return featureModel, nil
 }
 
+// collectFeaturesFromDynamic extracts feature files from a Dynamic list of feature references
+func (r *ProjectResourceFinal) collectFeaturesFromDynamic(ctx context.Context, featuresDynamic types.Dynamic, reg *registry.Registry) []schemas.FileModelWithPath {
+	tflog.Info(ctx, "=== collectFeaturesFromDynamic START ===", map[string]interface{}{
+		"is_null":      featuresDynamic.IsNull(),
+		"is_unknown":   featuresDynamic.IsUnknown(),
+		"has_registry": reg != nil,
+	})
+
+	if featuresDynamic.IsNull() || reg == nil {
+		tflog.Info(ctx, "Early return: featuresDynamic is null or registry is nil", nil)
+		return []schemas.FileModelWithPath{}
+	}
+
+	// Extract feature resource references from the list
+	underlyingVal := featuresDynamic.UnderlyingValue()
+	tflog.Info(ctx, "Underlying value extracted", map[string]interface{}{
+		"type": fmt.Sprintf("%T", underlyingVal),
+	})
+
+	featuresList, ok := underlyingVal.(types.List)
+	if !ok {
+		tflog.Warn(ctx, "Failed to cast underlying value to types.List", map[string]interface{}{
+			"actual_type": fmt.Sprintf("%T", underlyingVal),
+		})
+		return []schemas.FileModelWithPath{}
+	}
+
+	tflog.Info(ctx, "Features list extracted", map[string]interface{}{
+		"element_count": len(featuresList.Elements()),
+	})
+
+	var allFiles []schemas.FileModelWithPath
+	for i, elem := range featuresList.Elements() {
+		tflog.Info(ctx, "Processing feature element", map[string]interface{}{
+			"index": i,
+			"type":  fmt.Sprintf("%T", elem),
+		})
+
+		// Each element should be a feature resource reference (Object with ID)
+		featureObj, ok := elem.(types.Object)
+		if !ok {
+			tflog.Warn(ctx, "Feature element is not types.Object", map[string]interface{}{
+				"index":       i,
+				"actual_type": fmt.Sprintf("%T", elem),
+			})
+			continue
+		}
+
+		// Extract the feature ID to look up in registry
+		attrs := featureObj.Attributes()
+		tflog.Info(ctx, "Feature object attributes", map[string]interface{}{
+			"index":      i,
+			"attr_count": len(attrs),
+		})
+
+		if idAttr, exists := attrs["id"]; exists {
+			tflog.Info(ctx, "Found id attribute", map[string]interface{}{
+				"index":    i,
+				"id_type":  fmt.Sprintf("%T", idAttr),
+				"id_value": fmt.Sprintf("%+v", idAttr),
+			})
+
+			if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() && !idStr.IsUnknown() {
+				featureID := idStr.ValueString()
+				tflog.Info(ctx, "Looking up feature in registry", map[string]interface{}{
+					"index":      i,
+					"feature_id": featureID,
+				})
+
+				// Look up feature in registry
+				if featureData, exists := reg.GetFeature(featureID); exists {
+					tflog.Info(ctx, "Feature found in registry", map[string]interface{}{
+						"feature_id": featureID,
+					})
+
+					if feature, ok := featureData.(FeatureResourceModel); ok {
+						tflog.Info(ctx, "Feature data cast successful", map[string]interface{}{
+							"feature_id":    featureID,
+							"has_files":     !feature.Files.IsNull(),
+							"files_unknown": feature.Files.IsUnknown(),
+						})
+
+						// Convert feature files to FileModelWithPath list
+						featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+						allFiles = append(allFiles, featureFiles...)
+
+						tflog.Info(ctx, "Collected files from feature", map[string]interface{}{
+							"feature_id": featureID,
+							"file_count": len(featureFiles),
+						})
+					} else {
+						tflog.Warn(ctx, "Failed to cast feature data to FeatureResourceModel", map[string]interface{}{
+							"feature_id":  featureID,
+							"actual_type": fmt.Sprintf("%T", featureData),
+						})
+					}
+				} else {
+					tflog.Warn(ctx, "Feature not found in registry", map[string]interface{}{
+						"feature_id": featureID,
+					})
+				}
+			} else {
+				tflog.Warn(ctx, "ID attribute is not a valid string", map[string]interface{}{
+					"index":      i,
+					"is_null":    idStr.IsNull(),
+					"is_unknown": idStr.IsUnknown(),
+				})
+			}
+		} else {
+			tflog.Warn(ctx, "No id attribute found in feature object", map[string]interface{}{
+				"index": i,
+			})
+		}
+	}
+
+	tflog.Info(ctx, "=== collectFeaturesFromDynamic END ===", map[string]interface{}{
+		"total_files": len(allFiles),
+	})
+
+	return allFiles
+}
+
 // collectFeatureFiles extracts files from all features in the project
 func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
-	if data.Features.IsNull() || data.Features.IsUnknown() {
+	tflog.Info(ctx, "=== collectFeatureFiles START ===", map[string]interface{}{
+		"features_is_null":    data.Features.IsNull(),
+		"features_is_unknown": data.Features.IsUnknown(),
+	})
+
+	// Allow processing even if Unknown - features might be in registry by now
+	if data.Features.IsNull() {
+		tflog.Info(ctx, "Features is null, returning empty", nil)
 		return []schemas.FileModelWithPath{}
+	}
+
+	// If features are Unknown, log but continue - we'll try registry lookups
+	if data.Features.IsUnknown() {
+		tflog.Warn(ctx, "Features attribute is Unknown, will attempt registry lookups", nil)
 	}
 
 	// Extract the underlying value from Dynamic
 	underlyingVal := data.Features.UnderlyingValue()
+	tflog.Info(ctx, "Features underlying value", map[string]interface{}{
+		"type": fmt.Sprintf("%T", underlyingVal),
+	})
 
 	// Try to cast to types.Map (for map structure)
 	featuresMap, ok := underlyingVal.(types.Map)
@@ -2030,9 +2470,20 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 		return []schemas.FileModelWithPath{}
 	}
 
+	tflog.Info(ctx, "Features map details", map[string]interface{}{
+		"element_count": len(featuresMap.Elements()),
+		"element_type":  featuresMap.ElementType(ctx).String(),
+	})
+
 	var allFiles []schemas.FileModelWithPath
 
 	for featureName, featureValue := range featuresMap.Elements() {
+		tflog.Info(ctx, "Processing feature from map", map[string]interface{}{
+			"feature_name":  featureName,
+			"feature_type":  fmt.Sprintf("%T", featureValue),
+			"feature_value": fmt.Sprintf("%+v", featureValue),
+		})
+
 		feature, err := r.parseFeature(ctx, featureValue)
 		if err != nil {
 			tflog.Warn(ctx, "Failed to parse feature", map[string]interface{}{
@@ -2042,7 +2493,15 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 			continue
 		}
 
+		tflog.Info(ctx, "Successfully parsed feature", map[string]interface{}{
+			"feature_name": featureName,
+			"has_files":    !feature.Files.IsNull() && !feature.Files.IsUnknown(),
+		})
+
 		if feature.Files.IsNull() || feature.Files.IsUnknown() {
+			tflog.Info(ctx, "Feature has no files, skipping", map[string]interface{}{
+				"feature_name": featureName,
+			})
 			continue
 		}
 
@@ -2050,11 +2509,15 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 		featureFiles := schemas.FilesMapToList(ctx, feature.Files)
 		allFiles = append(allFiles, featureFiles...)
 
-		tflog.Debug(ctx, "Collected files from feature", map[string]interface{}{
+		tflog.Info(ctx, "Collected files from feature", map[string]interface{}{
 			"feature_name": featureName,
 			"file_count":   len(featureFiles),
 		})
 	}
+
+	tflog.Info(ctx, "=== collectFeatureFiles END ===", map[string]interface{}{
+		"total_files_collected": len(allFiles),
+	})
 
 	return allFiles
 }
@@ -2202,9 +2665,12 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 					stackFiles := schemas.FilesMapToList(ctx, stack.Files)
 
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
-						"stack_id":   stackID,
-						"file_count": len(stackFiles),
-						"stack_name": stack.Name.ValueString(),
+						"stack_id":            stackID,
+						"file_count":          len(stackFiles),
+						"stack_name":          stack.Name.ValueString(),
+						"features_is_null":    stack.Features.IsNull(),
+						"features_is_unknown": stack.Features.IsUnknown(),
+						"features_value":      fmt.Sprintf("%+v", stack.Features),
 					})
 
 					// 1. First add files from kits within the primary stack (lowest precedence)
@@ -2221,6 +2687,48 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 
 					// 2. Add the primary stack's own files (higher precedence than stack's kits)
 					merger.AddFiles(ctx, stackFiles, files.SourceStack)
+
+					// 3. NEW: Add files from features within the primary stack
+					// Debug: Write stack.Features to file for inspection
+					debugPath := "/tmp/stack-features-debug.txt"
+					debugContent := fmt.Sprintf("stack.Features IsNull: %v\nstack.Features IsUnknown: %v\nstack.Features Value: %+v\n",
+						stack.Features.IsNull(), stack.Features.IsUnknown(), stack.Features)
+					os.WriteFile(debugPath, []byte(debugContent), 0644)
+
+					// Debug: Check underlying type
+					underlying := stack.Features.UnderlyingValue()
+					debugContent2 := fmt.Sprintf("\nUnderlying type: %T\nUnderlying value: %+v\n", underlying, underlying)
+					f, _ := os.OpenFile(debugPath, os.O_APPEND|os.O_WRONLY, 0644)
+					if f != nil {
+						f.WriteString(debugContent2)
+						f.Close()
+					}
+
+					stackFeatureIDs := extractIDsFromDynamicList(ctx, stack.Features)
+					if len(stackFeatureIDs) > 0 {
+						var stackFeatureFiles []schemas.FileModelWithPath
+						for _, featureID := range stackFeatureIDs {
+							if featureData, exists := reg.GetFeature(featureID); exists {
+								if feature, ok := featureData.(FeatureResourceModel); ok {
+									featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+									stackFeatureFiles = append(stackFeatureFiles, featureFiles...)
+									tflog.Info(ctx, "Collected files from stack feature", map[string]interface{}{
+										"feature_id": featureID,
+										"file_count": len(featureFiles),
+									})
+								}
+							}
+						}
+
+						if len(stackFeatureFiles) > 0 {
+							merger.AddFiles(ctx, stackFeatureFiles, files.SourceFeature)
+							tflog.Info(ctx, "Added files from stack features", map[string]interface{}{
+								"stack_id":            stackID,
+								"feature_count":       len(stackFeatureIDs),
+								"stack_feature_files": len(stackFeatureFiles),
+							})
+						}
+					}
 				} else {
 					tflog.Warn(ctx, "Stack data is not StackResourceModel", map[string]interface{}{
 						"stack_id":    stackID,
@@ -2335,4 +2843,96 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	tflog.Info(ctx, "Merged files from all sources", logAttrs)
 
 	return mergedFiles
+}
+
+// collectStringFields collects all string fields from the project for URI scanning
+// This includes: description, requirements, files, features, etc.
+func (r *ProjectResourceFinal) collectStringFields(ctx context.Context, data ProjectModelFinal) map[string]string {
+	fields := make(map[string]string)
+
+	// Project-level description
+	if !data.Description.IsNull() && !data.Description.IsUnknown() {
+		fields["description"] = data.Description.ValueString()
+	}
+
+	// Requirements - instructions and constraints
+	for i, req := range data.Requirements {
+		for j, instr := range req.Instructions {
+			if !instr.Prompt.IsNull() && !instr.Prompt.IsUnknown() {
+				fields[fmt.Sprintf("req_%d_instr_%d_prompt", i, j)] = instr.Prompt.ValueString()
+			}
+			for k, constraint := range instr.Constraints {
+				if !constraint.IsNull() && !constraint.IsUnknown() {
+					fields[fmt.Sprintf("req_%d_instr_%d_constraint_%d", i, j, k)] = constraint.ValueString()
+				}
+			}
+		}
+	}
+
+	// Files - content and instructions
+	if !data.Files.IsNull() && !data.Files.IsUnknown() {
+		for path, fileAttr := range data.Files.Elements() {
+			fileObj, ok := fileAttr.(types.Object)
+			if !ok {
+				continue
+			}
+
+			// Extract file model
+			var fileModel schemas.FileModel
+			diags := fileObj.As(ctx, &fileModel, basetypes.ObjectAsOptions{})
+			if diags.HasError() {
+				continue
+			}
+
+			// File content
+			if !fileModel.Content.IsNull() && !fileModel.Content.IsUnknown() {
+				fields[fmt.Sprintf("file_%s_content", path)] = fileModel.Content.ValueString()
+			}
+
+			// File instructions
+			for i, instr := range fileModel.Instructions {
+				if !instr.Prompt.IsNull() && !instr.Prompt.IsUnknown() {
+					fields[fmt.Sprintf("file_%s_instr_%d_prompt", path, i)] = instr.Prompt.ValueString()
+				}
+			}
+		}
+	}
+
+	// Features - simplified for now, just the prompt
+	if !data.Features.IsNull() && !data.Features.IsUnknown() {
+		featuresUnderlyingVal := data.Features.UnderlyingValue()
+		if featuresMap, ok := featuresUnderlyingVal.(types.Map); ok {
+			for featureName, featureAttr := range featuresMap.Elements() {
+				featureObj, ok := featureAttr.(types.Object)
+				if !ok {
+					continue
+				}
+
+				// Extract feature model
+				var featureModel schemas.FeatureModel
+				diags := featureObj.As(ctx, &featureModel, basetypes.ObjectAsOptions{})
+				if diags.HasError() {
+					continue
+				}
+
+				// Feature prompt
+				if !featureModel.Prompt.IsNull() && !featureModel.Prompt.IsUnknown() {
+					fields[fmt.Sprintf("feature_%s_prompt", featureName)] = featureModel.Prompt.ValueString()
+				}
+
+				// Feature constraints
+				for i, constraint := range featureModel.Constraints {
+					if !constraint.IsNull() && !constraint.IsUnknown() {
+						fields[fmt.Sprintf("feature_%s_constraint_%d", featureName, i)] = constraint.ValueString()
+					}
+				}
+			}
+		}
+	}
+
+	tflog.Debug(ctx, "Collected string fields for URI scanning", map[string]interface{}{
+		"field_count": len(fields),
+	})
+
+	return fields
 }

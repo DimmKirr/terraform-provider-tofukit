@@ -26,6 +26,7 @@ type FeatureResource struct {
 type FeatureResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
+	Link          types.String                `tfsdk:"link"`
 	Description   types.String                `tfsdk:"description"`
 	Prompt        types.String                `tfsdk:"prompt"`
 	Constraints   types.List                  `tfsdk:"constraints"`
@@ -50,11 +51,15 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Resource identifier",
+				MarkdownDescription: "Resource identifier (format: feature.<name>)",
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Unique name for this feature resource (used for registry lookup)",
 				Required:            true,
+			},
+			"link": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://feature/name)",
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of what this feature does",
@@ -94,6 +99,31 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 	}
 }
 
+// ModifyPlan sets the ID during plan phase since it's predictable from name
+func (r *FeatureResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Skip if this is a delete operation
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var plan FeatureResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// If ID is unknown and name is known, compute the ID now
+	if plan.ID.IsUnknown() && !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		plan.ID = types.StringValue(fmt.Sprintf("feature.%s", plan.Name.ValueString()))
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+
+		tflog.Info(ctx, "ModifyPlan: Set feature ID during plan", map[string]interface{}{
+			"feature_id": plan.ID.ValueString(),
+			"name":       plan.Name.ValueString(),
+		})
+	}
+}
+
 func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data FeatureResourceModel
 
@@ -125,10 +155,12 @@ func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	data.ID = types.StringValue(fmt.Sprintf("feature.%s", data.Name.ValueString()))
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://feature/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Created feature resource", map[string]interface{}{
 		"feature_id":        data.ID.ValueString(),
 		"name":              data.Name.ValueString(),
+		"link":              data.Link.ValueString(),
 		"prompt":            data.Prompt.ValueString(),
 		"has_files":         hasFiles,
 		"has_kits":          hasKits,
@@ -195,10 +227,12 @@ func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	// Preserve computed fields from state
 	data.ID = state.ID
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://feature/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Updated feature resource", map[string]interface{}{
 		"feature_id":        data.ID.ValueString(),
 		"name":              data.Name.ValueString(),
+		"link":              data.Link.ValueString(),
 		"prompt":            data.Prompt.ValueString(),
 		"has_files":         hasFiles,
 		"has_kits":          hasKits,

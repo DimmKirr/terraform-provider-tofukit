@@ -313,6 +313,10 @@ func GetBaseComponentAttributes() map[string]schema.Attribute {
 				stringplanmodifier.RequiresReplace(),
 			},
 		},
+		"link": schema.StringAttribute{
+			Computed:            true,
+			MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://kit/language/name or tofukit://kit/framework/name)",
+		},
 		"description": schema.StringAttribute{
 			MarkdownDescription: "Description of the component",
 			Optional:            true,

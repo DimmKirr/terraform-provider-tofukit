@@ -1,5 +1,5 @@
-# Go CLI Stack Module (Cobra + Viper + pterm)
-# This module provides a complete Go CLI application stack
+# Python Click CLI Stack Module
+# This module provides a complete Python Click CLI application stack
 # with all necessary kits and file scaffolding
 
 terraform {
@@ -16,10 +16,10 @@ terraform {
 # ========================================
 # This stack is organized into modular files:
 #
-# - language.tofu    : Language definition (Go)
-# - tools.tofu       : Development tools (go-mod)
-# - frameworks.tofu   : Frameworks (Cobra, Viper, pterm)
-# - features.tofu    : Reusable features (config, version, logger, etc.)
-# - stack.tofu       : Stack definition (go_cli_app)
+# - language.tofu    : Language definition (Python)
+# - tools.tofu       : Development tools (uv)
+# - frameworks.tofu   : Framework (Click)
+# - features.tofu    : Reusable features (hello command, readme)
+# - stack.tofu       : Stack definition (click_app)
 # - variables.tofu   : Input variables
 # - outputs.tofu     : Output values

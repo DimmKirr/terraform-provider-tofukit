@@ -84,6 +84,80 @@ The provider computes explicit file operations (add/remove/rename/modify/unchang
 5. Claude receives the enriched file spec with explicit rename instruction
 6. Claude executes: moves file, removes old file, cleans up empty directories
 
+### Resource URI Linking System
+
+The provider implements a `tofukit://` URI scheme that enables cross-resource references in prompts and instructions. Resources can reference other resources (features, files, stacks, kits) using URIs, and the provider automatically resolves them and provides metadata to Claude.
+
+**URI Format:**
+```
+tofukit://TYPE/NAME              # Simple resources
+tofukit://kit/SUBTYPE/NAME       # Kit resources
+```
+
+**Examples:**
+- `tofukit://feature/logging` - Reference a feature resource
+- `tofukit://file/gitignore` - Reference a file resource
+- `tofukit://stack/python-app` - Reference a stack resource
+- `tofukit://kit/language/python` - Reference a language kit
+- `tofukit://kit/framework/click` - Reference a framework kit
+
+**How It Works:**
+
+1. **`.link` Attribute** - All resources have a computed `.link` attribute containing their URI:
+   ```hcl
+   resource "tofukit_feature" "logging" {
+     name = "structured-logging"
+     # ...
+   }
+
+   # Access via: tofukit_feature.logging.link
+   # Value: "tofukit://feature/structured-logging"
+   ```
+
+2. **URI Scanning** (`internal/uri/scanner.go`) - Scans all string fields (prompts, instructions, constraints, descriptions) for URIs using regex pattern
+
+3. **Registry Building** (`internal/uri/registry_builder.go`) - Resolves found URIs and builds a resource registry with metadata for each referenced resource
+
+4. **Metadata Extraction** (`internal/uri/metadata_*.go`) - Each resource type has a metadata extractor that returns basic info (type, name, subtype)
+
+5. **Claude Integration** - The resource registry is passed to Claude in the prompt's `resource_registry` field, and the system prompt is enhanced with URI reference instructions
+
+**Usage Example:**
+```hcl
+resource "tofukit_feature" "logging" {
+  name   = "structured-logging"
+  prompt = "Add structured logging capability"
+  # ...
+}
+
+resource "tofukit_project" "app" {
+  name = "my-app"
+
+  requirements = [{
+    name = "Setup"
+    instructions = [{
+      # Reference another feature using its URI
+      prompt = "Use ${tofukit_feature.logging.link} for application logging"
+    }]
+  }]
+}
+```
+
+**Key Implementation Files:**
+- `/internal/uri/scanner.go` - URI extraction and parsing
+- `/internal/uri/registry_builder.go` - Registry construction from URIs
+- `/internal/uri/metadata_*.go` - Metadata extractors for each resource type
+- `/internal/resources/project.go:collectStringFields()` - Collects all string fields for scanning
+- `/internal/llm/claude/prompt_types.go` - Integration with Claude prompt structure
+
+**URI Registry Flow in Project:**
+1. `collectStringFields()` gathers all prompts, instructions, constraints, descriptions from project
+2. `URIScanner.ExtractURIs()` finds all `tofukit://` URIs in the fields
+3. `RegistryBuilder.BuildRegistry()` resolves each URI to metadata via global registry
+4. Resource registry added to `outputData["_resource_registry"]`
+5. `BuildProjectPrompt()` detects registry and enhances system prompt with URI usage instructions
+6. Claude receives complete context about referenced resources
+
 ### Directory Structure
 
 ```
@@ -110,6 +184,10 @@ internal/
 ├── schemas/          # Terraform schema definitions
 │   ├── common.go     # Shared schemas (File, Instruction, Verification)
 │   └── kits.go       # Kit schemas (language, framework configs)
+├── uri/              # **NEW** Resource URI linking system
+│   ├── scanner.go    # URI extraction and parsing
+│   ├── registry_builder.go # Builds resource registry from URIs
+│   └── metadata_*.go # Metadata extractors for each resource type
 └── registry/         # Component registry for cross-resource dependencies
     └── registry.go   # Thread-safe registry for stacks and components
 ```

@@ -26,6 +26,7 @@ type FileResource struct {
 type FileResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
+	Link          types.String                `tfsdk:"link"`
 	Description   types.String                `tfsdk:"description"`
 	Content       types.String                `tfsdk:"content"`
 	Instructions  []schemas.InstructionModel  `tfsdk:"instructions"`
@@ -53,6 +54,10 @@ func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Unique name for this file resource (used for registry lookup)",
 				Required:            true,
+			},
+			"link": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://file/name)",
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of what this file does",
@@ -128,10 +133,12 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	data.ID = types.StringValue(fmt.Sprintf("file.%s", data.Name.ValueString()))
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://file/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Created file resource", map[string]interface{}{
 		"file_id":          data.ID.ValueString(),
 		"name":             data.Name.ValueString(),
+		"link":             data.Link.ValueString(),
 		"has_content":      hasContent,
 		"has_instructions": hasInstructions,
 	})
@@ -194,10 +201,12 @@ func (r *FileResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	// Preserve computed fields from state
 	data.ID = state.ID
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://file/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Updated file resource", map[string]interface{}{
 		"file_id":          data.ID.ValueString(),
 		"name":             data.Name.ValueString(),
+		"link":             data.Link.ValueString(),
 		"has_content":      hasContent,
 		"has_instructions": hasInstructions,
 	})

@@ -18,7 +18,7 @@ resource "tofukit_project" "hello_world" {
     }
 
     "linked.txt" = {
-      content = "More info in ${tofukit_file.target_file}"
+      content = "More info in ${tofukit_file.target_file.link}"
     }
 
 #     "hello3.txt" = {
@@ -45,6 +45,7 @@ terraform {
 
 # Provider configuration
 provider "tofukit" {
+  debug                 = true  # Enable debug output to see URI resolution
   output_format         = "json"
   output_path           = ".tofukit"
   claude_home_directory = "~/.claude"

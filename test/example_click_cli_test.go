@@ -41,7 +41,7 @@ func TestExampleClickCliSuccess(t *testing.T) {
 		`output_format         = "json"
   output_path           = "output"`, 1)
 	// Replace module source path from ../stacks to ./stacks
-	modifiedContent = strings.Replace(modifiedContent, `  source = "../stacks/tofukit-stack-python-click-app-generic"`, `  source = "./stacks/tofukit-stack-python-click-app-generic"`, 1)
+	modifiedContent = strings.Replace(modifiedContent, `  source = "../stacks/tofukit-stack-python-click-app"`, `  source = "./stacks/tofukit-stack-python-click-app"`, 1)
 
 	projectPath := filepath.Join(testDir, "project.tofu")
 	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {

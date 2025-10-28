@@ -30,6 +30,7 @@ type LanguageResource struct {
 type LanguageResourceModel struct {
 	ID           types.String               `tfsdk:"id"`
 	Name         types.String               `tfsdk:"name"`
+	Link         types.String               `tfsdk:"link"`
 	Description  types.String               `tfsdk:"description"`
 	Version      types.String               `tfsdk:"version"`
 	Requirements []schemas.RequirementModel `tfsdk:"requirements"`
@@ -64,9 +65,10 @@ func (r *LanguageResource) Create(ctx context.Context, req resource.CreateReques
 	// Generate ID from name
 	fmt.Printf("🔧 DEBUG: LanguageResource.Create - setting ID for: %s\n", data.Name.ValueString())
 	data.ID = types.StringValue(fmt.Sprintf("language.%s", data.Name.ValueString()))
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/language/%s", data.Name.ValueString()))
 
 	// Log the creation
-	tflog.Trace(ctx, fmt.Sprintf("created language resource: %s", data.ID.ValueString()))
+	tflog.Trace(ctx, fmt.Sprintf("created language resource: %s (link: %s)", data.ID.ValueString(), data.Link.ValueString()))
 
 	// Save to registry
 	fmt.Printf("🔧 DEBUG: LanguageResource.Create - saving to registry: %s\n", data.ID.ValueString())
@@ -104,6 +106,9 @@ func (r *LanguageResource) Update(ctx context.Context, req resource.UpdateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Recompute link in case name changed
+	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/language/%s", data.Name.ValueString()))
 
 	// Update the registry
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)

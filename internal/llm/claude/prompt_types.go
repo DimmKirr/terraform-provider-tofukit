@@ -15,14 +15,15 @@ type ProjectPrompt struct {
 
 // PromptRequest contains the actual project implementation request
 type PromptRequest struct {
-	Type           string                   `json:"type"`
-	ProjectInfo    ProjectInfo              `json:"project_info"`
-	Specification  map[string]interface{}   `json:"specification"`
-	Instructions   []string                 `json:"instructions"`
-	FileDetails    *FileInstructions        `json:"file_details,omitempty"`
-	FileOperations []map[string]interface{} `json:"file_operations,omitempty"`
-	Guidelines     []string                 `json:"guidelines"`
-	Deliverables   []string                 `json:"deliverables"`
+	Type             string                   `json:"type"`
+	ProjectInfo      ProjectInfo              `json:"project_info"`
+	Specification    map[string]interface{}   `json:"specification"`
+	ResourceRegistry map[string]interface{}   `json:"resource_registry,omitempty"`
+	Instructions     []string                 `json:"instructions"`
+	FileDetails      *FileInstructions        `json:"file_details,omitempty"`
+	FileOperations   []map[string]interface{} `json:"file_operations,omitempty"`
+	Guidelines       []string                 `json:"guidelines"`
+	Deliverables     []string                 `json:"deliverables"`
 }
 
 // ProjectInfo contains basic project metadata
@@ -193,15 +194,27 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		fileOperations = ops
 	}
 
+	// Extract resource registry if present
+	var resourceRegistry map[string]interface{}
+	if registry, ok := projectSpec["_resource_registry"].(map[string]interface{}); ok {
+		resourceRegistry = registry
+		// Enhance system prompt with resource URI instructions
+		systemPrompt += "\n\n## Resource URI References\n\n" +
+			"URIs like tofukit://TYPE/NAME reference other resources in this project. " +
+			"Look them up in the resource_registry section for complete details about their files, capabilities, and interfaces. " +
+			"When you see these URIs in prompts or instructions, treat them as explicit dependencies that you should integrate with."
+	}
+
 	// Build the structured prompt
 	prompt := &ProjectPrompt{
 		SystemPrompt: systemPrompt,
 		Request: PromptRequest{
-			Type:           "project_implementation",
-			ProjectInfo:    projectInfo,
-			Specification:  projectSpec,
-			Instructions:   instructions,
-			FileOperations: fileOperations,
+			Type:             "project_implementation",
+			ProjectInfo:      projectInfo,
+			Specification:    projectSpec,
+			ResourceRegistry: resourceRegistry,
+			Instructions:     instructions,
+			FileOperations:   fileOperations,
 			FileDetails: &FileInstructions{
 				Description: "IMPORTANT: If the specification contains a \"files\" object, you MUST manage these files exactly as specified:",
 				Rules: []string{

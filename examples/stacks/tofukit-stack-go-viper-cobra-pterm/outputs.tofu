@@ -13,3 +13,15 @@ output "kits" {
     tofukit_framework.pterm,
   ]
 }
+
+output "features" {
+  description = "Feature IDs for registry lookup (passing objects causes Unknown during Create)"
+  value = {
+    viper_config   = tofukit_feature.viper_config.id
+    version_command = tofukit_feature.version_command.id
+    pterm_logger   = tofukit_feature.pterm_logger.id
+    taskfile       = tofukit_feature.taskfile.id
+    gitignore      = tofukit_feature.gitignore.id
+    readme         = tofukit_feature.readme.id
+  }
+}
