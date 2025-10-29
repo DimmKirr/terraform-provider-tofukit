@@ -29,6 +29,8 @@ type VerificationModel struct {
 
 // FeatureModel represents a feature (inline or from resource reference)
 type FeatureModel struct {
+	Prompt        types.String        `tfsdk:"prompt"`       // What the feature does (LLM-facing requirement)
+	Constraints   types.List          `tfsdk:"constraints"`  // Implementation constraints (what NOT to do)
 	Requirements  []RequirementModel  `tfsdk:"requirements"` // Uses common type!
 	Files         types.Map           `tfsdk:"files"`
 	Kits          types.Dynamic       `tfsdk:"kits"`

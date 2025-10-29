@@ -28,6 +28,8 @@ type FeatureResourceModel struct {
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
 	Description   types.String                `tfsdk:"description"`
+	Prompt        types.String                `tfsdk:"prompt"`       // What the feature does (LLM-facing requirement)
+	Constraints   types.List                  `tfsdk:"constraints"`  // Implementation constraints (what NOT to do)
 	Requirements  []schemas.RequirementModel  `tfsdk:"requirements"` // Now uses common type!
 	Files         types.Map                   `tfsdk:"files"`
 	Kits          types.Dynamic               `tfsdk:"kits"`
@@ -63,6 +65,15 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of what this feature does",
 				Optional:            true,
+			},
+			"prompt": schema.StringAttribute{
+				MarkdownDescription: "What the feature does (LLM-facing requirement)",
+				Required:            true,
+			},
+			"constraints": schema.ListAttribute{
+				MarkdownDescription: "Implementation constraints (what NOT to do)",
+				Optional:            true,
+				ElementType:         types.StringType,
 			},
 			"requirements": schemas.GetRequirementsListAttribute(), // Now uses common type!
 			"files":        schemas.GetFilesMapAttribute(),

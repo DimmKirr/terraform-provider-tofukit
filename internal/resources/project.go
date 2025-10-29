@@ -219,26 +219,35 @@ func extractIDFromDynamic(ctx context.Context, dynValue types.Dynamic) string {
 // - A list of objects with "id" attributes (resource references)
 func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []string {
 	if dynValue.IsNull() || dynValue.IsUnknown() {
-		fmt.Printf("DEBUG extractIDsFromDynamicList: value is null or unknown\n")
-		return nil
+		tflog.Debug(ctx, "extractIDsFromDynamicList: value is null or unknown", nil)
+		return []string{} // Return empty slice instead of nil
 	}
 
 	var ids []string
 	underlying := dynValue.UnderlyingValue()
-	fmt.Printf("DEBUG extractIDsFromDynamicList: underlying type = %T\n", underlying)
+	tflog.Debug(ctx, "extractIDsFromDynamicList: underlying type", map[string]interface{}{
+		"type": fmt.Sprintf("%T", underlying),
+	})
 
 	// Try to get as list
 	if listVal, ok := underlying.(types.List); ok && !listVal.IsNull() {
-		fmt.Printf("DEBUG extractIDsFromDynamicList: got list with %d elements\n", len(listVal.Elements()))
+		tflog.Debug(ctx, "extractIDsFromDynamicList: got list", map[string]interface{}{
+			"element_count": len(listVal.Elements()),
+		})
 
 		// Iterate through list elements
 		for i, elem := range listVal.Elements() {
-			fmt.Printf("DEBUG extractIDsFromDynamicList: element[%d] type = %T\n", i, elem)
+			tflog.Debug(ctx, "extractIDsFromDynamicList: processing list element", map[string]interface{}{
+				"index": i,
+				"type":  fmt.Sprintf("%T", elem),
+			})
 
 			// Try as string first
 			if strVal, ok := elem.(types.String); ok && !strVal.IsNull() {
 				id := strVal.ValueString()
-				fmt.Printf("DEBUG extractIDsFromDynamicList: extracted string ID = %s\n", id)
+				tflog.Debug(ctx, "extractIDsFromDynamicList: extracted string ID", map[string]interface{}{
+					"id": id,
+				})
 				ids = append(ids, id)
 				continue
 			}
@@ -246,18 +255,21 @@ func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []st
 			// Try as object with .id
 			if objVal, ok := elem.(types.Object); ok && !objVal.IsNull() {
 				attrs := objVal.Attributes()
-				fmt.Printf("DEBUG extractIDsFromDynamicList: object has %d attributes: %v\n", len(attrs), func() []string {
-					keys := make([]string, 0, len(attrs))
-					for k := range attrs {
-						keys = append(keys, k)
-					}
-					return keys
-				}())
+				attrKeys := make([]string, 0, len(attrs))
+				for k := range attrs {
+					attrKeys = append(attrKeys, k)
+				}
+				tflog.Debug(ctx, "extractIDsFromDynamicList: object attributes", map[string]interface{}{
+					"attr_count": len(attrs),
+					"attr_keys":  attrKeys,
+				})
 
 				if idAttr, exists := attrs["id"]; exists {
 					if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
 						id := idStr.ValueString()
-						fmt.Printf("DEBUG extractIDsFromDynamicList: extracted object ID = %s\n", id)
+						tflog.Debug(ctx, "extractIDsFromDynamicList: extracted object ID", map[string]interface{}{
+							"id": id,
+						})
 						ids = append(ids, id)
 					}
 				}
@@ -265,16 +277,23 @@ func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []st
 		}
 	} else if tupleVal, ok := underlying.(types.Tuple); ok && !tupleVal.IsNull() {
 		// Handle Tuple type (Terraform sometimes stores resource lists as tuples)
-		fmt.Printf("DEBUG extractIDsFromDynamicList: got tuple with %d elements\n", len(tupleVal.Elements()))
+		tflog.Debug(ctx, "extractIDsFromDynamicList: got tuple", map[string]interface{}{
+			"element_count": len(tupleVal.Elements()),
+		})
 
 		// Iterate through tuple elements
 		for i, elem := range tupleVal.Elements() {
-			fmt.Printf("DEBUG extractIDsFromDynamicList: tuple element[%d] type = %T\n", i, elem)
+			tflog.Debug(ctx, "extractIDsFromDynamicList: processing tuple element", map[string]interface{}{
+				"index": i,
+				"type":  fmt.Sprintf("%T", elem),
+			})
 
 			// Try as string first
 			if strVal, ok := elem.(types.String); ok && !strVal.IsNull() {
 				id := strVal.ValueString()
-				fmt.Printf("DEBUG extractIDsFromDynamicList: extracted string ID from tuple = %s\n", id)
+				tflog.Debug(ctx, "extractIDsFromDynamicList: extracted string ID from tuple", map[string]interface{}{
+					"id": id,
+				})
 				ids = append(ids, id)
 				continue
 			}
@@ -282,22 +301,40 @@ func extractIDsFromDynamicList(ctx context.Context, dynValue types.Dynamic) []st
 			// Try as object with .id
 			if objVal, ok := elem.(types.Object); ok && !objVal.IsNull() {
 				attrs := objVal.Attributes()
-				fmt.Printf("DEBUG extractIDsFromDynamicList: tuple object has %d attributes\n", len(attrs))
+				tflog.Debug(ctx, "extractIDsFromDynamicList: tuple object attributes", map[string]interface{}{
+					"attr_count": len(attrs),
+				})
 
 				if idAttr, exists := attrs["id"]; exists {
 					if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
 						id := idStr.ValueString()
-						fmt.Printf("DEBUG extractIDsFromDynamicList: extracted object ID from tuple = %s\n", id)
+						tflog.Debug(ctx, "extractIDsFromDynamicList: extracted object ID from tuple", map[string]interface{}{
+							"id": id,
+						})
 						ids = append(ids, id)
 					}
 				}
 			}
 		}
 	} else {
-		fmt.Printf("DEBUG extractIDsFromDynamicList: not a list/tuple or is null (type: %T)\n", underlying)
+		tflog.Warn(ctx, "extractIDsFromDynamicList: not a list/tuple or is null", map[string]interface{}{
+			"actual_type": fmt.Sprintf("%T", underlying),
+		})
+
+		// NEW: Try to extract as single string ID
+		if strVal, ok := underlying.(types.String); ok && !strVal.IsNull() {
+			id := strVal.ValueString()
+			tflog.Info(ctx, "extractIDsFromDynamicList: extracted single string ID", map[string]interface{}{
+				"id": id,
+			})
+			return []string{id}
+		}
 	}
 
-	fmt.Printf("DEBUG extractIDsFromDynamicList: returning %d IDs: %v\n", len(ids), ids)
+	tflog.Debug(ctx, "extractIDsFromDynamicList: returning IDs", map[string]interface{}{
+		"count": len(ids),
+		"ids":   ids,
+	})
 	return ids
 }
 
@@ -429,16 +466,15 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 }
 
 func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create called\n")
+	// Write debug to file
+
 	var data ProjectModelFinal
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
-		fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create failed with diagnostics error\n")
 		return
 	}
 
-	fmt.Printf("🔧 DEBUG: ProjectResourceFinal.Create - setting ID for project: %s\n", data.Name.ValueString())
 	data.ID = types.StringValue(fmt.Sprintf("project.%s", data.Name.ValueString()))
 
 	// Validate project has at least one content source
@@ -2261,6 +2297,8 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 					if feature, ok := featureData.(FeatureResourceModel); ok {
 						// Convert FeatureResourceModel to FeatureModel
 						return &schemas.FeatureModel{
+							Prompt:        feature.Prompt,
+							Constraints:   feature.Constraints,
 							Requirements:  feature.Requirements,
 							Files:         feature.Files,
 							Kits:          feature.Kits,
@@ -2278,17 +2316,26 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 		return nil, fmt.Errorf("registry not available for feature lookup")
 	}
 
-	// Cast to types.Object
-	featureObj, ok := featureValue.(types.Object)
-	if !ok {
-		err := fmt.Errorf("feature value is neither string nor object: %T", featureValue)
+	// Handle both types.Object and basetypes.ObjectValue
+	var attrs map[string]attr.Value
+
+	if featureObj, ok := featureValue.(types.Object); ok {
+		attrs = featureObj.Attributes()
+		tflog.Info(ctx, "Feature is types.Object", map[string]interface{}{
+			"attribute_count": len(attrs),
+		})
+	} else if featureObj, ok := featureValue.(basetypes.ObjectValue); ok {
+		attrs = featureObj.Attributes()
+		tflog.Info(ctx, "Feature is basetypes.ObjectValue", map[string]interface{}{
+			"attribute_count": len(attrs),
+		})
+	} else {
+		err := fmt.Errorf("feature value is neither string, types.Object, nor basetypes.ObjectValue: %T", featureValue)
 		tflog.Error(ctx, "parseFeature failed", map[string]interface{}{
 			"error": err.Error(),
 		})
 		return nil, err
 	}
-
-	attrs := featureObj.Attributes()
 	tflog.Info(ctx, "Feature object attributes", map[string]interface{}{
 		"attribute_count": len(attrs),
 		"has_id":          attrs["id"] != nil,
@@ -2350,6 +2397,8 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 
 							// Convert FeatureResourceModel to FeatureModel
 							return &schemas.FeatureModel{
+								Prompt:        feature.Prompt,
+								Constraints:   feature.Constraints,
 								Requirements:  feature.Requirements,
 								Files:         feature.Files,
 								Kits:          feature.Kits,
@@ -2388,6 +2437,36 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	// No ID or registry lookup failed - parse as inline definition
 	tflog.Info(ctx, "Parsing as inline feature definition", nil)
 	featureModel := &schemas.FeatureModel{}
+
+	// Extract prompt (required for inline features)
+	if promptVal, exists := attrs["prompt"]; exists {
+		if promptStr, ok := promptVal.(types.String); ok {
+			featureModel.Prompt = promptStr
+			tflog.Info(ctx, "Extracted prompt from inline feature", map[string]interface{}{
+				"prompt": promptStr.ValueString(),
+			})
+		} else {
+			tflog.Warn(ctx, "Prompt attribute is not a string", map[string]interface{}{
+				"prompt_type": fmt.Sprintf("%T", promptVal),
+			})
+		}
+	} else {
+		tflog.Warn(ctx, "Inline feature has no prompt attribute", nil)
+	}
+
+	// Extract constraints (optional)
+	if constraintsVal, exists := attrs["constraints"]; exists {
+		if constraintsList, ok := constraintsVal.(types.List); ok {
+			featureModel.Constraints = constraintsList
+			tflog.Info(ctx, "Extracted constraints from inline feature", map[string]interface{}{
+				"constraint_count": len(constraintsList.Elements()),
+			})
+		} else {
+			tflog.Warn(ctx, "Constraints attribute is not a list", map[string]interface{}{
+				"constraints_type": fmt.Sprintf("%T", constraintsVal),
+			})
+		}
+	}
 
 	// Extract requirements (optional)
 	if requirementsVal, exists := attrs["requirements"]; exists {
@@ -2478,9 +2557,70 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 
 	// Extract files (optional)
 	if filesVal, exists := attrs["files"]; exists {
+		tflog.Info(ctx, "Found files attribute in inline feature", map[string]interface{}{
+			"files_type": fmt.Sprintf("%T", filesVal),
+		})
+
+		// Try types.Map first
 		if filesMap, ok := filesVal.(types.Map); ok {
 			featureModel.Files = filesMap
+			tflog.Info(ctx, "Successfully extracted files from inline feature (types.Map)", map[string]interface{}{
+				"file_count": len(filesMap.Elements()),
+			})
+		} else if filesMapBase, ok := filesVal.(basetypes.MapValue); ok {
+			// Handle basetypes.MapValue
+			featureModel.Files = types.MapValueMust(filesMapBase.ElementType(ctx), filesMapBase.Elements())
+			tflog.Info(ctx, "Successfully extracted files from inline feature (basetypes.MapValue)", map[string]interface{}{
+				"file_count": len(filesMapBase.Elements()),
+			})
+		} else if filesObj, ok := filesVal.(basetypes.ObjectValue); ok {
+			// Handle basetypes.ObjectValue - convert to Map
+			// Files is a map attribute, so we need to convert the ObjectValue's attributes to a Map
+			attrs := filesObj.Attributes()
+
+			// Get element type from the first file value
+			var elementType attr.Type = types.ObjectType{AttrTypes: map[string]attr.Type{}}
+			for _, fileVal := range attrs {
+				if fileObjVal, ok := fileVal.(basetypes.ObjectValue); ok {
+					elementType = fileObjVal.Type(ctx)
+					break
+				}
+			}
+
+			featureModel.Files = types.MapValueMust(elementType, attrs)
+			tflog.Info(ctx, "Successfully extracted files from inline feature (basetypes.ObjectValue)", map[string]interface{}{
+				"file_count": len(attrs),
+			})
+		} else if filesDyn, ok := filesVal.(types.Dynamic); ok {
+			// Try extracting from types.Dynamic wrapper
+			underlying := filesDyn.UnderlyingValue()
+			tflog.Info(ctx, "Files is Dynamic, extracting underlying value", map[string]interface{}{
+				"underlying_type": fmt.Sprintf("%T", underlying),
+			})
+
+			if filesMap, ok := underlying.(types.Map); ok {
+				featureModel.Files = filesMap
+				tflog.Info(ctx, "Successfully extracted files from Dynamic wrapper", map[string]interface{}{
+					"file_count": len(filesMap.Elements()),
+				})
+			} else if filesMapBase, ok := underlying.(basetypes.MapValue); ok {
+				featureModel.Files = types.MapValueMust(filesMapBase.ElementType(ctx), filesMapBase.Elements())
+				tflog.Info(ctx, "Successfully extracted files from Dynamic->basetypes.MapValue", map[string]interface{}{
+					"file_count": len(filesMapBase.Elements()),
+				})
+			} else {
+				tflog.Error(ctx, "Failed to extract files - unknown type after unwrapping Dynamic", map[string]interface{}{
+					"files_type":      fmt.Sprintf("%T", filesVal),
+					"underlying_type": fmt.Sprintf("%T", underlying),
+				})
+			}
+		} else {
+			tflog.Error(ctx, "Failed to cast files to types.Map, basetypes.MapValue, or types.Dynamic", map[string]interface{}{
+				"actual_type": fmt.Sprintf("%T", filesVal),
+			})
 		}
+	} else {
+		tflog.Info(ctx, "No files attribute in inline feature", nil)
 	}
 
 	// Extract kits (optional)
@@ -2660,14 +2800,81 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 
 	// Extract the underlying value from Dynamic
 	underlyingVal := data.Features.UnderlyingValue()
+
+	// AGGRESSIVE DEBUG
+
 	tflog.Info(ctx, "Features underlying value", map[string]interface{}{
 		"type": fmt.Sprintf("%T", underlyingVal),
 	})
 
-	// Try to cast to types.Map (for map structure)
-	featuresMap, ok := underlyingVal.(types.Map)
-	if !ok {
-		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+	var featuresMap types.Map
+
+	// Try to cast to types.Map first (most common case)
+	if fMap, ok := underlyingVal.(types.Map); ok {
+		featuresMap = fMap
+		tflog.Info(ctx, "Features is types.Map", map[string]interface{}{
+			"element_count": len(featuresMap.Elements()),
+		})
+	} else if fObj, ok := underlyingVal.(basetypes.ObjectValue); ok {
+		// Handle basetypes.ObjectValue (the actual underlying type)
+		// Handle types.Object - convert it to a map-like structure
+		tflog.Info(ctx, "Features is types.Object, converting to map", map[string]interface{}{
+			"attr_count": len(fObj.Attributes()),
+		})
+
+		// For Object, we need to iterate over attributes directly
+		// We'll process them similarly to map elements
+		attrs := fObj.Attributes()
+		var allFiles []schemas.FileModelWithPath
+
+		for featureName, featureValue := range attrs {
+			tflog.Info(ctx, "Processing feature from object", map[string]interface{}{
+				"feature_name": featureName,
+				"feature_type": fmt.Sprintf("%T", featureValue),
+			})
+
+			feature, err := r.parseFeature(ctx, featureValue)
+			if err != nil {
+				tflog.Warn(ctx, "Failed to parse feature", map[string]interface{}{
+					"feature_name": featureName,
+					"error":        err.Error(),
+				})
+				continue
+			}
+
+			if feature == nil {
+				continue
+			}
+
+			tflog.Info(ctx, "Successfully parsed feature from object", map[string]interface{}{
+				"feature_name": featureName,
+				"has_files":    !feature.Files.IsNull() && !feature.Files.IsUnknown(),
+			})
+
+			if feature.Files.IsNull() || feature.Files.IsUnknown() {
+				tflog.Info(ctx, "Feature has no files, skipping", map[string]interface{}{
+					"feature_name": featureName,
+				})
+				continue
+			}
+
+			// Convert feature files from map to list
+			featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+			allFiles = append(allFiles, featureFiles...)
+
+			tflog.Info(ctx, "Collected files from feature in object", map[string]interface{}{
+				"feature_name": featureName,
+				"file_count":   len(featureFiles),
+			})
+		}
+
+		tflog.Info(ctx, "=== collectFeatureFiles END (Object path) ===", map[string]interface{}{
+			"total_files_collected": len(allFiles),
+		})
+
+		return allFiles
+	} else {
+		tflog.Error(ctx, "Features is neither Map nor Object", map[string]interface{}{
 			"type": fmt.Sprintf("%T", underlyingVal),
 		})
 		return []schemas.FileModelWithPath{}
@@ -3067,6 +3274,14 @@ func (r *ProjectResourceFinal) collectStackFeaturesRequirements(ctx context.Cont
 
 // collectAndMergeFiles collects files from all sources and merges them with proper precedence
 func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
+	// Debug to file since stdout isn't captured
+	debugFile, _ := os.Create("/tmp/tofukit-collectAndMergeFiles-debug.txt")
+	if debugFile != nil {
+		debugFile.WriteString(fmt.Sprintf("collectAndMergeFiles called\n"))
+		debugFile.WriteString(fmt.Sprintf("Features.IsNull() = %v, IsUnknown() = %v\n", data.Features.IsNull(), data.Features.IsUnknown()))
+		debugFile.Close()
+	}
+
 	merger := files.NewMerger()
 
 	// Get the registry to access stacks

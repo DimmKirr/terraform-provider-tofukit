@@ -136,7 +136,7 @@ resource "tofukit_project" "test" {
       prompt = "Create a hello.txt file with greeting"
       files = {
         "hello.txt" = {
-          content = "Hello from inline feature!\n"
+          content = "Hello from inline feature.\n"
         }
       }
     }
@@ -186,7 +186,7 @@ resource "tofukit_project" "test" {
 	helloPath := filepath.Join(testDir, "output", "hello.txt")
 	content, err := os.ReadFile(helloPath)
 	require.NoError(t, err)
-	assert.Equal(t, "Hello from inline feature!\n", string(content))
+	assert.Equal(t, "Hello from inline feature.\n", string(content))
 	t.Log("✅ Inline feature test successful!")
 }
 
