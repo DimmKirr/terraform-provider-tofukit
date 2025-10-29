@@ -17,39 +17,12 @@ resource "tofukit_feature" "viper_config" {
   ]
 
   files = {
-    "internal/config/config.go" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create Viper configuration abstraction with:
-          - Config struct: LogLevel (string), LogPlainText (bool), ConfigFile (string)
-          - LoadConfig(): Set env prefix to project name, enable AutomaticEnv, search for config in current dir and home dir, unmarshal to struct
-          - SaveConfig(): Write config to .{project_name}.yaml in current directory
-          - Integrate with internal/logger for re-initialization after config load
-          EOF
-
-          constraints = [
-            "DO NOT expose viper directly - abstraction layer only",
-            "Config file absence should NOT cause errors"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q 'func LoadConfig()' internal/config/config.go"
-        },
-        {
-          command = "grep -q 'func SaveConfig()' internal/config/config.go"
-        },
-        {
-          command = "grep -q 'SetEnvPrefix' internal/config/config.go"
-        }
-      ]
-    }
+    "internal/config/config.go" = tofukit_file.viper_config_internal
   }
 
   kits = [tofukit_framework.viper]
+
+  depends_on = [tofukit_file.viper_config_internal]
 }
 
 # ========================================
@@ -68,71 +41,8 @@ resource "tofukit_feature" "version_command" {
   ]
 
   files = {
-    "internal/version/version.go" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create version package following atun pattern:
-          - Variables: GitCommit (string, empty default), Version (string, set via var)
-          - GetVersion(): Try debug.ReadBuildInfo(), return Main.Version if available, else return Version variable
-          - FullVersionString(): Return "version (commit)" format, append GitCommit only if non-empty
-          - Use fmt.Sprintf for formatting
-          Reference: ${file("/Users/dmitry/dev/dimmkirr/terraform-provider-tofukit/.context/atun/internal/version/version.go")}
-          EOF
-
-          constraints = [
-            "NO external dependencies beyond stdlib",
-            "Keep logic simple - just version formatting"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q 'var.*GitCommit.*string' internal/version/version.go"
-        },
-        {
-          command = "grep -q 'func GetVersion()' internal/version/version.go"
-        },
-        {
-          command = "grep -q 'func FullVersionString()' internal/version/version.go"
-        },
-        {
-          command = "grep -q 'debug\\.ReadBuildInfo' internal/version/version.go"
-        }
-      ]
-    }
-
-    "cmd/version.go" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create Cobra version subcommand:
-          - Cobra command with Use: "version", Short description
-          - Run function that displays version using pterm.DefaultBox with title "Version Information"
-          - Call version.FullVersionString() for content
-          - This command will be registered in cmd/root.go via rootCmd.AddCommand()
-          EOF
-
-          constraints = [
-            "Must integrate with Cobra framework",
-            "Use pterm for visual output"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q 'var versionCmd' cmd/version.go"
-        },
-        {
-          command = "grep -q 'pterm\\.DefaultBox' cmd/version.go"
-        },
-        {
-          command = "grep -q 'version\\.FullVersionString' cmd/version.go"
-        }
-      ]
-    }
+    "internal/version/version.go" = tofukit_file.version_internal
+    "cmd/version.go"               = tofukit_file.version_cmd
   }
 
   # Note: Taskfile integration mentioned - ldflags will be set via:
@@ -159,40 +69,7 @@ resource "tofukit_feature" "pterm_logger" {
   ]
 
   files = {
-    "internal/logger/logger.go" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create logger package with pterm+slog integration:
-          - Package variables: defaultLogger (*slog.Logger), quietMode (bool)
-          - Initialize(logLevel string, logPlainText bool): Parse log level, create pterm handler, set styles
-          - SetQuietMode(bool): Control Info/Debug/Warn suppression
-          - Methods: Info, Debug, Warn, Error, Fatal
-          - customizePtermStyle(): Set Unicode symbols (ℹ ⚠ ✔ ⨯ ⚙) with colors
-          EOF
-
-          constraints = [
-            "Error and Fatal must ALWAYS log regardless of quiet mode",
-            "NO panic() - use Fatal() instead"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q 'func Initialize' internal/logger/logger.go"
-        },
-        {
-          command = "grep -q 'func SetQuietMode' internal/logger/logger.go"
-        },
-        {
-          command = "grep -q 'func Info\\|func Debug\\|func Warn\\|func Error\\|func Fatal' internal/logger/logger.go"
-        },
-        {
-          command = "grep -q 'pterm\\.NewSlogHandler' internal/logger/logger.go"
-        }
-      ]
-    }
+    "internal/logger/logger.go" = tofukit_file.pterm_logger_internal
   }
 
   kits = [tofukit_framework.pterm]
@@ -214,41 +91,7 @@ resource "tofukit_feature" "taskfile" {
   ]
 
   files = {
-    "Taskfile.yaml" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create Taskfile v3 with:
-          - Variables: GIT_COMMIT_HASH (git rev-parse --short HEAD), GIT_IS_DIRTY (git status check), GO_LDFLAGS with -X flags
-          - Tasks: default (depends: build), build (with ldflags), test, clean, install
-          - Build command: CGO_ENABLED=0 go build -ldflags with GitCommit and Version injection
-          - Target module path: {project_module}/internal/version
-          EOF
-
-          constraints = [
-            "NO hard-coded versions",
-            "Build output MUST go to bin/ directory",
-            "Use Go toolchain commands only"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q \"version: '3'\" Taskfile.yaml"
-        },
-        {
-          command = "grep -q 'GO_LDFLAGS' Taskfile.yaml"
-        },
-        {
-          command = "grep -q 'build:' Taskfile.yaml"
-        },
-        {
-          command = "task --list 2>&1 | grep -q 'build' && echo 'task can parse Taskfile'"
-          expect  = "task can parse Taskfile"
-        }
-      ]
-    }
+    "Taskfile.yaml" = tofukit_file.taskfile_yaml
   }
 
   kits = [tofukit_tool.gotask]
@@ -270,33 +113,7 @@ resource "tofukit_feature" "gitignore" {
   ]
 
   files = {
-    ".gitignore" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create .gitignore with grouped patterns:
-          - Binaries: bin/, *.exe, *.dll, *.so, *.dylib, *.test, project binary name
-          - Coverage: *.out, coverage.txt
-          - Workspace: go.work
-          - Dependencies: vendor/
-          - IDE: .idea/, .vscode/, vim swap files
-          - OS: .DS_Store, Thumbs.db
-          - Config: project-specific .yaml/.yml files (may contain secrets)
-          EOF
-
-          constraints = [
-            "Follow standard Go .gitignore patterns",
-            "Include comments for clarity"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q 'bin/' .gitignore"
-        }
-      ]
-    }
+    ".gitignore" = tofukit_file.gitignore
   }
 
   kits = []
@@ -319,39 +136,7 @@ resource "tofukit_feature" "readme" {
   ]
 
   files = {
-    "README.md" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create README with sections:
-          - Title with project name
-          - Overview: Go CLI application using Cobra, Viper, pterm
-          - Features: List key capabilities
-          - Installation: Go version requirements, build instructions
-          - Usage: Command examples with outputs
-          - Configuration: Config file format and environment variables
-          - Development: Build, test, task commands
-          - Contributing: Guidelines for contributors
-          EOF
-
-          constraints = [
-            "Keep concise but complete",
-            "Include project name in title",
-            "Show practical command-line examples"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "test -f README.md && echo 'found'"
-          expect  = "found"
-        },
-        {
-          command = "grep -q '^# ' README.md"
-        }
-      ]
-    }
+    "README.md" = tofukit_file.readme_md
   }
 
   kits = []

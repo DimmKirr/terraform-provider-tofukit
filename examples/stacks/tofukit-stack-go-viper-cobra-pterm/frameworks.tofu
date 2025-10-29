@@ -54,77 +54,7 @@ resource "tofukit_framework" "cobra" {
   # Cobra framework provides the root command structure
   # Additional commands are added by features and stack-specific implementations
   files = {
-    "cmd/root.go" = {
-      instructions = [
-        {
-          prompt = <<-EOF
-          Create cmd/root.go as the Cobra CLI root command with extensible command structure:
-
-          PACKAGE & IMPORTS:
-          - Package: cmd
-          - Imports: fmt, os, ${var.project_module_path}/internal/logger, github.com/spf13/cobra
-          - NOTE: internal/logger is provided by pterm_logger feature
-          - NOTE: Additional imports for version and other commands will be added by features
-
-          ROOT COMMAND (var rootCmd):
-          - Use: "${var.project_name}"
-          - Short: "A CLI application built with Cobra, Viper, and pterm"
-          - Long: Multi-line description mentioning this is an extensible CLI framework
-
-          EXECUTE() FUNCTION:
-          - Call rootCmd.Execute() and check for error
-          - If error, log with logger.Error and os.Exit(1)
-
-          INIT() FUNCTION:
-          - Define PersistentFlags: "config" (empty default), "log-level" (default "info"), "quiet" (bool, default false)
-          - Add basic subcommands: rootCmd.AddCommand(helloCmd)
-          - NOTE: Additional commands (version, etc.) are added by features via rootCmd.AddCommand()
-
-          HELLO COMMAND (var helloCmd):
-          - Use: "hello [name]"
-          - Short: "Say hello to someone"
-          - Long: "Greet someone by name, or the world if no name is provided"
-          - Args: cobra.MaximumNArgs(1)
-          - Run: Extract name from args (default "World"), log with logger.Info: "Hello, <name>!"
-
-          IMPORTANT: This file provides the root command structure that other commands extend.
-          Additional subcommands (such as version) are defined in separate files by features.
-          Stack-specific commands can also be added by the stack.
-          EOF
-
-          constraints = [
-            "NO direct cobra.Command initialization - use struct literals",
-            "NO ignoring errors from rootCmd.Execute()",
-            "Use internal/logger package (provided by pterm_logger feature)",
-            "PersistentFlags for flags that apply to all subcommands",
-            "Keep base commands minimal - features and stack add more commands"
-          ]
-        }
-      ]
-
-      verifications = [
-        {
-          command = "grep -q '^package cmd' cmd/root.go && echo 'found'"
-          expect  = "found"
-        },
-        {
-          command = "grep -q 'var rootCmd.*cobra\\.Command' cmd/root.go && echo 'found'"
-          expect  = "found"
-        },
-        {
-          command = "grep -q 'func Execute()' cmd/root.go && echo 'found'"
-          expect  = "found"
-        },
-        {
-          command = "grep -q 'func init()' cmd/root.go && echo 'found'"
-          expect  = "found"
-        },
-        {
-          command = "grep -q 'var helloCmd' cmd/root.go && echo 'found'"
-          expect  = "found"
-        }
-      ]
-    }
+    "cmd/root.go" = tofukit_file.cobra_root_cmd
   }
 }
 

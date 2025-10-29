@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
@@ -52,8 +53,11 @@ func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "Resource identifier",
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Unique name for this file resource (used for registry lookup)",
+				MarkdownDescription: "File path with extension (e.g., 'README.md', 'src/main.go'). Must be filesystem-compliant across platforms.",
 				Required:            true,
+				Validators: []validator.String{
+					ValidFileName(),
+				},
 			},
 			"link": schema.StringAttribute{
 				Computed:            true,

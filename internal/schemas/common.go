@@ -147,12 +147,14 @@ func GetRequirementBlock() schema.ListNestedBlock {
 }
 
 // GetFilesMapAttribute returns the schema for the files map attribute
+// Accepts both inline file definitions and tofukit_file resource references
 func GetFilesMapAttribute() schema.MapNestedAttribute {
 	return schema.MapNestedAttribute{
-		MarkdownDescription: "Files to generate and manage, keyed by file path",
+		MarkdownDescription: "Files to generate and manage, keyed by file path. Accepts either inline file definitions or tofukit_file resource references.",
 		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
 			Attributes: map[string]schema.Attribute{
+				// Core file attributes (used by both inline and resource references)
 				"content": schema.StringAttribute{
 					MarkdownDescription: "Static content of the file (mutually exclusive with instructions)",
 					Optional:            true,
@@ -189,6 +191,26 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 							},
 						},
 					},
+				},
+				// Resource metadata attributes (present when referencing tofukit_file resources)
+				// These are optional and ignored for inline definitions
+				// NOTE: Not marked as Computed because Terraform provides these when passing
+				// resource references, the provider doesn't compute them
+				"id": schema.StringAttribute{
+					MarkdownDescription: "Resource identifier (present when referencing tofukit_file resource)",
+					Optional:            true,
+				},
+				"name": schema.StringAttribute{
+					MarkdownDescription: "File name (present when referencing tofukit_file resource)",
+					Optional:            true,
+				},
+				"link": schema.StringAttribute{
+					MarkdownDescription: "URI link to the file resource (present when referencing tofukit_file resource)",
+					Optional:            true,
+				},
+				"description": schema.StringAttribute{
+					MarkdownDescription: "File description (present when referencing tofukit_file resource)",
+					Optional:            true,
 				},
 			},
 		},

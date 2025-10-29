@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,14 +29,9 @@ func TestExampleHelloWorldSuccess(t *testing.T) {
 		t.Fatalf("Failed to read project.tofu from example: %v", err)
 	}
 
-	// Modify the provider config to use test output directory
-	modifiedContent := string(projectContent)
-	modifiedContent = strings.Replace(modifiedContent,
-		`output_path           = ".tofukit"`,
-		`output_path           = "output"`, 1)
-
+	// Write the project.tofu to test directory
 	projectPath := filepath.Join(testDir, "project.tofu")
-	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {
+	if err := os.WriteFile(projectPath, projectContent, 0644); err != nil {
 		t.Fatalf("Failed to write project.tofu: %v", err)
 	}
 
@@ -81,19 +75,47 @@ func TestExampleHelloWorldSuccess(t *testing.T) {
 	t.Log("✓ Apply completed successfully")
 
 	// Step 6: Verify files were created
-	outputPath := filepath.Join(testDir, "output")
+	// Note: Files are created directly in testDir, not in output/ subdirectory
+	outputPath := testDir
 
-	helloPath := filepath.Join(outputPath, "hello.txt")
-	assert.FileExists(t, helloPath, "hello.txt should exist")
-	verifyFileContent(t, helloPath, "hello world")
+	// Verify deterministic inline file
+	inlineDeterministicPath := filepath.Join(outputPath, "inline-deterministic.txt")
+	assert.FileExists(t, inlineDeterministicPath, "inline-deterministic.txt should exist")
+	verifyFileContent(t, inlineDeterministicPath, "Inline file with determenistic content")
 
-	hello2Path := filepath.Join(outputPath, "hello2.txt")
-	assert.FileExists(t, hello2Path, "hello2.txt should exist")
-	verifyFileContent(t, hello2Path, "hello world2")
+	// Verify LLM-generated inline file (German sky color)
+	inlineNonDeterministicPath := filepath.Join(outputPath, "inline-non-deterministic.txt")
+	assert.FileExists(t, inlineNonDeterministicPath, "inline-non-deterministic.txt should exist")
+	content, _ := os.ReadFile(inlineNonDeterministicPath)
+	assert.Contains(t, string(content), "blau", "inline-non-deterministic.txt should contain 'blau' (German for blue)")
 
-	hello4Path := filepath.Join(outputPath, "demo", "hello4.txt")
-	assert.FileExists(t, hello4Path, "demo/hello4.txt should exist")
-	verifyFileContent(t, hello4Path, "hello world4")
+	// Verify subdirectory file
+	subdirPath := filepath.Join(outputPath, "subdirectory", "hello-subdirectory-deterministic.txt")
+	assert.FileExists(t, subdirPath, "subdirectory/hello-subdirectory-deterministic.txt should exist")
+	verifyFileContent(t, subdirPath, "Subdirectory File Contents")
+
+	// Verify file with resource link in content
+	resourceLinkPath := filepath.Join(outputPath, "hello-with-resource-link.txt")
+	assert.FileExists(t, resourceLinkPath, "hello-with-resource-link.txt should exist")
+	verifyFileContent(t, resourceLinkPath, "More info in tofukit://file/README.md")
+
+	// Verify file with resource link in prompt (cross-resource reference)
+	resourceLinkInPromptPath := filepath.Join(outputPath, "hello-with-resource-link-in-prompt.txt")
+	assert.FileExists(t, resourceLinkInPromptPath, "hello-with-resource-link-in-prompt.txt should exist")
+	content, _ = os.ReadFile(resourceLinkInPromptPath)
+	assert.Contains(t, string(content), "Animal", "hello-with-resource-link-in-prompt.txt should contain 'Animal' (book name)")
+
+	// Verify README from file resource
+	readmePath := filepath.Join(outputPath, "README.md")
+	assert.FileExists(t, readmePath, "README.md should exist")
+	content, _ = os.ReadFile(readmePath)
+	assert.LessOrEqual(t, len(content), 100, "README.md should be less than 100 characters")
+
+	// Verify STORY.md from file resource
+	storyPath := filepath.Join(outputPath, "STORY.md")
+	assert.FileExists(t, storyPath, "STORY.md should exist")
+	content, _ = os.ReadFile(storyPath)
+	assert.Contains(t, string(content), "JONES", "STORY.md should contain 'JONES' from Animal Farm")
 
 	t.Log("✅ Example hello-world validated successfully!")
 }

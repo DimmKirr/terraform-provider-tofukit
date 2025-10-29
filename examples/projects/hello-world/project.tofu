@@ -3,33 +3,101 @@ resource "tofukit_project" "hello_world" {
   description = "A simple hello world project"
   version     = "1.0.0"
 
+
   # Simple files - no dependencies needed
   files = {
-    "hello.txt" = {
-      content = "hello world\n"
+    "inline-deterministic.txt" = {
+      content = "Inline file with determenistic content"
     }
 
-    "hello2.txt" = {
-      content = "hello world2\n"
+    "inline-non-deterministic.txt" = {
+      description = "LLM-Generated File"
+
+      instructions = [
+        {
+          prompt = "Typical color of the sky?"
+          constraints = [
+            "Output in German language"
+          ]
+        }
+      ]
+
+      verifications = [
+        {
+          command = "grep -q 'blau' inline-non-deterministic.txt"
+        }
+      ]
     }
 
-    "demo/hello4.txt" = {
-      content = "hello world4\n"
+    "subdirectory/hello-subdirectory-deterministic.txt" = {
+      content = "Subdirectory File Contents"
     }
 
-    "linked.txt" = {
-      content = "More info in ${tofukit_file.target_file.link}"
+
+    "hello-with-resource-link.txt" = {
+      content = "More info in ${tofukit_file.readme.link}"
     }
 
-#     "hello3.txt" = {
-#       content = "hello world3\n"
-#     }
+
+    "hello-with-resource-link-in-prompt.txt" = {
+      instructions = [
+        {
+          prompt = "Which book is ${tofukit_file.story.link}"
+          constraints = [
+            "Output just the book name"
+          ]
+        }
+      ]
+
+      verifications = [
+        {
+          command = "grep -q 'Animal' hello-with-resource-link-in-prompt.txt"
+        }
+      ]
+    }
+
+    "README.md" = tofukit_file.readme
+    "STORY.md" = tofukit_file.story
   }
 }
 
-resource "tofukit_file" "target_file" {
-  name = "target_file.txt"
-  content = "hello world linked\n"
+resource "tofukit_file" "story" {
+  name = "STORY.md"
+
+  instructions = [
+    {
+      prompt = "First sentence of Orwell's Animal Farm book"
+      constraints = [
+        "Use all caps letters"
+      ]
+    }
+  ]
+
+  verifications = [
+    {
+      command = "grep -q 'JONES' STORY.md"
+    }
+  ]
+}
+
+resource "tofukit_file" "readme" {
+  name = "README.md"
+
+  instructions = [
+    {
+      prompt = "Simple README.md file for a Hello World project"
+      constraints = [
+        "Must not be longer than 100 characters"
+      ]
+    }
+  ]
+
+  verifications = [
+    {
+      command = "wc -c README.md | awk '{if ($1 < 100) print \"OK\"; else print \"error\"}'"
+      expect  = "OK"
+    }
+  ]
 }
 
 
@@ -47,7 +115,6 @@ terraform {
 provider "tofukit" {
   debug                 = true  # Enable debug output to see URI resolution
   output_format         = "json"
-  output_path           = ".tofukit"
   claude_home_directory = "~/.claude"
 }
 

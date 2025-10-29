@@ -352,7 +352,7 @@ This approach:
 
 **File Resource** (`tofukit_file`)
 - Defines individual reusable files that can be shared across projects
-- Saved to registry with unique `name` identifier
+- Saved to registry with the `name` attribute as the file path
 - Supports both static `content` and dynamic `instructions` (mutually exclusive)
 - Can include `verifications` for validation
 - Referenced in project/stack `files` maps: `files = { "path" = tofukit_file.name }`
@@ -360,7 +360,18 @@ This approach:
   - Share common files (.gitignore, LICENSE) across multiple projects
   - Break down large stack definitions into manageable file resources
   - Create libraries of reusable file templates
-- **Validation**: Must have either `content` OR `instructions`, but not both
+- **Validation**:
+  - Must have either `content` OR `instructions`, but not both
+  - `name` must be a filesystem-compliant path following these rules:
+    - No spaces (use hyphens or underscores instead)
+    - No invalid characters: `< > : " | ? * \`
+    - No leading/trailing whitespace
+    - No trailing dots
+    - No Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+    - Each path component must not exceed 255 characters
+    - Use forward slashes `/` for directory separators
+  - **Example valid names**: `README.md`, `.gitignore`, `src/main.go`, `my-file_v2.txt`
+  - **Example invalid names**: `hello world.txt`, `file<name>.txt`, `CON`, `file.`
 
 **Query Data Source** (`tofukit_query`)
 - Execute ad-hoc Claude queries
