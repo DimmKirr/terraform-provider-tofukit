@@ -8,13 +8,22 @@ resource "tofukit_feature" "version_command" {
   name        = "version-command"
   description = "Version command showing project version information"
 
-  prompt = "Implement a Click CLI with built-in version display using --version flag and version subcommand"
+  requirements = [
+    {
+      name = "Version Command Implementation"
+      instructions = [
+        {
+          prompt = "Implement a Click CLI with built-in version display using --version flag and version subcommand"
 
-  constraints = [
-    "Use Click's built-in @click.version_option decorator",
-    "Version must show project version ${var.project_version}",
-    "Program name must be ${var.project_name}",
-    "Provide both --version flag and 'version' subcommand"
+          constraints = [
+            "Use Click's built-in @click.version_option decorator",
+            "Version must show project version ${var.project_version}",
+            "Program name must be ${var.project_name}",
+            "Provide both --version flag and 'version' subcommand"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -110,13 +119,22 @@ resource "tofukit_feature" "readme" {
   name        = "readme"
   description = "Comprehensive README.md documentation"
 
-  prompt = "Create professional README.md for Python Click CLI application"
+  requirements = [
+    {
+      name = "README Documentation"
+      instructions = [
+        {
+          prompt = "Create professional README.md for Python Click CLI application"
 
-  constraints = [
-    "NO emojis or badges",
-    "Use proper markdown headers (##)",
-    "Include code blocks with syntax highlighting",
-    "Maximum 500 lines for maintainability"
+          constraints = [
+            "NO emojis or badges",
+            "Use proper markdown headers (##)",
+            "Include code blocks with syntax highlighting",
+            "Maximum 500 lines for maintainability"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {

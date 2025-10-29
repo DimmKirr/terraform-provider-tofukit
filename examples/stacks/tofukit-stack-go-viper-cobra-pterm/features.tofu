@@ -8,12 +8,21 @@ resource "tofukit_feature" "viper_config" {
   name        = "viper-config"
   description = "Viper-based configuration management with YAML support"
 
-  prompt = "Implement configuration management using Viper with environment variable support and YAML config files"
+  requirements = [
+    {
+      name = "Configuration Management"
+      instructions = [
+        {
+          prompt = "Implement configuration management using Viper with environment variable support and YAML config files"
 
-  constraints = [
-    "Configuration file must be optional, not required",
-    "Use environment prefix matching project name",
-    "Support user home directory and current directory for config search",
+          constraints = [
+            "Configuration file must be optional, not required",
+            "Use environment prefix matching project name",
+            "Support user home directory and current directory for config search",
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -32,12 +41,21 @@ resource "tofukit_feature" "version_command" {
   name        = "version-command"
   description = "Version command with Git commit tracking via ldflags"
 
-  prompt = "Implement version command showing project version and Git commit, integrated with Cobra CLI and build-time ldflags injection"
+  requirements = [
+    {
+      name = "Version Command Implementation"
+      instructions = [
+        {
+          prompt = "Implement version command showing project version and Git commit, integrated with Cobra CLI and build-time ldflags injection"
 
-  constraints = [
-    "Version and GitCommit variables must be injectable via ldflags",
-    "Use runtime/debug.ReadBuildInfo() as fallback",
-    "Version command must use pterm for formatted output"
+          constraints = [
+            "Version and GitCommit variables must be injectable via ldflags",
+            "Use runtime/debug.ReadBuildInfo() as fallback",
+            "Version command must use pterm for formatted output"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -60,12 +78,21 @@ resource "tofukit_feature" "pterm_logger" {
   name        = "pterm-logger"
   description = "Structured logging with pterm and slog integration"
 
-  prompt = "Implement logging abstraction using pterm slog handler with quiet mode support and customizable styles"
+  requirements = [
+    {
+      name = "Logger Implementation"
+      instructions = [
+        {
+          prompt = "Implement logging abstraction using pterm slog handler with quiet mode support and customizable styles"
 
-  constraints = [
-    "Quiet mode must suppress Info/Debug/Warn but NOT Error/Fatal",
-    "Use pterm slog handler for structured logging",
-    "Provide Unicode symbols for log levels"
+          constraints = [
+            "Quiet mode must suppress Info/Debug/Warn but NOT Error/Fatal",
+            "Use pterm slog handler for structured logging",
+            "Provide Unicode symbols for log levels"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -82,12 +109,21 @@ resource "tofukit_feature" "taskfile" {
   name        = "taskfile"
   description = "Task automation with Taskfile supporting version injection"
 
-  prompt = "Create Taskfile.yaml for build automation with Git commit injection via ldflags"
+  requirements = [
+    {
+      name = "Taskfile Configuration"
+      instructions = [
+        {
+          prompt = "Create Taskfile.yaml for build automation with Git commit injection via ldflags"
 
-  constraints = [
-    "Version must be injected via ldflags during build",
-    "Build output to bin/ directory",
-    "Support CGO_ENABLED=0 for static builds"
+          constraints = [
+            "Version must be injected via ldflags during build",
+            "Build output to bin/ directory",
+            "Support CGO_ENABLED=0 for static builds"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -104,12 +140,21 @@ resource "tofukit_feature" "gitignore" {
   name        = "gitignore"
   description = "Standard Go project .gitignore"
 
-  prompt = "Create .gitignore following Go community standards with IDE and OS file patterns"
+  requirements = [
+    {
+      name = "Git Ignore Configuration"
+      instructions = [
+        {
+          prompt = "Create .gitignore following Go community standards with IDE and OS file patterns"
 
-  constraints = [
-    "Cover binaries, test outputs, coverage files, IDE files, OS files",
-    "Include project-specific binary name",
-    "Include project-specific config files"
+          constraints = [
+            "Cover binaries, test outputs, coverage files, IDE files, OS files",
+            "Include project-specific binary name",
+            "Include project-specific config files"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {
@@ -126,13 +171,22 @@ resource "tofukit_feature" "readme" {
   name        = "readme"
   description = "Comprehensive README.md documentation"
 
-  prompt = "Create professional README.md with project overview, installation, usage, and development sections"
+  requirements = [
+    {
+      name = "README Documentation"
+      instructions = [
+        {
+          prompt = "Create professional README.md with project overview, installation, usage, and development sections"
 
-  constraints = [
-    "NO emojis or badges",
-    "Use proper markdown headers (##)",
-    "Include code blocks with syntax highlighting",
-    "Maximum 500 lines for maintainability"
+          constraints = [
+            "NO emojis or badges",
+            "Use proper markdown headers (##)",
+            "Include code blocks with syntax highlighting",
+            "Maximum 500 lines for maintainability"
+          ]
+        }
+      ]
+    }
   ]
 
   files = {

@@ -49,13 +49,13 @@ tasks:
         fi
 
   test:
-    desc: Run all tests
-    deps:
-      - test:query
-      - test:example_hello_world
-      - test:example_click_cli
-      - test:example_go_viper_cli
-      - test:project_files
+    desc: Run all tests sequentially to avoid resource exhaustion
+    cmds:
+      - task: test:query
+      - task: test:example_hello_world
+      - task: test:example_click_cli
+      - task: test:example_go_viper_cli
+      - task: test:project_files
 
 
   test:query:
@@ -87,4 +87,9 @@ tasks:
     deps: [build, install]
     cmds:
       - go test ./test -v -run TestProject -timeout={{.TEST_TIMEOUT}}
+
+  docs:
+    desc: Generate provider documentation
+    cmds:
+      - tfplugindocs generate
 

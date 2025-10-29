@@ -5,13 +5,15 @@ output "stack" {
 
 output "kits" {
   description = "List of all kits included in the stack"
-  value = [
-    tofukit_language.go,
-    tofukit_tool.go_mod,
-    tofukit_framework.cobra,
-    tofukit_framework.viper,
-    tofukit_framework.pterm,
-  ]
+  value = {
+    language = tofukit_language.go,
+    tool      = tofukit_tool.go_mod,
+    framework = {
+      cobra = tofukit_framework.cobra,
+      viper = tofukit_framework.viper,
+      pterm = tofukit_framework.pterm,
+    }
+  }
 }
 
 output "features" {

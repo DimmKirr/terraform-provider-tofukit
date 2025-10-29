@@ -262,11 +262,11 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	// Create a timeout context if one isn't already set
 	execCtx := ctx
 	if _, ok := ctx.Deadline(); !ok {
-		// No deadline set, create one (3 minutes for complex operations)
+		// No deadline set, create one (10 minutes for complex operations)
 		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(ctx, 3*time.Minute)
+		execCtx, cancel = context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
-		fmt.Printf("🔧 DEBUG: Set 3 minute timeout for Claude execution\n")
+		fmt.Printf("🔧 DEBUG: Set 10 minute timeout for Claude execution\n")
 	}
 
 	// Use unbuffer as the main command
@@ -428,7 +428,7 @@ func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string
 	execCtx := ctx
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(ctx, 3*time.Minute)
+		execCtx, cancel = context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 	}
 

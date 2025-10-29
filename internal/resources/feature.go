@@ -28,8 +28,7 @@ type FeatureResourceModel struct {
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
 	Description   types.String                `tfsdk:"description"`
-	Prompt        types.String                `tfsdk:"prompt"`
-	Constraints   types.List                  `tfsdk:"constraints"`
+	Requirements  []schemas.RequirementModel  `tfsdk:"requirements"` // Now uses common type!
 	Files         types.Map                   `tfsdk:"files"`
 	Kits          types.Dynamic               `tfsdk:"kits"`
 	Verifications []schemas.VerificationModel `tfsdk:"verifications"`
@@ -65,16 +64,8 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Description of what this feature does",
 				Optional:            true,
 			},
-			"prompt": schema.StringAttribute{
-				MarkdownDescription: "What the feature does (LLM-facing requirement)",
-				Required:            true,
-			},
-			"constraints": schema.ListAttribute{
-				MarkdownDescription: "Implementation constraints (what NOT to do)",
-				Optional:            true,
-				ElementType:         types.StringType,
-			},
-			"files": schemas.GetFilesMapAttribute(),
+			"requirements": schemas.GetRequirementsListAttribute(), // Now uses common type!
+			"files":        schemas.GetFilesMapAttribute(),
 			"kits": schema.DynamicAttribute{
 				MarkdownDescription: "Kit dependencies for this feature",
 				Optional:            true,
@@ -132,21 +123,22 @@ func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	// Validate: prompt is required (handled by schema Required: true, but double-check)
-	if data.Prompt.IsNull() || data.Prompt.ValueString() == "" {
+	// Validate: at least one requirement must be specified
+	if len(data.Requirements) == 0 {
 		resp.Diagnostics.AddError(
 			"Invalid Feature Resource Configuration",
-			"Feature resource must have a 'prompt' that describes what the feature does.",
+			"Feature resource must have at least one 'requirement' that describes what the feature does.",
 		)
 		return
 	}
 
-	// Validate: at least one of files, kits, or verifications
+	// Validate: at least one of files, kits, requirements, or verifications
 	hasFiles := !data.Files.IsNull() && len(data.Files.Elements()) > 0
 	hasKits := !data.Kits.IsNull()
+	hasRequirements := len(data.Requirements) > 0
 	hasVerifications := len(data.Verifications) > 0
 
-	if !hasFiles && !hasKits && !hasVerifications {
+	if !hasFiles && !hasKits && !hasRequirements && !hasVerifications {
 		resp.Diagnostics.AddError(
 			"Invalid Feature Resource Configuration",
 			"Feature resource must have at least one of: 'files', 'kits', or 'verifications'.",
@@ -161,7 +153,7 @@ func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest
 		"feature_id":        data.ID.ValueString(),
 		"name":              data.Name.ValueString(),
 		"link":              data.Link.ValueString(),
-		"prompt":            data.Prompt.ValueString(),
+		"has_requirements":  len(data.Requirements),
 		"has_files":         hasFiles,
 		"has_kits":          hasKits,
 		"has_verifications": hasVerifications,
@@ -203,21 +195,22 @@ func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// Validate: prompt is required
-	if data.Prompt.IsNull() || data.Prompt.ValueString() == "" {
+	// Validate: at least one requirement must be specified
+	if len(data.Requirements) == 0 {
 		resp.Diagnostics.AddError(
 			"Invalid Feature Resource Configuration",
-			"Feature resource must have a 'prompt' that describes what the feature does.",
+			"Feature resource must have at least one 'requirement' that describes what the feature does.",
 		)
 		return
 	}
 
-	// Validate: at least one of files, kits, or verifications
+	// Validate: at least one of files, kits, requirements, or verifications
 	hasFiles := !data.Files.IsNull() && len(data.Files.Elements()) > 0
 	hasKits := !data.Kits.IsNull()
+	hasRequirements := len(data.Requirements) > 0
 	hasVerifications := len(data.Verifications) > 0
 
-	if !hasFiles && !hasKits && !hasVerifications {
+	if !hasFiles && !hasKits && !hasRequirements && !hasVerifications {
 		resp.Diagnostics.AddError(
 			"Invalid Feature Resource Configuration",
 			"Feature resource must have at least one of: 'files', 'kits', or 'verifications'.",
@@ -233,7 +226,7 @@ func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest
 		"feature_id":        data.ID.ValueString(),
 		"name":              data.Name.ValueString(),
 		"link":              data.Link.ValueString(),
-		"prompt":            data.Prompt.ValueString(),
+		"has_requirements":  len(data.Requirements),
 		"has_files":         hasFiles,
 		"has_kits":          hasKits,
 		"has_verifications": hasVerifications,

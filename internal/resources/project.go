@@ -446,8 +446,9 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
 	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
 	hasRequirements := len(data.Requirements) > 0
+	hasFeatures := !data.Features.IsNull() && !data.Features.IsUnknown()
 
-	if !hasFiles && !hasKits && !hasStack && !hasRequirements {
+	if !hasFiles && !hasKits && !hasStack && !hasRequirements && !hasFeatures {
 		resp.Diagnostics.AddError(
 			"Empty Project Configuration",
 			fmt.Sprintf(
@@ -455,6 +456,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 					"  - file {} blocks (explicit files to create)\n"+
 					"  - kits (language/framework setup)\n"+
 					"  - stack (reference to a stack resource)\n"+
+					"  - features (capability bundles with files/kits/requirements)\n"+
 					"  - requirement {} blocks (features to implement)\n\n"+
 					"Example - Bootstrap a new project using requirements:\n"+
 					"  requirement {\n"+
@@ -475,6 +477,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		"has_files":        hasFiles,
 		"has_kits":         hasKits,
 		"has_stack":        hasStack,
+		"has_features":     hasFeatures,
 		"has_requirements": hasRequirements,
 	})
 
@@ -786,8 +789,9 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
 	hasStack := !data.Stack.IsNull() && !data.Stack.IsUnknown()
 	hasRequirements := len(data.Requirements) > 0
+	hasFeatures := !data.Features.IsNull() && !data.Features.IsUnknown()
 
-	if !hasFiles && !hasKits && !hasStack && !hasRequirements {
+	if !hasFiles && !hasKits && !hasStack && !hasRequirements && !hasFeatures {
 		resp.Diagnostics.AddError(
 			"Empty Project Configuration",
 			fmt.Sprintf(
@@ -808,6 +812,7 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		"has_files":        hasFiles,
 		"has_kits":         hasKits,
 		"has_stack":        hasStack,
+		"has_features":     hasFeatures,
 		"has_requirements": hasRequirements,
 	})
 
@@ -1262,6 +1267,128 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 		"total_requirements":   len(data.Requirements) + len(featureRequirements),
 	})
 
+	// NEW: Collect stack kits, requirements, and feature requirements
+	var reg *registry.Registry
+	if provData, ok := r.ProviderData.(interface {
+		GetRegistry() *registry.Registry
+	}); ok {
+		reg = provData.GetRegistry()
+	}
+
+	var stackKits map[string]interface{}
+	var stackKitRequirements []schemas.RequirementModel
+	var stackFeatureRequirements []schemas.RequirementModel
+
+	if reg != nil {
+		// Collect stack kits and their requirements
+		stackKits, stackKitRequirements = r.collectStackKitsAndRequirements(ctx, data, reg)
+
+		// Convert and add stack kit requirements to outputData
+		for _, req := range stackKitRequirements {
+			reqData := map[string]interface{}{
+				"name": req.Name.ValueString(),
+			}
+
+			// Add instructions
+			instructions := []map[string]interface{}{}
+			for _, inst := range req.Instructions {
+				instData := map[string]interface{}{
+					"prompt": inst.Prompt.ValueString(),
+				}
+
+				// Add constraints if present
+				if inst.Constraints != nil && len(inst.Constraints) > 0 {
+					constraints := []string{}
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							constraints = append(constraints, c.ValueString())
+						}
+					}
+					if len(constraints) > 0 {
+						instData["constraints"] = constraints
+					}
+				}
+
+				instructions = append(instructions, instData)
+			}
+			reqData["instructions"] = instructions
+
+			// Add verifications if present
+			if len(req.Verifications) > 0 {
+				verifications := []map[string]string{}
+				for _, v := range req.Verifications {
+					verif := map[string]string{
+						"command": v.Command.ValueString(),
+					}
+					if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+						verif["expect"] = v.Expect.ValueString()
+					}
+					verifications = append(verifications, verif)
+				}
+				reqData["verification"] = verifications
+			}
+
+			outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
+		}
+
+		// Collect stack feature requirements
+		stackFeatureRequirements = r.collectStackFeaturesRequirements(ctx, data, reg)
+
+		// Convert and add stack feature requirements to outputData
+		for _, req := range stackFeatureRequirements {
+			reqData := map[string]interface{}{
+				"name": req.Name.ValueString(),
+			}
+
+			// Add instructions
+			instructions := []map[string]interface{}{}
+			for _, inst := range req.Instructions {
+				instData := map[string]interface{}{
+					"prompt": inst.Prompt.ValueString(),
+				}
+
+				// Add constraints if present
+				if inst.Constraints != nil && len(inst.Constraints) > 0 {
+					constraints := []string{}
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							constraints = append(constraints, c.ValueString())
+						}
+					}
+					if len(constraints) > 0 {
+						instData["constraints"] = constraints
+					}
+				}
+
+				instructions = append(instructions, instData)
+			}
+			reqData["instructions"] = instructions
+
+			// Add verifications if present
+			if len(req.Verifications) > 0 {
+				verifications := []map[string]string{}
+				for _, v := range req.Verifications {
+					verif := map[string]string{
+						"command": v.Command.ValueString(),
+					}
+					if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+						verif["expect"] = v.Expect.ValueString()
+					}
+					verifications = append(verifications, verif)
+				}
+				reqData["verification"] = verifications
+			}
+
+			outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
+		}
+
+		tflog.Info(ctx, "Added stack requirements to output", map[string]interface{}{
+			"stack_kit_requirements":     len(stackKitRequirements),
+			"stack_feature_requirements": len(stackFeatureRequirements),
+			"total_stack_requirements":   len(stackKitRequirements) + len(stackFeatureRequirements),
+		})
+	}
+
 	// Use provided files (may be enriched with action-based instructions)
 	mergedFiles := filesToUse
 	tflog.Info(ctx, "Collected merged files for output", map[string]interface{}{
@@ -1459,6 +1586,17 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 
 	if debugFile != nil {
 		fmt.Fprintf(debugFile, "DEBUG buildOutputData: final kits map has %d entries\n", len(kits))
+	}
+
+	// Merge stack kits into the kits map
+	if stackKits != nil {
+		for kitID, kitData := range stackKits {
+			kits[kitID] = kitData
+		}
+		tflog.Info(ctx, "Merged stack kits into kits map", map[string]interface{}{
+			"stack_kit_count": len(stackKits),
+			"total_kit_count": len(kits),
+		})
 	}
 
 	outputData["kits"] = kits
@@ -2123,8 +2261,7 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 					if feature, ok := featureData.(FeatureResourceModel); ok {
 						// Convert FeatureResourceModel to FeatureModel
 						return &schemas.FeatureModel{
-							Prompt:        feature.Prompt,
-							Constraints:   convertListToStringSlice(ctx, feature.Constraints),
+							Requirements:  feature.Requirements,
 							Files:         feature.Files,
 							Kits:          feature.Kits,
 							Verifications: feature.Verifications,
@@ -2203,18 +2340,17 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 
 						if feature, ok := featureData.(FeatureResourceModel); ok {
 							tflog.Info(ctx, "Successfully cast to FeatureResourceModel", map[string]interface{}{
-								"feature_id":    featureID,
-								"feature_name":  feature.Name.ValueString(),
-								"has_files":     !feature.Files.IsNull(),
-								"files_count":   len(feature.Files.Elements()),
-								"has_prompt":    !feature.Prompt.IsNull(),
-								"prompt_length": len(feature.Prompt.ValueString()),
+								"feature_id":         featureID,
+								"feature_name":       feature.Name.ValueString(),
+								"has_files":          !feature.Files.IsNull(),
+								"files_count":        len(feature.Files.Elements()),
+								"has_requirements":   len(feature.Requirements) > 0,
+								"requirements_count": len(feature.Requirements),
 							})
 
 							// Convert FeatureResourceModel to FeatureModel
 							return &schemas.FeatureModel{
-								Prompt:        feature.Prompt,
-								Constraints:   convertListToStringSlice(ctx, feature.Constraints),
+								Requirements:  feature.Requirements,
 								Files:         feature.Files,
 								Kits:          feature.Kits,
 								Verifications: feature.Verifications, // Already the correct type
@@ -2253,21 +2389,88 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	tflog.Info(ctx, "Parsing as inline feature definition", nil)
 	featureModel := &schemas.FeatureModel{}
 
-	// Extract prompt (required)
-	if promptVal, exists := attrs["prompt"]; exists {
-		if promptStr, ok := promptVal.(types.String); ok {
-			featureModel.Prompt = promptStr
-		}
-	}
-
-	// Extract constraints (optional)
-	if constraintsVal, exists := attrs["constraints"]; exists {
-		if constraintsList, ok := constraintsVal.(types.List); ok {
-			elements := constraintsList.Elements()
-			featureModel.Constraints = make([]types.String, 0, len(elements))
+	// Extract requirements (optional)
+	if requirementsVal, exists := attrs["requirements"]; exists {
+		if requirementsList, ok := requirementsVal.(types.List); ok {
+			elements := requirementsList.Elements()
+			featureModel.Requirements = make([]schemas.RequirementModel, 0, len(elements))
 			for _, elem := range elements {
-				if strVal, ok := elem.(types.String); ok {
-					featureModel.Constraints = append(featureModel.Constraints, strVal)
+				if reqObj, ok := elem.(types.Object); ok {
+					reqAttrs := reqObj.Attributes()
+					req := schemas.RequirementModel{}
+
+					// Extract name
+					if nameVal, exists := reqAttrs["name"]; exists {
+						if nameStr, ok := nameVal.(types.String); ok {
+							req.Name = nameStr
+						}
+					}
+
+					// Extract instructions
+					if instructionsVal, exists := reqAttrs["instructions"]; exists {
+						if instrList, ok := instructionsVal.(types.List); ok {
+							instrElements := instrList.Elements()
+							req.Instructions = make([]schemas.InstructionModel, 0, len(instrElements))
+							for _, instrElem := range instrElements {
+								if instrObj, ok := instrElem.(types.Object); ok {
+									instrAttrs := instrObj.Attributes()
+									instr := schemas.InstructionModel{}
+
+									// Extract prompt
+									if promptVal, exists := instrAttrs["prompt"]; exists {
+										if promptStr, ok := promptVal.(types.String); ok {
+											instr.Prompt = promptStr
+										}
+									}
+
+									// Extract constraints
+									if constraintsVal, exists := instrAttrs["constraints"]; exists {
+										if constraintsList, ok := constraintsVal.(types.List); ok {
+											constraintsElements := constraintsList.Elements()
+											instr.Constraints = make([]types.String, 0, len(constraintsElements))
+											for _, constraintElem := range constraintsElements {
+												if constraintStr, ok := constraintElem.(types.String); ok {
+													instr.Constraints = append(instr.Constraints, constraintStr)
+												}
+											}
+										}
+									}
+
+									req.Instructions = append(req.Instructions, instr)
+								}
+							}
+						}
+					}
+
+					// Extract verifications
+					if verificationsVal, exists := reqAttrs["verifications"]; exists {
+						if verifsList, ok := verificationsVal.(types.List); ok {
+							verifsElements := verifsList.Elements()
+							req.Verifications = make([]schemas.VerificationModel, 0, len(verifsElements))
+							for _, verifElem := range verifsElements {
+								if verifObj, ok := verifElem.(types.Object); ok {
+									verifAttrs := verifObj.Attributes()
+									verif := schemas.VerificationModel{}
+
+									if commandVal, exists := verifAttrs["command"]; exists {
+										if commandStr, ok := commandVal.(types.String); ok {
+											verif.Command = commandStr
+										}
+									}
+
+									if expectVal, exists := verifAttrs["expect"]; exists {
+										if expectStr, ok := expectVal.(types.String); ok {
+											verif.Expect = expectStr
+										}
+									}
+
+									req.Verifications = append(req.Verifications, verif)
+								}
+							}
+						}
+					}
+
+					featureModel.Requirements = append(featureModel.Requirements, req)
 				}
 			}
 		}
@@ -2548,22 +2751,12 @@ func (r *ProjectResourceFinal) convertFeaturesToRequirements(ctx context.Context
 			continue
 		}
 
-		req := schemas.RequirementModel{
-			Name: types.StringValue(fmt.Sprintf("Feature: %s", featureName)),
-			Instructions: []schemas.InstructionModel{
-				{
-					Prompt:      feature.Prompt,
-					Constraints: feature.Constraints,
-				},
-			},
-			Verifications: feature.Verifications,
-		}
+		// Feature already has requirements! Just pass them through
+		requirements = append(requirements, feature.Requirements...)
 
-		requirements = append(requirements, req)
-
-		tflog.Debug(ctx, "Converted feature to requirement", map[string]interface{}{
-			"feature_name": featureName,
-			"prompt":       feature.Prompt.ValueString(),
+		tflog.Debug(ctx, "Converted feature to requirements", map[string]interface{}{
+			"feature_name":      featureName,
+			"requirement_count": len(feature.Requirements),
 		})
 	}
 
@@ -2616,6 +2809,260 @@ func (r *ProjectResourceFinal) collectFeatureKitIDs(ctx context.Context, data Pr
 	}
 
 	return allKitIDs
+}
+
+// collectStackKitsAndRequirements collects kits and their requirements from the referenced stack
+func (r *ProjectResourceFinal) collectStackKitsAndRequirements(ctx context.Context, data ProjectModelFinal, reg *registry.Registry) (map[string]interface{}, []schemas.RequirementModel) {
+	kitsMap := make(map[string]interface{})
+	var requirements []schemas.RequirementModel
+
+	if reg == nil {
+		return kitsMap, requirements
+	}
+
+	// Get stack ID from project
+	stackID := extractIDFromDynamic(ctx, data.Stack)
+	if stackID == "" {
+		return kitsMap, requirements
+	}
+
+	// Get stack from registry
+	stackData, exists := reg.GetStack(stackID)
+	if !exists {
+		return kitsMap, requirements
+	}
+
+	stack, ok := stackData.(StackResourceModel)
+	if !ok {
+		return kitsMap, requirements
+	}
+
+	// Extract kits from stack - they're embedded directly, not registry references
+	if stack.Kits.IsNull() || stack.Kits.IsUnknown() {
+		return kitsMap, requirements
+	}
+
+	// Get underlying value from Dynamic
+	underlyingVal := stack.Kits.UnderlyingValue()
+
+	// Extract elements (could be List or Tuple)
+	var kitElements []attr.Value
+	if listVal, ok := underlyingVal.(types.List); ok && !listVal.IsNull() {
+		kitElements = listVal.Elements()
+	} else if tupleVal, ok := underlyingVal.(types.Tuple); ok && !tupleVal.IsNull() {
+		kitElements = tupleVal.Elements()
+	}
+
+	tflog.Info(ctx, "Collecting kits and requirements from stack", map[string]interface{}{
+		"stack_id":  stackID,
+		"kit_count": len(kitElements),
+	})
+
+	// For each kit embedded in the stack
+	for _, kitElem := range kitElements {
+		kitObj, ok := kitElem.(types.Object)
+		if !ok || kitObj.IsNull() {
+			continue
+		}
+
+		attrs := kitObj.Attributes()
+
+		// Extract basic kit info
+		var kitID, kitName, kitDesc, kitVersion string
+		if idAttr, exists := attrs["id"]; exists {
+			if idStr, ok := idAttr.(types.String); ok && !idStr.IsNull() {
+				kitID = idStr.ValueString()
+			}
+		}
+		if nameAttr, exists := attrs["name"]; exists {
+			if nameStr, ok := nameAttr.(types.String); ok && !nameStr.IsNull() {
+				kitName = nameStr.ValueString()
+			}
+		}
+		if descAttr, exists := attrs["description"]; exists {
+			if descStr, ok := descAttr.(types.String); ok && !descStr.IsNull() {
+				kitDesc = descStr.ValueString()
+			}
+		}
+		if verAttr, exists := attrs["version"]; exists {
+			if verStr, ok := verAttr.(types.String); ok && !verStr.IsNull() {
+				kitVersion = verStr.ValueString()
+			}
+		}
+
+		if kitID != "" {
+			kitData := map[string]interface{}{
+				"id":          kitID,
+				"name":        kitName,
+				"description": kitDesc,
+				"version":     kitVersion,
+			}
+			kitsMap[kitID] = kitData
+
+			// Extract requirements from the kit
+			if reqsAttr, exists := attrs["requirements"]; exists {
+				if reqsList, ok := reqsAttr.(types.List); ok && !reqsList.IsNull() {
+					for _, reqElem := range reqsList.Elements() {
+						if reqObj, ok := reqElem.(types.Object); ok && !reqObj.IsNull() {
+							reqAttrs := reqObj.Attributes()
+
+							// Build RequirementModel from embedded data
+							var reqName types.String
+							var reqInstructions []schemas.InstructionModel
+							var reqVerifications []schemas.VerificationModel
+
+							if nameAttr, exists := reqAttrs["name"]; exists {
+								if nameStr, ok := nameAttr.(types.String); ok {
+									reqName = nameStr
+								}
+							}
+
+							// Extract instructions
+							if instAttr, exists := reqAttrs["instructions"]; exists {
+								if instList, ok := instAttr.(types.List); ok && !instList.IsNull() {
+									for _, instElem := range instList.Elements() {
+										if instObj, ok := instElem.(types.Object); ok && !instObj.IsNull() {
+											instAttrs := instObj.Attributes()
+											var prompt types.String
+											var constraints []types.String
+
+											if promptAttr, exists := instAttrs["prompt"]; exists {
+												if promptStr, ok := promptAttr.(types.String); ok {
+													prompt = promptStr
+												}
+											}
+
+											if consAttr, exists := instAttrs["constraints"]; exists {
+												if consList, ok := consAttr.(types.List); ok && !consList.IsNull() {
+													for _, consElem := range consList.Elements() {
+														if consStr, ok := consElem.(types.String); ok {
+															constraints = append(constraints, consStr)
+														}
+													}
+												}
+											}
+
+											reqInstructions = append(reqInstructions, schemas.InstructionModel{
+												Prompt:      prompt,
+												Constraints: constraints,
+											})
+										}
+									}
+								}
+							}
+
+							// Extract verifications
+							if verifAttr, exists := reqAttrs["verifications"]; exists {
+								if verifList, ok := verifAttr.(types.List); ok && !verifList.IsNull() {
+									for _, verifElem := range verifList.Elements() {
+										if verifObj, ok := verifElem.(types.Object); ok && !verifObj.IsNull() {
+											verifAttrs := verifObj.Attributes()
+											var cmd, expect types.String
+
+											if cmdAttr, exists := verifAttrs["command"]; exists {
+												if cmdStr, ok := cmdAttr.(types.String); ok {
+													cmd = cmdStr
+												}
+											}
+											if expAttr, exists := verifAttrs["expect"]; exists {
+												if expStr, ok := expAttr.(types.String); ok {
+													expect = expStr
+												}
+											}
+
+											reqVerifications = append(reqVerifications, schemas.VerificationModel{
+												Command: cmd,
+												Expect:  expect,
+											})
+										}
+									}
+								}
+							}
+
+							requirements = append(requirements, schemas.RequirementModel{
+								Name:          reqName,
+								Instructions:  reqInstructions,
+								Verifications: reqVerifications,
+							})
+						}
+					}
+				}
+			}
+
+			tflog.Debug(ctx, "Collected embedded kit from stack", map[string]interface{}{
+				"kit_id":            kitID,
+				"requirement_count": len(requirements),
+			})
+		}
+	}
+
+	tflog.Info(ctx, "Collected stack kits and requirements", map[string]interface{}{
+		"kit_count":         len(kitsMap),
+		"requirement_count": len(requirements),
+	})
+
+	return kitsMap, requirements
+}
+
+// collectStackFeaturesRequirements collects requirements from stack features
+func (r *ProjectResourceFinal) collectStackFeaturesRequirements(ctx context.Context, data ProjectModelFinal, reg *registry.Registry) []schemas.RequirementModel {
+	var requirements []schemas.RequirementModel
+
+	if reg == nil {
+		return requirements
+	}
+
+	// Get stack ID from project
+	stackID := extractIDFromDynamic(ctx, data.Stack)
+	if stackID == "" {
+		return requirements
+	}
+
+	// Get stack from registry
+	stackData, exists := reg.GetStack(stackID)
+	if !exists {
+		return requirements
+	}
+
+	stack, ok := stackData.(StackResourceModel)
+	if !ok {
+		return requirements
+	}
+
+	// Extract feature IDs from stack
+	stackFeatureIDs := extractIDsFromDynamicList(ctx, stack.Features)
+
+	tflog.Info(ctx, "Collecting requirements from stack features", map[string]interface{}{
+		"stack_id":      stackID,
+		"feature_count": len(stackFeatureIDs),
+	})
+
+	// For each feature in the stack, convert to requirement
+	for _, featureID := range stackFeatureIDs {
+		featureData, exists := reg.GetFeature(featureID)
+		if !exists {
+			continue
+		}
+
+		feature, ok := featureData.(FeatureResourceModel)
+		if !ok {
+			continue
+		}
+
+		// Feature already has requirements! Just pass them through
+		requirements = append(requirements, feature.Requirements...)
+
+		tflog.Debug(ctx, "Collected stack feature requirements", map[string]interface{}{
+			"feature_id":        featureID,
+			"requirement_count": len(feature.Requirements),
+		})
+	}
+
+	tflog.Info(ctx, "Collected stack feature requirements", map[string]interface{}{
+		"requirement_count": len(requirements),
+	})
+
+	return requirements
 }
 
 // collectAndMergeFiles collects files from all sources and merges them with proper precedence
@@ -2915,15 +3362,19 @@ func (r *ProjectResourceFinal) collectStringFields(ctx context.Context, data Pro
 					continue
 				}
 
-				// Feature prompt
-				if !featureModel.Prompt.IsNull() && !featureModel.Prompt.IsUnknown() {
-					fields[fmt.Sprintf("feature_%s_prompt", featureName)] = featureModel.Prompt.ValueString()
-				}
-
-				// Feature constraints
-				for i, constraint := range featureModel.Constraints {
-					if !constraint.IsNull() && !constraint.IsUnknown() {
-						fields[fmt.Sprintf("feature_%s_constraint_%d", featureName, i)] = constraint.ValueString()
+				// Feature requirements - instructions and constraints
+				for reqIdx, req := range featureModel.Requirements {
+					for instrIdx, instr := range req.Instructions {
+						// Instruction prompt
+						if !instr.Prompt.IsNull() && !instr.Prompt.IsUnknown() {
+							fields[fmt.Sprintf("feature_%s_req_%d_instr_%d_prompt", featureName, reqIdx, instrIdx)] = instr.Prompt.ValueString()
+						}
+						// Instruction constraints
+						for constraintIdx, constraint := range instr.Constraints {
+							if !constraint.IsNull() && !constraint.IsUnknown() {
+								fields[fmt.Sprintf("feature_%s_req_%d_instr_%d_constraint_%d", featureName, reqIdx, instrIdx, constraintIdx)] = constraint.ValueString()
+							}
+						}
 					}
 				}
 			}
