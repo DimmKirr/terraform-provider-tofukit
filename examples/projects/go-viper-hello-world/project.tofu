@@ -40,54 +40,9 @@ resource "tofukit_project" "go_hello" {
   # Stack contains: kits, features, and files - everything needed for the project
   stack = module.go_viper_cobra_pterm.stack
 
-  # Project-specific features (inline feature definition)
+  # Project-specific features (reference standalone feature resources)
   features = {
-    "hello_command" = {
-      prompt = "Add a hello command to demonstrate basic CLI functionality"
-
-      files = {
-        "cmd/hello.go" = {
-          instructions = [
-            {
-              prompt = <<-EOF
-              Create cmd/hello.go as a Cobra subcommand:
-
-              PACKAGE & IMPORTS:
-              - Package: cmd
-              - Imports: ${local.project_module_path}/internal/logger, github.com/spf13/cobra
-
-              HELLO COMMAND (var helloCmd):
-              - Use: "${local.project_name} [name]"
-              - Short: "Say hello to someone"
-              - Long: "Greet someone by name, or the world if no name is provided"
-              - Args: cobra.MaximumNArgs(1)
-              - Run: Extract name from args (default "World"), log with logger.Info: "Hello, <name>!"
-
-              INIT() FUNCTION:
-              - Register command: rootCmd.AddCommand(helloCmd)
-              EOF
-
-              constraints = [
-                "Use cobra.Command struct literal",
-                "Must call rootCmd.AddCommand(helloCmd) in init()",
-                "Use logger.Info for output"
-              ]
-            }
-          ]
-
-          verifications = [
-            {
-              command = "grep -q 'var helloCmd' cmd/hello.go && echo 'found'"
-              expect  = "found"
-            },
-            {
-              command = "grep -q 'rootCmd\\.AddCommand' cmd/hello.go && echo 'found'"
-              expect  = "found"
-            }
-          ]
-        }
-      }
-    }
+    "hello_command" = tofukit_feature.hello_command
   }
 
   # Note: Terraform automatically creates dependencies from resource references
