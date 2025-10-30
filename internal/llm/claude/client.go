@@ -393,12 +393,19 @@ func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string
 	// Use the prompt JSON directly
 	actualPrompt := promptJSON
 	if len(promptJSON) > 10000 {
-		// Save full prompt to file for very long prompts
-		fullPromptPath := filepath.Join(absOutputPath, "full-prompt.json")
-		if err := os.WriteFile(fullPromptPath, []byte(promptJSON), 0644); err != nil {
-			fmt.Printf("🔧 DEBUG: Failed to write full prompt: %v\n", err)
+		// Save prompt to .debug directory for very long prompts (avoids duplication in output root)
+		debugDir := filepath.Join(absOutputPath, ".debug")
+		if err := os.MkdirAll(debugDir, 0755); err != nil {
+			fmt.Printf("🔧 DEBUG: Failed to create debug directory: %v\n", err)
+		} else {
+			timestamp := time.Now().Format("20060102-150405")
+			promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-%s.json", timestamp))
+			if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err != nil {
+				fmt.Printf("🔧 DEBUG: Failed to write prompt to debug directory: %v\n", err)
+			} else {
+				actualPrompt = fmt.Sprintf("The full instructions are too long for the command line. Please read the file '%s' and execute all the instructions in it.", promptPath)
+			}
 		}
-		actualPrompt = fmt.Sprintf("The full instructions are too long for the command line. Please read the file '%s' and execute all the instructions in it.", fullPromptPath)
 	}
 
 	// Default to sonnet if model not specified

@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-// generateTestTimestamp creates a Unix timestamp for test directories
+// generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
+// Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
 func generateTestTimestamp() string {
-	return fmt.Sprintf("%d", time.Now().Unix())
+	return time.Now().Format("20060102T150405")
 }
 
 // createTestDirectory creates a unique test directory in test-output

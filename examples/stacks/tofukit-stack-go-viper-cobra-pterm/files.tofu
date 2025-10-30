@@ -11,29 +11,43 @@ resource "tofukit_file" "viper_config_internal" {
   instructions = [
     {
       prompt = <<-EOF
-      Create Viper configuration abstraction with:
-      - Config struct: LogLevel (string), LogPlainText (bool), ConfigFile (string)
-      - LoadConfig(): Set env prefix to project name, enable AutomaticEnv, search for config in current dir and home dir, unmarshal to struct
-      - SaveConfig(): Write config to .{project_name}.yaml in current directory
-      - Integrate with internal/logger for re-initialization after config load
+      Create Viper configuration abstraction that provides config loading from files and environment variables.
+
+      REQUIRED API (for cobra integration):
+      - LoadConfig(configFile string) error - Load config from optional file path or auto-search
+        - configFile parameter: if non-empty, use that specific file; if empty, search defaults
+        - Returns: error (missing file is NOT an error, only read failures)
+
+      REQUIRED BEHAVIOR:
+      - Config struct must include at minimum: LogLevel, LogPlainText fields
+      - Environment variable support with project-name-based prefix
+      - Search order when configFile empty: ./{project}.yaml, ~/{project}.yaml
+      - After loading config, call internal/logger.Initialize() with loaded settings
+      - Abstract viper completely - no direct viper exposure
+
+      IMPLEMENTATION HINTS:
+      - Use viper.SetConfigFile() if configFile provided, otherwise AddConfigPath()
+      - Use viper.AutomaticEnv() for environment variable support
+      - Handle viper.ConfigFileNotFoundError gracefully (not an error)
       EOF
 
       constraints = [
-        "DO NOT expose viper directly - abstraction layer only",
-        "Config file absence should NOT cause errors"
+        "LoadConfig signature MUST match: func LoadConfig(configFile string) error",
+        "Missing config files are NOT errors - use defaults",
+        "Never expose viper types in public API"
       ]
     }
   ]
 
   verifications = [
     {
-      command = "grep -q 'func LoadConfig()' internal/config/config.go"
+      command = "grep -q 'func LoadConfig(.*string).*error' internal/config/config.go"
     },
     {
-      command = "grep -q 'func SaveConfig()' internal/config/config.go"
+      command = "grep -q 'SetEnvPrefix\\|AutomaticEnv' internal/config/config.go"
     },
     {
-      command = "grep -q 'SetEnvPrefix' internal/config/config.go"
+      command = "grep -q 'logger\\.Initialize' internal/config/config.go"
     }
   ]
 }
@@ -123,33 +137,50 @@ resource "tofukit_file" "pterm_logger_internal" {
   instructions = [
     {
       prompt = <<-EOF
-      Create logger package with pterm+slog integration:
-      - Package variables: defaultLogger (*slog.Logger), quietMode (bool)
-      - Initialize(logLevel string, logPlainText bool): Parse log level, create pterm handler, set styles
-      - SetQuietMode(bool): Control Info/Debug/Warn suppression
-      - Methods: Info, Debug, Warn, Error, Fatal
-      - customizePtermStyle(): Set Unicode symbols (ℹ ⚠ ✔ ⨯ ⚙) with colors
+      Create structured logging abstraction using pterm slog handler with quiet mode support.
+
+      REQUIRED API (for config integration):
+      - Initialize(logLevel string, logPlainText bool) - Setup logger with pterm handler
+        - logLevel: string like "debug", "info", "warn", "error" - parse to slog.Level
+        - logPlainText: if true, disable pterm styling
+      - SetQuietMode(bool) - Enable/disable quiet mode
+      - Standard log methods: Info, Debug, Warn, Error, Fatal
+
+      REQUIRED BEHAVIOR:
+      - Quiet mode: suppress Info/Debug/Warn output, NEVER suppress Error/Fatal
+      - Use pterm.NewSlogHandler for structured logging with visual enhancement
+      - Fatal() should log and os.Exit(1), never use panic()
+      - Use Unicode symbols for log levels (ℹ ⚠ ✔ ⨯ ⚙) with appropriate colors
+
+      IMPLEMENTATION HINTS:
+      - Parse log level: use slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError
+      - pterm handler creation: pterm.NewSlogHandler(&pterm.SlogOptions{...})
+      - Quiet mode check: skip output for Info/Debug/Warn when enabled
       EOF
 
       constraints = [
-        "Error and Fatal must ALWAYS log regardless of quiet mode",
-        "NO panic() - use Fatal() instead"
+        "Error and Fatal MUST always log (ignore quiet mode)",
+        "Fatal must call os.Exit(1), never panic()",
+        "All methods must support structured logging (key-value pairs)"
       ]
     }
   ]
 
   verifications = [
     {
-      command = "grep -q 'func Initialize' internal/logger/logger.go"
+      command = "grep -q 'func Initialize.*string.*bool' internal/logger/logger.go"
     },
     {
-      command = "grep -q 'func SetQuietMode' internal/logger/logger.go"
+      command = "grep -q 'func SetQuietMode.*bool' internal/logger/logger.go"
     },
     {
       command = "grep -q 'func Info\\|func Debug\\|func Warn\\|func Error\\|func Fatal' internal/logger/logger.go"
     },
     {
-      command = "grep -q 'pterm\\.NewSlogHandler' internal/logger/logger.go"
+      command = "grep -q 'pterm\\.NewSlogHandler\\|pterm\\.SlogHandler' internal/logger/logger.go"
+    },
+    {
+      command = "grep -q 'os\\.Exit' internal/logger/logger.go"
     }
   ]
 }
@@ -284,7 +315,8 @@ resource "tofukit_file" "cobra_root_cmd" {
 
       PACKAGE & IMPORTS:
       - Package: cmd
-      - Imports: fmt, os, ${var.project_module_path}/internal/logger, github.com/spf13/cobra
+      - Imports: fmt, os, ${var.project_module_path}/internal/config, ${var.project_module_path}/internal/logger, github.com/spf13/cobra
+      - NOTE: internal/config is provided by viper_config feature
       - NOTE: internal/logger is provided by pterm_logger feature
       - NOTE: Additional imports for version and other commands will be added by features
 
@@ -299,15 +331,11 @@ resource "tofukit_file" "cobra_root_cmd" {
 
       INIT() FUNCTION:
       - Define PersistentFlags: "config" (empty default), "log-level" (default "info"), "quiet" (bool, default false)
-      - Add basic subcommands: rootCmd.AddCommand(helloCmd)
-      - NOTE: Additional commands (version, etc.) are added by features via rootCmd.AddCommand()
-
-      HELLO COMMAND (var helloCmd):
-      - Use: "hello [name]"
-      - Short: "Say hello to someone"
-      - Long: "Greet someone by name, or the world if no name is provided"
-      - Args: cobra.MaximumNArgs(1)
-      - Run: Extract name from args (default "World"), log with logger.Info: "Hello, <name>!"
+      - Add cobra.OnInitialize callback that:
+        1. Gets "config" flag value: configFile, _ := rootCmd.PersistentFlags().GetString("config")
+        2. Calls config.LoadConfig(configFile) and handles error (log with logger.Error and os.Exit(1))
+        3. Gets "quiet" flag value and calls logger.SetQuietMode if true
+      - NOTE: Additional commands (version, hello, etc.) are added by features via rootCmd.AddCommand()
 
       IMPORTANT: This file provides the root command structure that other commands extend.
       Additional subcommands (such as version) are defined in separate files by features.
@@ -317,7 +345,9 @@ resource "tofukit_file" "cobra_root_cmd" {
       constraints = [
         "NO direct cobra.Command initialization - use struct literals",
         "NO ignoring errors from rootCmd.Execute()",
+        "Use internal/config package for config loading (provided by viper_config feature)",
         "Use internal/logger package (provided by pterm_logger feature)",
+        "MUST use cobra.OnInitialize for config loading - NOT in Execute()",
         "PersistentFlags for flags that apply to all subcommands",
         "Keep base commands minimal - features and stack add more commands"
       ]
@@ -342,7 +372,11 @@ resource "tofukit_file" "cobra_root_cmd" {
       expect  = "found"
     },
     {
-      command = "grep -q 'var helloCmd' cmd/root.go && echo 'found'"
+      command = "grep -q 'cobra\\.OnInitialize' cmd/root.go && echo 'found'"
+      expect  = "found"
+    },
+    {
+      command = "grep -q 'config\\.LoadConfig' cmd/root.go && echo 'found'"
       expect  = "found"
     }
   ]

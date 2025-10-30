@@ -17,6 +17,17 @@ resource "tofukit_stack" "go_cli_app" {
     tofukit_framework.pterm,
   ]
 
+  # Stack references features that provide additional capabilities
+  # Using feature IDs to avoid "Unknown during Create" issues when passing through module outputs
+  features = [
+    tofukit_feature.viper_config.id,
+    tofukit_feature.version_command.id,
+    tofukit_feature.pterm_logger.id,
+    tofukit_feature.taskfile.id,
+    tofukit_feature.gitignore.id,
+    tofukit_feature.readme.id,
+  ]
+
   # Stack provides only the minimal entry point (main.go)
   # Cobra framework provides cmd/root.go with extensible command structure
   # Features in features.tofu provide additional capabilities

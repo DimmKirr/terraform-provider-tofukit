@@ -2297,8 +2297,6 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 					if feature, ok := featureData.(FeatureResourceModel); ok {
 						// Convert FeatureResourceModel to FeatureModel
 						return &schemas.FeatureModel{
-							Prompt:        feature.Prompt,
-							Constraints:   feature.Constraints,
 							Requirements:  feature.Requirements,
 							Files:         feature.Files,
 							Kits:          feature.Kits,
@@ -2397,8 +2395,6 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 
 							// Convert FeatureResourceModel to FeatureModel
 							return &schemas.FeatureModel{
-								Prompt:        feature.Prompt,
-								Constraints:   feature.Constraints,
 								Requirements:  feature.Requirements,
 								Files:         feature.Files,
 								Kits:          feature.Kits,
@@ -2437,36 +2433,6 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	// No ID or registry lookup failed - parse as inline definition
 	tflog.Info(ctx, "Parsing as inline feature definition", nil)
 	featureModel := &schemas.FeatureModel{}
-
-	// Extract prompt (required for inline features)
-	if promptVal, exists := attrs["prompt"]; exists {
-		if promptStr, ok := promptVal.(types.String); ok {
-			featureModel.Prompt = promptStr
-			tflog.Info(ctx, "Extracted prompt from inline feature", map[string]interface{}{
-				"prompt": promptStr.ValueString(),
-			})
-		} else {
-			tflog.Warn(ctx, "Prompt attribute is not a string", map[string]interface{}{
-				"prompt_type": fmt.Sprintf("%T", promptVal),
-			})
-		}
-	} else {
-		tflog.Warn(ctx, "Inline feature has no prompt attribute", nil)
-	}
-
-	// Extract constraints (optional)
-	if constraintsVal, exists := attrs["constraints"]; exists {
-		if constraintsList, ok := constraintsVal.(types.List); ok {
-			featureModel.Constraints = constraintsList
-			tflog.Info(ctx, "Extracted constraints from inline feature", map[string]interface{}{
-				"constraint_count": len(constraintsList.Elements()),
-			})
-		} else {
-			tflog.Warn(ctx, "Constraints attribute is not a list", map[string]interface{}{
-				"constraints_type": fmt.Sprintf("%T", constraintsVal),
-			})
-		}
-	}
 
 	// Extract requirements (optional)
 	if requirementsVal, exists := attrs["requirements"]; exists {

@@ -71,6 +71,10 @@ resource "tofukit_tool" "gotask" {
         {
           command = "which task && echo 'task found in PATH'"
           expect  = "task found in PATH"
+        },
+        {
+          command = "test ! -f Makefile && echo 'no Makefile'"
+          expect  = "no Makefile"
         }
       ]
     },

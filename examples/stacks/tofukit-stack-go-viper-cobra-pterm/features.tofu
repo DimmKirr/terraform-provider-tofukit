@@ -1,38 +1,8 @@
 # Features for Go CLI Stack
 # Each feature represents a distinct capability that can be reused across projects
-
-# ========================================
-# CONFIGURATION FEATURE
-# ========================================
-resource "tofukit_feature" "viper_config" {
-  name        = "viper-config"
-  description = "Viper-based configuration management with YAML support"
-
-  requirements = [
-    {
-      name = "Configuration Management"
-      instructions = [
-        {
-          prompt = "Implement configuration management using Viper with environment variable support and YAML config files"
-
-          constraints = [
-            "Configuration file must be optional, not required",
-            "Use environment prefix matching project name",
-            "Support user home directory and current directory for config search",
-          ]
-        }
-      ]
-    }
-  ]
-
-  files = {
-    "internal/config/config.go" = tofukit_file.viper_config_internal
-  }
-
-  kits = [tofukit_framework.viper]
-
-  depends_on = [tofukit_file.viper_config_internal]
-}
+########################################################################################################################
+# User Features
+########################################################################################################################
 
 # ========================================
 # VERSION COMMAND FEATURE
@@ -71,9 +41,40 @@ resource "tofukit_feature" "version_command" {
   verifications = []
 }
 
-# ========================================
-# LOGGER FEATURE
-# ========================================
+########################################################################################################################
+# Dev Features
+########################################################################################################################
+
+resource "tofukit_feature" "viper_config" {
+  name        = "viper-config"
+  description = "Viper-based configuration management with YAML support"
+
+  requirements = [
+    {
+      name = "Configuration Management"
+      instructions = [
+        {
+          prompt = "Implement configuration management using Viper with environment variable support and YAML config files"
+
+          constraints = [
+            "Configuration file must be optional, not required",
+            "Use environment prefix matching project name",
+            "Support user home directory and current directory for config search",
+          ]
+        }
+      ]
+    }
+  ]
+
+  files = {
+    "internal/config/config.go" = tofukit_file.viper_config_internal
+  }
+
+  kits = [tofukit_framework.viper]
+
+  depends_on = [tofukit_file.viper_config_internal]
+}
+
 resource "tofukit_feature" "pterm_logger" {
   name        = "pterm-logger"
   description = "Structured logging with pterm and slog integration"
@@ -99,12 +100,10 @@ resource "tofukit_feature" "pterm_logger" {
     "internal/logger/logger.go" = tofukit_file.pterm_logger_internal
   }
 
+
   kits = [tofukit_framework.pterm]
 }
 
-# ========================================
-# DEVOPS FEATURE
-# ========================================
 resource "tofukit_feature" "taskfile" {
   name        = "taskfile"
   description = "Task automation with Taskfile supporting version injection"
@@ -133,9 +132,7 @@ resource "tofukit_feature" "taskfile" {
   kits = [tofukit_tool.gotask]
 }
 
-# ========================================
-# GIT FEATURE
-# ========================================
+
 resource "tofukit_feature" "gitignore" {
   name        = "gitignore"
   description = "Standard Go project .gitignore"
@@ -164,9 +161,6 @@ resource "tofukit_feature" "gitignore" {
   kits = []
 }
 
-# ========================================
-# DOCUMENTATION FEATURE
-# ========================================
 resource "tofukit_feature" "readme" {
   name        = "readme"
   description = "Comprehensive README.md documentation"

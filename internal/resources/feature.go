@@ -28,8 +28,6 @@ type FeatureResourceModel struct {
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
 	Description   types.String                `tfsdk:"description"`
-	Prompt        types.String                `tfsdk:"prompt"`       // What the feature does (LLM-facing requirement)
-	Constraints   types.List                  `tfsdk:"constraints"`  // Implementation constraints (what NOT to do)
 	Requirements  []schemas.RequirementModel  `tfsdk:"requirements"` // Now uses common type!
 	Files         types.Map                   `tfsdk:"files"`
 	Kits          types.Dynamic               `tfsdk:"kits"`
@@ -66,16 +64,7 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Description of what this feature does",
 				Optional:            true,
 			},
-			"prompt": schema.StringAttribute{
-				MarkdownDescription: "What the feature does (LLM-facing requirement)",
-				Required:            true,
-			},
-			"constraints": schema.ListAttribute{
-				MarkdownDescription: "Implementation constraints (what NOT to do)",
-				Optional:            true,
-				ElementType:         types.StringType,
-			},
-			"requirements": schemas.GetRequirementsListAttribute(), // Now uses common type!
+			"requirements": schemas.GetRequiredRequirementsListAttribute(), // Required for features!
 			"files":        schemas.GetFilesMapAttribute(),
 			"kits": schema.DynamicAttribute{
 				MarkdownDescription: "Kit dependencies for this feature",
@@ -143,20 +132,6 @@ func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	// Validate: at least one of files, kits, requirements, or verifications
-	hasFiles := !data.Files.IsNull() && len(data.Files.Elements()) > 0
-	hasKits := !data.Kits.IsNull()
-	hasRequirements := len(data.Requirements) > 0
-	hasVerifications := len(data.Verifications) > 0
-
-	if !hasFiles && !hasKits && !hasRequirements && !hasVerifications {
-		resp.Diagnostics.AddError(
-			"Invalid Feature Resource Configuration",
-			"Feature resource must have at least one of: 'files', 'kits', or 'verifications'.",
-		)
-		return
-	}
-
 	data.ID = types.StringValue(fmt.Sprintf("feature.%s", data.Name.ValueString()))
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://feature/%s", data.Name.ValueString()))
 
@@ -165,9 +140,9 @@ func (r *FeatureResource) Create(ctx context.Context, req resource.CreateRequest
 		"name":              data.Name.ValueString(),
 		"link":              data.Link.ValueString(),
 		"has_requirements":  len(data.Requirements),
-		"has_files":         hasFiles,
-		"has_kits":          hasKits,
-		"has_verifications": hasVerifications,
+		"has_files":         !data.Files.IsNull() && len(data.Files.Elements()) > 0,
+		"has_kits":          !data.Kits.IsNull(),
+		"has_verifications": len(data.Verifications) > 0,
 	})
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
@@ -215,20 +190,6 @@ func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	// Validate: at least one of files, kits, requirements, or verifications
-	hasFiles := !data.Files.IsNull() && len(data.Files.Elements()) > 0
-	hasKits := !data.Kits.IsNull()
-	hasRequirements := len(data.Requirements) > 0
-	hasVerifications := len(data.Verifications) > 0
-
-	if !hasFiles && !hasKits && !hasRequirements && !hasVerifications {
-		resp.Diagnostics.AddError(
-			"Invalid Feature Resource Configuration",
-			"Feature resource must have at least one of: 'files', 'kits', or 'verifications'.",
-		)
-		return
-	}
-
 	// Preserve computed fields from state
 	data.ID = state.ID
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://feature/%s", data.Name.ValueString()))
@@ -238,9 +199,9 @@ func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest
 		"name":              data.Name.ValueString(),
 		"link":              data.Link.ValueString(),
 		"has_requirements":  len(data.Requirements),
-		"has_files":         hasFiles,
-		"has_kits":          hasKits,
-		"has_verifications": hasVerifications,
+		"has_files":         !data.Files.IsNull() && len(data.Files.Elements()) > 0,
+		"has_kits":          !data.Kits.IsNull(),
+		"has_verifications": len(data.Verifications) > 0,
 	})
 
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)

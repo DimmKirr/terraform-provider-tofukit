@@ -1,36 +1,17 @@
 # ========================================
-# TERRAFORM & PROVIDER CONFIGURATION
-# ========================================
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_format         = "json"
-  # output_path defaults to "./" (current directory)
-  debug                 = true   # Enable debug mode to see project JSON
-  claude_home_directory = "~/.claude"
-}
-
-# ========================================
 # LOCALS
 # ========================================
 locals {
-  project_name        = "go-hello"
+  project_name        = "go-viper-hello-world"
   project_version     = "1.0.0"
-  project_module_path = "example.com/go-hello"
+  project_module_path = "dimmiirr.com/go-viper-hello-world"
 }
 
 # ========================================
 # MODULE: Go CLI Stack
 # ========================================
-module "go_cli" {
-  source = "../stacks/tofukit-stack-go-viper-cobra-pterm"
+module "go_viper_cobra_pterm" {
+  source = "../../stacks/tofukit-stack-go-viper-cobra-pterm"
 
   project_name        = local.project_name
   project_version     = local.project_version
@@ -56,11 +37,58 @@ resource "tofukit_project" "go_hello" {
 
   # Reference the go_cli stack (includes Go, Cobra, Viper, pterm, app files, and README)
   # The stack provides a complete Go CLI application template
-  stack = module.go_cli.stack
+  # Stack contains: kits, features, and files - everything needed for the project
+  stack = module.go_viper_cobra_pterm.stack
 
-  # Reference features from the stack module
-  # Features provide the application files (config, version, logger, etc.)
-  features = module.go_cli.features
+  # Project-specific features (inline feature definition)
+  features = {
+    "hello_command" = {
+      prompt = "Add a hello command to demonstrate basic CLI functionality"
+
+      files = {
+        "cmd/hello.go" = {
+          instructions = [
+            {
+              prompt = <<-EOF
+              Create cmd/hello.go as a Cobra subcommand:
+
+              PACKAGE & IMPORTS:
+              - Package: cmd
+              - Imports: ${local.project_module_path}/internal/logger, github.com/spf13/cobra
+
+              HELLO COMMAND (var helloCmd):
+              - Use: "${local.project_name} [name]"
+              - Short: "Say hello to someone"
+              - Long: "Greet someone by name, or the world if no name is provided"
+              - Args: cobra.MaximumNArgs(1)
+              - Run: Extract name from args (default "World"), log with logger.Info: "Hello, <name>!"
+
+              INIT() FUNCTION:
+              - Register command: rootCmd.AddCommand(helloCmd)
+              EOF
+
+              constraints = [
+                "Use cobra.Command struct literal",
+                "Must call rootCmd.AddCommand(helloCmd) in init()",
+                "Use logger.Info for output"
+              ]
+            }
+          ]
+
+          verifications = [
+            {
+              command = "grep -q 'var helloCmd' cmd/hello.go && echo 'found'"
+              expect  = "found"
+            },
+            {
+              command = "grep -q 'rootCmd\\.AddCommand' cmd/hello.go && echo 'found'"
+              expect  = "found"
+            }
+          ]
+        }
+      }
+    }
+  }
 
   # Note: Terraform automatically creates dependencies from resource references
   # (stack reference creates implicit dependency on the module)
@@ -75,4 +103,25 @@ output "project_info" {
     version = tofukit_project.go_hello.version
     path    = tofukit_project.go_hello.project_path
   }
+}
+
+
+
+# ========================================
+# TERRAFORM & PROVIDER CONFIGURATION
+# ========================================
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_format         = "json"
+  # output_path defaults to "./" (current directory)
+  debug                 = true   # Enable debug mode to see project JSON
+  claude_home_directory = "~/.claude"
 }

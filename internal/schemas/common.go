@@ -29,8 +29,6 @@ type VerificationModel struct {
 
 // FeatureModel represents a feature (inline or from resource reference)
 type FeatureModel struct {
-	Prompt        types.String        `tfsdk:"prompt"`       // What the feature does (LLM-facing requirement)
-	Constraints   types.List          `tfsdk:"constraints"`  // Implementation constraints (what NOT to do)
 	Requirements  []RequirementModel  `tfsdk:"requirements"` // Uses common type!
 	Files         types.Map           `tfsdk:"files"`
 	Kits          types.Dynamic       `tfsdk:"kits"`
@@ -49,11 +47,20 @@ type FileModel struct {
 // Kept for backward compatibility during migration
 type ScaffoldModel = FileModel
 
-// GetRequirementsListAttribute returns the schema for the requirements list attribute
+// GetRequirementsListAttribute returns the schema for the requirements list attribute (optional)
 func GetRequirementsListAttribute() schema.ListNestedAttribute {
-	return schema.ListNestedAttribute{
+	return getRequirementsListAttributeInternal(false)
+}
+
+// GetRequiredRequirementsListAttribute returns the schema for the requirements list attribute (required)
+func GetRequiredRequirementsListAttribute() schema.ListNestedAttribute {
+	return getRequirementsListAttributeInternal(true)
+}
+
+// getRequirementsListAttributeInternal is the internal implementation
+func getRequirementsListAttributeInternal(required bool) schema.ListNestedAttribute {
+	attr := schema.ListNestedAttribute{
 		MarkdownDescription: "Requirements for this component (ordered list)",
-		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
 			Attributes: map[string]schema.Attribute{
 				"name": schema.StringAttribute{
@@ -96,6 +103,14 @@ func GetRequirementsListAttribute() schema.ListNestedAttribute {
 			},
 		},
 	}
+
+	if required {
+		attr.Required = true
+	} else {
+		attr.Optional = true
+	}
+
+	return attr
 }
 
 // GetRequirementBlock is deprecated - kept for backward compatibility
@@ -225,16 +240,8 @@ func GetFeaturesMapAttribute() schema.MapNestedAttribute {
 		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
 			Attributes: map[string]schema.Attribute{
-				"prompt": schema.StringAttribute{
-					MarkdownDescription: "What the feature does (LLM-facing requirement)",
-					Required:            true,
-				},
-				"constraints": schema.ListAttribute{
-					MarkdownDescription: "Implementation constraints (what NOT to do)",
-					Optional:            true,
-					ElementType:         types.StringType,
-				},
-				"files": GetFilesMapAttribute(),
+				"requirements": GetRequirementsListAttribute(),
+				"files":        GetFilesMapAttribute(),
 				"kits": schema.DynamicAttribute{
 					MarkdownDescription: "Kit dependencies for this feature",
 					Optional:            true,

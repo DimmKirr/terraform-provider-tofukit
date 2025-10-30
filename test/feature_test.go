@@ -36,7 +36,17 @@ provider "tofukit" {
 resource "tofukit_feature" "hello_cmd" {
   name        = "hello-command"
   description = "A simple hello command"
-  prompt      = "Implement a hello command that prints 'Hello from feature!'"
+
+  requirements = [
+    {
+      name = "Hello Command"
+      instructions = [
+        {
+          prompt = "Implement a hello command that prints 'Hello from feature!'"
+        }
+      ]
+    }
+  ]
 
   files = {
     "hello.txt" = {
@@ -133,7 +143,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "hello" = {
-      prompt = "Create a hello.txt file with greeting"
+      requirements = [
+        {
+          name = "Hello File"
+          instructions = [
+            {
+              prompt = "Create a hello.txt file with greeting"
+            }
+          ]
+        }
+      ]
       files = {
         "hello.txt" = {
           content = "Hello from inline feature.\n"
