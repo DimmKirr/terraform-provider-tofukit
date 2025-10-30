@@ -43,6 +43,7 @@ resource "tofukit_project" "go_hello" {
   # Project-specific features (reference standalone feature resources)
   features = {
     "hello_command" = tofukit_feature.hello_command
+    "ip_command"    = tofukit_feature.ip_command
   }
 
   # Note: Terraform automatically creates dependencies from resource references

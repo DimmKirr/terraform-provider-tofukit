@@ -1,3 +1,40 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+go-viper-hello-world
+
+# Coverage
+*.out
+coverage.txt
+
+# Workspace
+go.work
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.env.local
+
+# OS
+Thumbs.db
+
+# Config files (may contain secrets)
+*.yaml
+*.yml
+!Taskfile.yaml
+!go-viper-hello-world.example.yaml
+
 # Terraform
 .terraform/
 .terraform.lock.hcl
@@ -8,17 +45,3 @@ terraform.tfstate.backup
 # TofuKit output
 output/
 .tofukit/
-
-# Go
-go-hello
-*.exe
-*.dll
-*.so
-*.dylib
-vendor/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo

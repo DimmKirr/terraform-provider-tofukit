@@ -38,27 +38,39 @@ func TestExampleGoViperCliHelloWorldSuccess(t *testing.T) {
 		t.Fatalf("Failed to create project subdirectory: %v", err)
 	}
 
-	// Copy the unified project.tofu (contains terraform, provider, module, project, outputs)
-	projectContent, err := os.ReadFile(filepath.Join(exampleDir, "project.tofu"))
+	// Copy all .tofu files from the example directory
+	tofuFiles, err := filepath.Glob(filepath.Join(exampleDir, "*.tofu"))
 	if err != nil {
-		t.Fatalf("Failed to read project.tofu: %v", err)
+		t.Fatalf("Failed to glob .tofu files: %v", err)
 	}
 
-	// Modify the provider config to use test output directory
-	modifiedContent := string(projectContent)
-	// Change output_path to go up to test root then into output
-	modifiedContent = strings.Replace(modifiedContent,
-		`output_format         = "json"`,
-		`output_format         = "json"
-  output_path           = "../output"`, 1)
-	// Update module source from ../../stacks to ../stacks (one level up from project/)
-	modifiedContent = strings.Replace(modifiedContent,
-		`source = "../../stacks/tofukit-stack-go-viper-cobra-pterm"`,
-		`source = "../stacks/tofukit-stack-go-viper-cobra-pterm"`, 1)
+	for _, srcFile := range tofuFiles {
+		fileName := filepath.Base(srcFile)
+		content, err := os.ReadFile(srcFile)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", fileName, err)
+		}
 
-	projectPath := filepath.Join(projectSubDir, "project.tofu")
-	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {
-		t.Fatalf("Failed to write project.tofu: %v", err)
+		modifiedContent := string(content)
+
+		// Only modify project.tofu
+		if fileName == "project.tofu" {
+			// Change output_path to go up to test root then into output
+			modifiedContent = strings.Replace(modifiedContent,
+				`output_format         = "json"`,
+				`output_format         = "json"
+  output_path           = "../output"`, 1)
+			// Update module source from ../../stacks to ../stacks (one level up from project/)
+			modifiedContent = strings.Replace(modifiedContent,
+				`source = "../../stacks/tofukit-stack-go-viper-cobra-pterm"`,
+				`source = "../stacks/tofukit-stack-go-viper-cobra-pterm"`, 1)
+		}
+
+		destPath := filepath.Join(projectSubDir, fileName)
+		if err := os.WriteFile(destPath, []byte(modifiedContent), 0644); err != nil {
+			t.Fatalf("Failed to write %s: %v", fileName, err)
+		}
+		t.Logf("Copied %s to test directory", fileName)
 	}
 
 	// Copy the stacks directory to testDir/stacks
@@ -337,7 +349,29 @@ func TestExampleGoViperCliHelloWorldSuccess(t *testing.T) {
 		helpStr := string(helpOutput)
 		assert.Contains(t, helpStr, "go-viper-hello-world", "Help output should contain project name")
 		assert.Contains(t, helpStr, "version", "Help output should list version command")
+		assert.Contains(t, helpStr, "ip", "Help output should list ip command")
 		t.Log("✓ Help command works correctly")
+
+		// Run the ip command
+		t.Log("Running 'go-viper-hello-world ip' command...")
+		ipCmd := exec.Command("./bin/go-viper-hello-world", "ip")
+		ipCmd.Dir = outputPath
+		ipOutput, err := ipCmd.CombinedOutput()
+		if err != nil {
+			t.Logf("IP command output: %s", ipOutput)
+		}
+		require.NoError(t, err, "Failed to run ip command")
+
+		// Verify IP output contains expected format
+		ipStr := string(ipOutput)
+		assert.Contains(t, ipStr, "Your public IP:", "IP output should contain 'Your public IP:'")
+		// Check for pterm styling (ANSI color codes)
+		assert.Contains(t, ipStr, "\x1b[", "IP output should contain pterm styling (ANSI codes)")
+		// Basic IP format validation - should contain dots (IPv4) or colons (IPv6)
+		assert.True(t, strings.Contains(ipStr, ".") || strings.Contains(ipStr, ":"),
+			"IP output should contain a valid IP address format (IPv4 or IPv6)")
+		t.Logf("IP command output:\n%s", ipStr)
+		t.Log("✓ IP command works correctly")
 
 		t.Log("✓ Build and run verification complete")
 	})
