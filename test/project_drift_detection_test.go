@@ -248,3 +248,144 @@ resource "tofukit_project" "drift_test" {
 
 	t.Log("✓ Deleted file drift detection and restoration completed successfully")
 }
+
+// TestProjectDriftDetection_MultipleFiles verifies drift detection for multiple modified files
+func TestProjectDriftDetection_MultipleFiles(t *testing.T) {
+	os.Setenv("TF_LOG", "DEBUG")
+	defer os.Unsetenv("TF_LOG")
+
+	testDir := createTestDirectory(t, "TestProjectDriftDetection_MultipleFiles")
+
+	var err error
+
+	// Step 1: Create project configuration with multiple files
+	projectTofuContent := `# Terraform configuration for multi-file drift test
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
+}
+
+resource "tofukit_project" "drift_test" {
+  name        = "drift-multi-test"
+  output_path = "output"
+
+  files = {
+    ".gitignore" = {
+      content = "*.log\n"
+    }
+    "README.md" = {
+      content = "# Project\n"
+    }
+    "LICENSE" = {
+      content = "MIT License\n"
+    }
+  }
+}
+`
+
+	projectTofuPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(projectTofuPath, []byte(projectTofuContent), 0644)
+	require.NoError(t, err, "Failed to write project.tofu")
+
+	// Step 2: Initialize and apply
+	initCmd := exec.Command("tofu", "init")
+	initCmd.Dir = testDir
+	initOutput, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "tofu init failed: %s", string(initOutput))
+
+	applyCmd := exec.Command("tofu", "apply", "-auto-approve")
+	applyCmd.Dir = testDir
+	applyOutput, err := applyCmd.CombinedOutput()
+	require.NoError(t, err, "tofu apply failed: %s", string(applyOutput))
+
+	t.Log("Initial apply completed successfully")
+
+	// Step 3: Verify initial state - no drift
+	showCmd := exec.Command("tofu", "show", "-json")
+	showCmd.Dir = testDir
+	showOutput, err := showCmd.CombinedOutput()
+	require.NoError(t, err, "tofu show failed: %s", string(showOutput))
+
+	stateJSON := string(showOutput)
+	assert.Contains(t, stateJSON, `"drift_detected": false`, "Initial state should have drift_detected=false")
+
+	// Step 4: Edit 2 out of 3 files manually
+	outputDir := filepath.Join(testDir, "output")
+
+	// Edit .gitignore
+	gitignorePath := filepath.Join(outputDir, ".gitignore")
+	err = os.WriteFile(gitignorePath, []byte("*.log\n*.cache\n"), 0644)
+	require.NoError(t, err, "Failed to edit .gitignore")
+
+	// Edit LICENSE
+	licensePath := filepath.Join(outputDir, "LICENSE")
+	err = os.WriteFile(licensePath, []byte("Apache License\n"), 0644)
+	require.NoError(t, err, "Failed to edit LICENSE")
+
+	// Leave README.md unchanged
+
+	t.Log("Manually edited .gitignore and LICENSE")
+
+	// Step 5: Refresh state to detect drift
+	refreshCmd := exec.Command("tofu", "apply", "-refresh-only", "-auto-approve")
+	refreshCmd.Dir = testDir
+	refreshOutput, err := refreshCmd.CombinedOutput()
+	require.NoError(t, err, "tofu apply -refresh-only failed: %s", string(refreshOutput))
+
+	t.Log("Refreshed state to detect drift")
+
+	// Step 6: Verify drift detected for both files
+	showCmd = exec.Command("tofu", "show", "-json")
+	showCmd.Dir = testDir
+	showOutput, err = showCmd.CombinedOutput()
+	require.NoError(t, err, "tofu show failed after refresh: %s", string(showOutput))
+
+	stateJSON = string(showOutput)
+	assert.Contains(t, stateJSON, `"drift_detected": true`, "State should have drift_detected=true")
+	assert.Contains(t, stateJSON, ".gitignore", "State should list .gitignore as drifted")
+	assert.Contains(t, stateJSON, "LICENSE", "State should list LICENSE as drifted")
+	assert.NotContains(t, stateJSON, `"README.md"`, "README.md should NOT be in drifted files (unchanged)")
+
+	// Step 7: Apply to restore files
+	applyCmd = exec.Command("tofu", "apply", "-auto-approve")
+	applyCmd.Dir = testDir
+	applyOutput, err = applyCmd.CombinedOutput()
+	require.NoError(t, err, "tofu apply (restore) failed: %s", string(applyOutput))
+
+	t.Log("Applied to restore drifted files")
+
+	// Step 8: Verify both files restored
+	restoredGitignore, err := os.ReadFile(gitignorePath)
+	require.NoError(t, err, "Failed to read restored .gitignore")
+	assert.Equal(t, "*.log\n", string(restoredGitignore), ".gitignore should be restored")
+
+	restoredLicense, err := os.ReadFile(licensePath)
+	require.NoError(t, err, "Failed to read restored LICENSE")
+	assert.Equal(t, "MIT License\n", string(restoredLicense), "LICENSE should be restored")
+
+	// Verify README unchanged
+	readmeContent, err := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	require.NoError(t, err, "Failed to read README.md")
+	assert.Equal(t, "# Project\n", string(readmeContent), "README.md should remain unchanged")
+
+	// Step 9: Verify drift cleared
+	showCmd = exec.Command("tofu", "show", "-json")
+	showCmd.Dir = testDir
+	showOutput, err = showCmd.CombinedOutput()
+	require.NoError(t, err, "tofu show failed after restore: %s", string(showOutput))
+
+	stateJSON = string(showOutput)
+	assert.Contains(t, stateJSON, `"drift_detected": false`, "State should have drift_detected=false after restore")
+
+	t.Log("✓ Multiple file drift detection and restoration completed successfully")
+}
