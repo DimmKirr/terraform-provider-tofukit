@@ -709,6 +709,10 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		"project_path_unknown":        data.ProjectPath.IsUnknown(),
 	})
 
+	// Initialize drift flags (no drift on fresh creation)
+	data.DriftDetected = types.BoolValue(false)
+	data.DriftedFiles = types.ListNull(types.StringType)
+
 	tflog.Trace(ctx, fmt.Sprintf("created project resource: %s", data.ID.ValueString()))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -796,6 +800,14 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 				}
 			}
 		}
+	}
+
+	// Initialize drift detection fields if not set
+	if data.DriftDetected.IsNull() || data.DriftDetected.IsUnknown() {
+		data.DriftDetected = types.BoolValue(false)
+	}
+	if data.DriftedFiles.IsNull() || data.DriftedFiles.IsUnknown() {
+		data.DriftedFiles = types.ListNull(types.StringType)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
