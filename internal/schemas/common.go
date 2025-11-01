@@ -41,6 +41,11 @@ type FileModel struct {
 	Content       types.String        `tfsdk:"content"`
 	Instructions  []InstructionModel  `tfsdk:"instructions"`
 	Verifications []VerificationModel `tfsdk:"verifications"`
+
+	// Computed drift detection fields
+	ContentHash   types.String `tfsdk:"content_hash"`
+	FileHash      types.String `tfsdk:"file_hash"`
+	FileModTime   types.String `tfsdk:"file_modtime"`
 }
 
 // ScaffoldModel is deprecated, use FileModel instead
