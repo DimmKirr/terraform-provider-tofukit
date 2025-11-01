@@ -68,6 +68,9 @@ type ProjectModelFinal struct {
 	PromptHash types.String `tfsdk:"prompt_hash"`
 	// Computed - SHA256 hash of actual generated files for drift detection
 	OutputHash types.String `tfsdk:"output_hash"`
+	// Drift detection
+	DriftDetected types.Bool `tfsdk:"drift_detected"`
+	DriftedFiles  types.List `tfsdk:"drifted_files"`
 }
 
 func (r *ProjectResourceFinal) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -175,6 +178,15 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 			"output_hash": schema.StringAttribute{
 				MarkdownDescription: "SHA256 hash of actual generated files for drift detection",
 				Computed:            true,
+			},
+			"drift_detected": schema.BoolAttribute{
+				Computed:            true,
+				MarkdownDescription: "True if any files have been modified outside Terraform",
+			},
+			"drifted_files": schema.ListAttribute{
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "List of file paths that have drifted from their expected state",
 			},
 			"files": schemas.GetFilesMapAttribute(),
 			"features": schema.DynamicAttribute{
