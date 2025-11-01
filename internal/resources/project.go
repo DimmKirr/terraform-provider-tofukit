@@ -3630,6 +3630,7 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 			fileModel = schemas.FileModel{
 				Content:      fileWithPath.Content,
 				Instructions: fileWithPath.Instructions,
+				Verifications: fileWithPath.Verifications,
 			}
 		}
 
