@@ -19,7 +19,10 @@ func ComputeContentHash(file schemas.FileModel) string {
 		hashInput = []byte(file.Content.ValueString())
 	} else if len(file.Instructions) > 0 {
 		// Generated file: hash the instructions JSON
-		jsonBytes, _ := json.Marshal(file.Instructions)
+		jsonBytes, err := json.Marshal(file.Instructions)
+		if err != nil {
+			return ""
+		}
 		hashInput = jsonBytes
 	} else {
 		return "" // No hashable content
