@@ -233,6 +233,18 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 					MarkdownDescription: "File description (present when referencing tofukit_file resource)",
 					Optional:            true,
 				},
+				"content_hash": schema.StringAttribute{
+					Computed:            true,
+					MarkdownDescription: "SHA256 hash of the file specification (content or instructions JSON) for drift detection",
+				},
+				"file_hash": schema.StringAttribute{
+					Computed:            true,
+					MarkdownDescription: "SHA256 hash of the actual file on disk for drift detection",
+				},
+				"file_modtime": schema.StringAttribute{
+					Computed:            true,
+					MarkdownDescription: "File modification time in RFC3339 format (optimization for drift detection)",
+				},
 			},
 		},
 	}
