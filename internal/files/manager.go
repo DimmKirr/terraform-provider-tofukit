@@ -244,7 +244,7 @@ func (m *Manager) VerifyFiles(ctx context.Context, files []schemas.FileModelWith
 		if len(wrongContent) > 0 {
 			errMsg += fmt.Sprintf("\n  Wrong content: %v", wrongContent)
 		}
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	tflog.Info(ctx, "All files verified successfully", map[string]interface{}{
