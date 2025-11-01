@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -101,6 +102,12 @@ func (r *StackResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"link":       data.Link.ValueString(),
 		"file_count": fileCount,
 	})
+
+	// Initialize hash fields to null for registry-only resources (no actual files created)
+	if !data.Files.IsNull() {
+		data.Files = r.initializeFileHashFields(ctx, data.Files)
+	}
+
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -151,6 +158,11 @@ func (r *StackResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// Stacks no longer manage files directly - just save updated file configuration
 	// The project resource will handle merging and applying changes
 
+	// Initialize hash fields to null for registry-only resources (no actual files created)
+	if !data.Files.IsNull() {
+		data.Files = r.initializeFileHashFields(ctx, data.Files)
+	}
+
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -166,4 +178,40 @@ func (r *StackResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	// The project resource will handle cleaning up files when it's deleted
 
 	r.RemoveFromRegistry(ctx, data.ID.ValueString())
+}
+
+// initializeFileHashFields sets hash fields to null for registry-only resources
+// These resources don't create actual files, so hash fields should be null
+func (r *StackResource) initializeFileHashFields(ctx context.Context, filesMap types.Map) types.Map {
+	if filesMap.IsNull() || filesMap.IsUnknown() {
+		return filesMap
+	}
+
+	// Extract files map
+	filesElements := filesMap.Elements()
+	newFilesMap := make(map[string]attr.Value)
+
+	for path, fileValue := range filesElements {
+		fileObj, ok := fileValue.(types.Object)
+		if !ok {
+			newFilesMap[path] = fileValue
+			continue
+		}
+
+		// Get file attributes
+		attrs := fileObj.Attributes()
+
+		// Set hash fields to null
+		attrs["content_hash"] = types.StringNull()
+		attrs["file_hash"] = types.StringNull()
+		attrs["file_modtime"] = types.StringNull()
+
+		// Create new object with updated attributes
+		newFileObj, _ := types.ObjectValue(fileObj.AttributeTypes(ctx), attrs)
+		newFilesMap[path] = newFileObj
+	}
+
+	// Create new map
+	newMap, _ := types.MapValue(filesMap.ElementType(ctx), newFilesMap)
+	return newMap
 }

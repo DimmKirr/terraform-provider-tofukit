@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -57,6 +58,12 @@ func (r *ComponentResource) Create(ctx context.Context, req resource.CreateReque
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
 
 	tflog.Trace(ctx, fmt.Sprintf("created %s resource: %s (link: %s)", r.Kind, data.ID.ValueString(), data.Link.ValueString()))
+
+	// Initialize hash fields to null for registry-only resources (no actual files created)
+	if !data.Files.IsNull() {
+		data.Files = r.initializeFileHashFields(ctx, data.Files)
+	}
+
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -79,6 +86,12 @@ func (r *ComponentResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 	// Recompute link in case name changed
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
+
+	// Initialize hash fields to null for registry-only resources (no actual files created)
+	if !data.Files.IsNull() {
+		data.Files = r.initializeFileHashFields(ctx, data.Files)
+	}
+
 	r.SaveToRegistry(ctx, data.ID.ValueString(), data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -136,4 +149,40 @@ func NewIntegrationResource() resource.Resource {
 	return &ComponentResource{
 		BaseComponent: BaseComponent{Kind: "integration"},
 	}
+}
+
+// initializeFileHashFields sets hash fields to null for registry-only resources
+// These resources don't create actual files, so hash fields should be null
+func (r *ComponentResource) initializeFileHashFields(ctx context.Context, filesMap types.Map) types.Map {
+	if filesMap.IsNull() || filesMap.IsUnknown() {
+		return filesMap
+	}
+
+	// Extract files map
+	filesElements := filesMap.Elements()
+	newFilesMap := make(map[string]attr.Value)
+
+	for path, fileValue := range filesElements {
+		fileObj, ok := fileValue.(types.Object)
+		if !ok {
+			newFilesMap[path] = fileValue
+			continue
+		}
+
+		// Get file attributes
+		attrs := fileObj.Attributes()
+
+		// Set hash fields to null
+		attrs["content_hash"] = types.StringNull()
+		attrs["file_hash"] = types.StringNull()
+		attrs["file_modtime"] = types.StringNull()
+
+		// Create new object with updated attributes
+		newFileObj, _ := types.ObjectValue(fileObj.AttributeTypes(ctx), attrs)
+		newFilesMap[path] = newFileObj
+	}
+
+	// Create new map
+	newMap, _ := types.MapValue(filesMap.ElementType(ctx), newFilesMap)
+	return newMap
 }

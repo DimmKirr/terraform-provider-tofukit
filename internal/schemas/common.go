@@ -234,14 +234,17 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 					Optional:            true,
 				},
 				"content_hash": schema.StringAttribute{
+					Optional:            true,
 					Computed:            true,
 					MarkdownDescription: "SHA256 hash of the file specification (content or instructions JSON) for drift detection",
 				},
 				"file_hash": schema.StringAttribute{
+					Optional:            true,
 					Computed:            true,
 					MarkdownDescription: "SHA256 hash of the actual file on disk for drift detection",
 				},
 				"file_modtime": schema.StringAttribute{
+					Optional:            true,
 					Computed:            true,
 					MarkdownDescription: "File modification time in RFC3339 format (optimization for drift detection)",
 				},
