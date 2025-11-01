@@ -755,6 +755,99 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	// This ensures the Claude prompt JSON always has the complete specification
 	mergedFiles := r.collectAndMergeFiles(ctx, data)
 
+	// DRIFT DETECTION: Check each file for changes outside Terraform
+	projectPath := data.ProjectPath.ValueString()
+	driftedFiles := []string{}
+
+	if projectPath != "" && !data.Files.IsNull() {
+		filesMap := make(map[string]schemas.FileModel)
+		data.Files.ElementsAs(ctx, &filesMap, false)
+
+		for path, fileModel := range filesMap {
+			// Skip if no hash stored yet (first run after upgrade)
+			if fileModel.FileHash.IsNull() || fileModel.FileHash.IsUnknown() {
+				continue
+			}
+
+			fullPath := filepath.Join(projectPath, path)
+
+			// Check if file exists
+			fileInfo, err := os.Stat(fullPath)
+			if os.IsNotExist(err) {
+				// File deleted outside Terraform
+				tflog.Warn(ctx, "File deleted outside Terraform", map[string]interface{}{
+					"project_id": data.ID.ValueString(),
+					"path":       path,
+				})
+				driftedFiles = append(driftedFiles, path)
+				continue
+			}
+			if err != nil {
+				tflog.Warn(ctx, "Failed to stat file for drift detection", map[string]interface{}{
+					"path":  path,
+					"error": err.Error(),
+				})
+				continue
+			}
+
+			// Optimization: Check modification time first
+			currentModTime := fileInfo.ModTime().Format(time.RFC3339)
+			if !fileModel.FileModTime.IsNull() && currentModTime == fileModel.FileModTime.ValueString() {
+				// File unchanged since last check, skip hashing
+				tflog.Trace(ctx, "File modification time unchanged, skipping hash", map[string]interface{}{
+					"path": path,
+				})
+				continue
+			}
+
+			// Read actual file content
+			actualContent, err := os.ReadFile(fullPath)
+			if err != nil {
+				tflog.Warn(ctx, "Failed to read file for drift detection", map[string]interface{}{
+					"path":  path,
+					"error": err.Error(),
+				})
+				continue
+			}
+
+			// Calculate current hash (temporary, in-memory)
+			currentHash := files.ComputeFileHash(actualContent)
+
+			// Compare with stored hash
+			if currentHash != fileModel.FileHash.ValueString() {
+				tflog.Warn(ctx, "File content changed outside Terraform", map[string]interface{}{
+					"project_id":    data.ID.ValueString(),
+					"path":          path,
+					"expected_hash": fileModel.FileHash.ValueString()[:8] + "...",
+					"current_hash":  currentHash[:8] + "...",
+				})
+				driftedFiles = append(driftedFiles, path)
+			}
+		}
+	}
+
+	// Set computed drift fields (triggers Update if changed)
+	if len(driftedFiles) > 0 {
+		data.DriftDetected = types.BoolValue(true)
+		driftList, diags := types.ListValueFrom(ctx, types.StringType, driftedFiles)
+		if diags.HasError() {
+			tflog.Warn(ctx, "Failed to create drifted files list", map[string]interface{}{
+				"errors": diags.Errors(),
+			})
+		} else {
+			data.DriftedFiles = driftList
+		}
+
+		tflog.Info(ctx, "Drift detected in project files", map[string]interface{}{
+			"project_id":    data.ID.ValueString(),
+			"drifted_count": len(driftedFiles),
+			"drifted_files": driftedFiles,
+		})
+	} else {
+		data.DriftDetected = types.BoolValue(false)
+		data.DriftedFiles = types.ListNull(types.StringType)
+	}
+
 	// DEBUG: Check kits in Read
 	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if debugFile != nil {
