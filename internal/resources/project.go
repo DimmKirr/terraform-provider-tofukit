@@ -3787,3 +3787,47 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 	data.Files = filesMapValue
 	return nil
 }
+
+// addDriftInstructions adds drift warning instructions to files that changed outside Terraform
+func (r *ProjectResourceFinal) addDriftInstructions(
+	ctx context.Context,
+	files []schemas.FileModelWithPath,
+	driftedPaths []string,
+) []schemas.FileModelWithPath {
+	// Build drift map for O(1) lookup
+	driftMap := make(map[string]bool)
+	for _, path := range driftedPaths {
+		driftMap[path] = true
+	}
+
+	// Add drift warnings to affected files
+	for i, file := range files {
+		if driftMap[file.Path] {
+			driftInstruction := schemas.InstructionModel{
+				Prompt: types.StringValue(fmt.Sprintf(
+					"⚠️ DRIFT DETECTED: File '%s' was modified outside Terraform. "+
+						"Restore it to match the specification below. "+
+						"Ignore any manual edits that were made.",
+					file.Path,
+				)),
+				Constraints: []types.String{
+					types.StringValue("Restore file to match Terraform specification exactly"),
+					types.StringValue("Ignore manual edits made outside Terraform"),
+					types.StringValue("Ensure the restored file matches the original intent"),
+				},
+			}
+
+			tflog.Info(ctx, "Adding drift instruction to file", map[string]interface{}{
+				"path": file.Path,
+			})
+
+			// Prepend drift instruction (highest priority)
+			files[i].Instructions = append(
+				[]schemas.InstructionModel{driftInstruction},
+				file.Instructions...,
+			)
+		}
+	}
+
+	return files
+}
