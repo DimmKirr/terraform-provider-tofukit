@@ -440,6 +440,44 @@ resource "tofukit_project" "app" {
 
 **Result**: Action-based instructions are ephemeral (computed each time), preventing state drift while giving Claude explicit guidance.
 
+### Drift Detection
+
+The provider implements granular per-file drift detection following the `hashicorp/local_file` pattern.
+
+**How It Works:**
+
+1. **Hash Storage** (Create/Update):
+   - After Claude execution, computes SHA256 hashes for all files
+   - Stores `content_hash` (specification), `file_hash` (actual file), `file_modtime` (optimization)
+
+2. **Drift Detection** (Read):
+   - Called during `tofu plan`
+   - Checks modification time first (fast)
+   - If changed, computes current hash and compares with stored `file_hash`
+   - Sets `drift_detected = true` if mismatch
+
+3. **Drift Restoration** (Update):
+   - Triggered when `drift_detected` changes to `true`
+   - Adds drift warning instructions to affected files
+   - Claude receives: "⚠️ DRIFT DETECTED: File X was modified, restore to spec"
+   - After successful execution, clears drift flags
+
+**Performance Optimization:**
+- Uses modification time (`mtime`) to skip hash computation for unchanged files
+- Scales efficiently to 100+ file projects
+
+**Example:**
+```
+1. User manually edits .gitignore
+2. tofu plan → detects drift, shows "drift_detected: false → true"
+3. tofu apply → Claude restores .gitignore to specification
+```
+
+**State Fields:**
+- `drift_detected` (bool): True if any files drifted
+- `drifted_files` (list): Paths of files that changed outside Terraform
+- Per-file: `content_hash`, `file_hash`, `file_modtime` (computed)
+
 ### Important Implementation Details
 
 **Empty Project Validation**
