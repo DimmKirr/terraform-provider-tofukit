@@ -935,6 +935,15 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	// Check if update triggered by drift vs config change
+	isDriftTriggered := state.DriftDetected.ValueBool()
+
+	if isDriftTriggered {
+		tflog.Info(ctx, "Update triggered by drift detection", map[string]interface{}{
+			"project_id": state.ID.ValueString(),
+		})
+	}
+
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
@@ -1005,6 +1014,20 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		"project_id": state.ID.ValueString(),
 		"file_count": len(enrichedFiles),
 	})
+
+	// Add drift context if update triggered by drift
+	if isDriftTriggered {
+		var driftedPaths []string
+		if !state.DriftedFiles.IsNull() && !state.DriftedFiles.IsUnknown() {
+			state.DriftedFiles.ElementsAs(ctx, &driftedPaths, false)
+
+			tflog.Info(ctx, "Adding drift instructions", map[string]interface{}{
+				"drifted_files": driftedPaths,
+			})
+
+			enrichedFiles = r.addDriftInstructions(ctx, enrichedFiles, driftedPaths)
+		}
+	}
 
 	// Detect file specification changes (files from project, stacks, kits)
 	fileSpecChanged := state.FileHash.IsNull() || state.FileHash.ValueString() != currentFileHash
@@ -1142,6 +1165,21 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			data.OutputHash = types.StringValue(outputHash)
 			tflog.Info(ctx, "Computed output hash after successful update", map[string]interface{}{
 				"output_hash": outputHash,
+			})
+
+			// Recompute all file hashes after successful execution
+			if err := r.computeAndStoreFileHashes(ctx, &data, mergedFiles); err != nil {
+				tflog.Warn(ctx, "Failed to recompute file hashes", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+
+			// Clear drift flags
+			data.DriftDetected = types.BoolValue(false)
+			data.DriftedFiles = types.ListNull(types.StringType)
+
+			tflog.Info(ctx, "Cleared drift flags after successful restoration", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
 			})
 
 			// NOTE: We don't store enrichedFiles (with action-based instructions) in state
