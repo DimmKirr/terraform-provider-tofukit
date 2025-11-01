@@ -3592,3 +3592,91 @@ func (r *ProjectResourceFinal) collectStringFields(ctx context.Context, data Pro
 
 	return fields
 }
+
+// computeAndStoreFileHashes calculates and stores hashes for all files
+// Called after successful Claude execution to establish baseline
+func (r *ProjectResourceFinal) computeAndStoreFileHashes(
+	ctx context.Context,
+	data *ProjectModelFinal,
+	mergedFiles []schemas.FileModelWithPath,
+) error {
+	projectPath := data.ProjectPath.ValueString()
+
+	// Get current files map from data
+	filesMap := make(map[string]schemas.FileModel)
+	if !data.Files.IsNull() && !data.Files.IsUnknown() {
+		data.Files.ElementsAs(ctx, &filesMap, false)
+	}
+
+	for _, fileWithPath := range mergedFiles {
+		fullPath := filepath.Join(projectPath, fileWithPath.Path)
+
+		// Read actual file content
+		actualContent, err := os.ReadFile(fullPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File wasn't created - skip
+				tflog.Debug(ctx, "File not found, skipping hash", map[string]interface{}{
+					"path": fileWithPath.Path,
+				})
+				continue
+			}
+			return fmt.Errorf("failed to read file %s: %w", fileWithPath.Path, err)
+		}
+
+		// Get or create FileModel for this path
+		fileModel, exists := filesMap[fileWithPath.Path]
+		if !exists {
+			fileModel = schemas.FileModel{
+				Content:      fileWithPath.Content,
+				Instructions: fileWithPath.Instructions,
+			}
+		}
+
+		// Compute hashes
+		fileModel.ContentHash = types.StringValue(files.ComputeContentHash(fileModel))
+		fileModel.FileHash = types.StringValue(files.ComputeFileHash(actualContent))
+
+		// Store modification time
+		fileInfo, err := os.Stat(fullPath)
+		if err == nil {
+			fileModel.FileModTime = types.StringValue(fileInfo.ModTime().Format(time.RFC3339))
+		}
+
+		tflog.Debug(ctx, "Computed file hashes", map[string]interface{}{
+			"path":         fileWithPath.Path,
+			"content_hash": fileModel.ContentHash.ValueString()[:8] + "...",
+			"file_hash":    fileModel.FileHash.ValueString()[:8] + "...",
+		})
+
+		// Update map
+		filesMap[fileWithPath.Path] = fileModel
+	}
+
+	// Convert back to map attribute
+	// Build FileModel AttrTypes based on the schema
+	fileModelAttrTypes := map[string]attr.Type{
+		"content":       types.StringType,
+		"instructions":  types.ListType{ElemType: types.ObjectType{AttrTypes: schemas.InstructionModelType()}},
+		"verifications": types.ListType{ElemType: types.ObjectType{AttrTypes: schemas.VerificationModelType()}},
+		"content_hash":  types.StringType,
+		"file_hash":     types.StringType,
+		"file_modtime":  types.StringType,
+		// Resource metadata attributes (optional, present when referencing tofukit_file)
+		"id":          types.StringType,
+		"name":        types.StringType,
+		"link":        types.StringType,
+		"description": types.StringType,
+	}
+
+	filesMapValue, diags := types.MapValueFrom(ctx, types.ObjectType{
+		AttrTypes: fileModelAttrTypes,
+	}, filesMap)
+
+	if diags.HasError() {
+		return fmt.Errorf("failed to convert files map: %s", diags.Errors())
+	}
+
+	data.Files = filesMapValue
+	return nil
+}
