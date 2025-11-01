@@ -129,7 +129,7 @@ resource "tofukit_feature" "ip_command" {
       instructions = [
         {
           prompt = <<-EOF
-          Create cmd/ip.go as a Cobra subcommand that displays the user's public IP address.
+          Create a file as a Cobra subcommand that displays the user's public IP address.
 
           PACKAGE & IMPORTS:
           - Package: cmd
@@ -168,7 +168,7 @@ resource "tofukit_feature" "ip_command" {
       instructions = [
         {
           prompt = <<-EOF
-          Create internal/ipinfo/client.go with API client logic for fetching public IP.
+          Create a file with API client logic for fetching public IP.
 
           PACKAGE & IMPORTS:
           - Package: ipinfo

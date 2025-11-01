@@ -245,6 +245,8 @@ resource "tofukit_file" "gitignore" {
       - IDE: .idea/, .vscode/, vim swap files
       - OS: .DS_Store, Thumbs.db
       - Config: project-specific .yaml/.yml files (may contain secrets)
+      - Terraform: Ignore .terraform
+      - Tofukit: Ignore .debug
       EOF
 
       constraints = [
