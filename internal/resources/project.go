@@ -666,6 +666,19 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 			"project_path": data.ProjectPath.ValueString(),
 		})
 
+		// Compute and store per-file hashes
+		if err := r.computeAndStoreFileHashes(ctx, &data, mergedFiles); err != nil {
+			tflog.Warn(ctx, "Failed to compute file hashes", map[string]interface{}{
+				"error": err.Error(),
+			})
+			// Don't fail the resource, just skip storing hashes
+		}
+
+		tflog.Info(ctx, "Computed and stored file hashes", map[string]interface{}{
+			"project_id": data.ID.ValueString(),
+			"file_count": len(mergedFiles),
+		})
+
 		// NOTE: We don't store enrichedFiles (with action-based instructions) in state
 		// data.Files keeps the original user configuration
 		// Action-based instructions are computed fresh each time from the diff
