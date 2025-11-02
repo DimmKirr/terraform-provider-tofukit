@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExampleGoViperCliHelloWorldSuccess validates that the /examples/projects/go-viper-hello-world example works end-to-end
-func TestExampleGoViperCliHelloWorldSuccess(t *testing.T) {
+// TestE2EProjectExampleGoViperCliHelloWorldSuccess validates that the /examples/projects/go-viper-hello-world example works end-to-end
+func TestE2EProjectExampleGoViperCliHelloWorldSuccess(t *testing.T) {
 	// Set debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestExampleGoViperCliHelloWorldSuccess")
+	testDir := createTestDirectory(t, "TestE2EProjectExampleGoViperCliHelloWorldSuccess")
 
 	// Get project root
 	projectRoot, err := filepath.Abs("..")

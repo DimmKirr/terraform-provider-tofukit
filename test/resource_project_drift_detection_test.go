@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProjectDriftDetection_StaticFile verifies drift detection for modified static files
-func TestProjectDriftDetection_StaticFile(t *testing.T) {
+// TestResourceProjectDriftDetection_StaticFile verifies drift detection for modified static files
+func TestResourceProjectDriftDetection_StaticFile(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectDriftDetection_StaticFile")
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_StaticFile")
 
 	var err error
 
@@ -143,12 +143,12 @@ resource "tofukit_project" "drift_test" {
 	t.Log("✓ Drift detection and restoration completed successfully")
 }
 
-// TestProjectDriftDetection_DeletedFile verifies drift detection for deleted files
-func TestProjectDriftDetection_DeletedFile(t *testing.T) {
+// TestResourceProjectDriftDetection_DeletedFile verifies drift detection for deleted files
+func TestResourceProjectDriftDetection_DeletedFile(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectDriftDetection_DeletedFile")
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_DeletedFile")
 
 	var err error
 
@@ -249,12 +249,12 @@ resource "tofukit_project" "drift_test" {
 	t.Log("✓ Deleted file drift detection and restoration completed successfully")
 }
 
-// TestProjectDriftDetection_MultipleFiles verifies drift detection for multiple modified files
-func TestProjectDriftDetection_MultipleFiles(t *testing.T) {
+// TestResourceProjectDriftDetection_MultipleFiles verifies drift detection for multiple modified files
+func TestResourceProjectDriftDetection_MultipleFiles(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectDriftDetection_MultipleFiles")
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_MultipleFiles")
 
 	var err error
 

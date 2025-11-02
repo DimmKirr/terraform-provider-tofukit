@@ -3746,59 +3746,94 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 ) error {
 	projectPath := data.ProjectPath.ValueString()
 
-	// Get current files map from data
-	filesMap := make(map[string]schemas.FileModel)
-	if !data.Files.IsNull() && !data.Files.IsUnknown() {
-		data.Files.ElementsAs(ctx, &filesMap, false)
+	// If Files is null or unknown, nothing to update
+	if data.Files.IsNull() || data.Files.IsUnknown() {
+		return nil
 	}
 
-	for _, fileWithPath := range mergedFiles {
-		fullPath := filepath.Join(projectPath, fileWithPath.Path)
+	// Extract current files map as attr.Value elements (not Go structs)
+	filesElements := data.Files.Elements()
+	newFilesMap := make(map[string]attr.Value)
 
-		// Read actual file content
-		actualContent, err := os.ReadFile(fullPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// File wasn't created - skip
-				tflog.Debug(ctx, "File not found, skipping hash", map[string]interface{}{
-					"path": fileWithPath.Path,
+	// Build a map of merged files for quick lookup
+	mergedFilesMap := make(map[string]schemas.FileModelWithPath)
+	for _, f := range mergedFiles {
+		mergedFilesMap[f.Path] = f
+	}
+
+	// Process each file in the current Files map
+	for path, fileAttr := range filesElements {
+		fileObj, ok := fileAttr.(types.Object)
+		if !ok {
+			// Not an object, keep as-is
+			newFilesMap[path] = fileAttr
+			continue
+		}
+
+		// Get file attributes
+		attrs := fileObj.Attributes()
+
+		// Check if this file was merged and exists on disk
+		if mergedFile, exists := mergedFilesMap[path]; exists {
+			fullPath := filepath.Join(projectPath, path)
+
+			// Read actual file content
+			actualContent, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// File wasn't created - set hash fields to null
+					tflog.Debug(ctx, "File not found, setting hash fields to null", map[string]interface{}{
+						"path": path,
+					})
+					attrs["content_hash"] = types.StringNull()
+					attrs["file_hash"] = types.StringNull()
+					attrs["file_modtime"] = types.StringNull()
+				} else {
+					return fmt.Errorf("failed to read file %s: %w", path, err)
+				}
+			} else {
+				// Compute hashes using the merged file model (for content_hash)
+				fileModel := schemas.FileModel{
+					Content:       mergedFile.Content,
+					Instructions:  mergedFile.Instructions,
+					Verifications: mergedFile.Verifications,
+				}
+				contentHash := files.ComputeContentHash(fileModel)
+				fileHash := files.ComputeFileHash(actualContent)
+
+				// Store modification time
+				fileInfo, err := os.Stat(fullPath)
+				modTime := ""
+				if err == nil {
+					modTime = fileInfo.ModTime().Format(time.RFC3339)
+				}
+
+				tflog.Debug(ctx, "Computed file hashes", map[string]interface{}{
+					"path":         path,
+					"content_hash": contentHash[:8] + "...",
+					"file_hash":    fileHash[:8] + "...",
 				})
-				continue
+
+				// Update hash fields in attributes
+				attrs["content_hash"] = types.StringValue(contentHash)
+				attrs["file_hash"] = types.StringValue(fileHash)
+				attrs["file_modtime"] = types.StringValue(modTime)
 			}
-			return fmt.Errorf("failed to read file %s: %w", fileWithPath.Path, err)
+		} else {
+			// File not in merged list, set hash fields to null
+			attrs["content_hash"] = types.StringNull()
+			attrs["file_hash"] = types.StringNull()
+			attrs["file_modtime"] = types.StringNull()
 		}
 
-		// Get or create FileModel for this path
-		fileModel, exists := filesMap[fileWithPath.Path]
-		if !exists {
-			fileModel = schemas.FileModel{
-				Content:      fileWithPath.Content,
-				Instructions: fileWithPath.Instructions,
-				Verifications: fileWithPath.Verifications,
-			}
+		// Create new object with updated attributes
+		newFileObj, diags := types.ObjectValue(fileObj.AttributeTypes(ctx), attrs)
+		if diags.HasError() {
+			return fmt.Errorf("failed to create file object for %s: %s", path, diags.Errors())
 		}
-
-		// Compute hashes
-		fileModel.ContentHash = types.StringValue(files.ComputeContentHash(fileModel))
-		fileModel.FileHash = types.StringValue(files.ComputeFileHash(actualContent))
-
-		// Store modification time
-		fileInfo, err := os.Stat(fullPath)
-		if err == nil {
-			fileModel.FileModTime = types.StringValue(fileInfo.ModTime().Format(time.RFC3339))
-		}
-
-		tflog.Debug(ctx, "Computed file hashes", map[string]interface{}{
-			"path":         fileWithPath.Path,
-			"content_hash": fileModel.ContentHash.ValueString()[:8] + "...",
-			"file_hash":    fileModel.FileHash.ValueString()[:8] + "...",
-		})
-
-		// Update map
-		filesMap[fileWithPath.Path] = fileModel
+		newFilesMap[path] = newFileObj
 	}
 
-	// Convert back to map attribute
 	// Build FileModel AttrTypes based on the schema
 	fileModelAttrTypes := map[string]attr.Type{
 		"content":       types.StringType,
@@ -3814,15 +3849,13 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 		"description": types.StringType,
 	}
 
-	filesMapValue, diags := types.MapValueFrom(ctx, types.ObjectType{
-		AttrTypes: fileModelAttrTypes,
-	}, filesMap)
-
+	// Create new map
+	newMap, diags := types.MapValue(types.ObjectType{AttrTypes: fileModelAttrTypes}, newFilesMap)
 	if diags.HasError() {
 		return fmt.Errorf("failed to convert files map: %s", diags.Errors())
 	}
 
-	data.Files = filesMapValue
+	data.Files = newMap
 	return nil
 }
 

@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExampleHelloWorldSuccess validates that the /examples/hello-world example works end-to-end
-func TestExampleHelloWorldSuccess(t *testing.T) {
+// TestE2EProjectExampleHelloWorldSuccess validates that the /examples/hello-world example works end-to-end
+func TestE2EProjectExampleHelloWorldSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestExampleHelloWorldSuccess")
+	testDir := createTestDirectory(t, "TestE2EProjectExampleHelloWorldSuccess")
 	t.Log("Testing hello-world example...")
 
 	// Get project root

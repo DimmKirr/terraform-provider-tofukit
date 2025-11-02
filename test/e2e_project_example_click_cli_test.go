@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExampleClickCliSuccess validates that the /examples/click-cli-hello-world example works end-to-end
-func TestExampleClickCliSuccess(t *testing.T) {
+// TestE2EProjectExampleClickCliSuccess validates that the /examples/click-cli-hello-world example works end-to-end
+func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	// Set debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestExampleClickCliSuccess")
+	testDir := createTestDirectory(t, "TestE2EProjectExampleClickCliSuccess")
 
 	// Get project root
 	projectRoot, err := filepath.Abs("..")

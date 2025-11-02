@@ -15,9 +15,9 @@ import (
 // Feature Resource Tests
 // ====================
 
-// TestFeatureResourceCreateSuccess tests creating a standalone feature resource
-func TestFeatureResourceCreateSuccess(t *testing.T) {
-	testDir := createTestDirectory(t, "TestFeatureResourceCreateSuccess")
+// TestResourceFeatureCreateSuccess tests creating a standalone feature resource
+func TestResourceFeatureCreateSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFeatureCreateSuccess")
 
 	// Create Terraform config with a feature resource
 	config := `
@@ -118,9 +118,9 @@ resource "tofukit_feature" "hello_cmd" {
 	}
 }
 
-// TestFeatureResourceInlineSuccess tests using an inline feature definition in a project
-func TestFeatureResourceInlineSuccess(t *testing.T) {
-	testDir := createTestDirectory(t, "TestFeatureResourceInlineSuccess")
+// TestResourceFeatureInlineSuccess tests using an inline feature definition in a project
+func TestResourceFeatureInlineSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFeatureInlineSuccess")
 
 	// Create Terraform config with inline feature
 	config := `
@@ -304,9 +304,9 @@ resource "tofukit_project" "test" {
 // TestFeatureMergeMultipleFeaturesSuccess tests merging files from multiple features
 // SKIPPED: Inline features with prompt/requirements processing is not yet fully implemented
 // Stack-level features work, but project-level inline features don't collect files yet
-func TestFeatureMergeMultipleFeaturesSuccess(t *testing.T) {
+func TestResourceFeatureMergeMultipleFeaturesSuccess(t *testing.T) {
 	t.Skip("Inline feature file collection not yet implemented - only static content in project files works")
-	testDir := createTestDirectory(t, "TestFeatureMergeMultipleFeaturesSuccess")
+	testDir := createTestDirectory(t, "TestResourceFeatureMergeMultipleFeaturesSuccess")
 
 	// Create Terraform config with multiple features
 	config := `
@@ -416,11 +416,11 @@ resource "tofukit_project" "test" {
 // Stack-Feature Integration Tests
 // ====================
 
-// TestFeatureFilesIndependent tests that feature resources provide files to stacks
+// TestResourceFeatureFilesIndependent tests that feature resources provide files to stacks
 // SKIPPED: Feature files from stack features are not being collected properly yet
-func TestFeatureFilesIndependent(t *testing.T) {
+func TestResourceFeatureFilesIndependent(t *testing.T) {
 	t.Skip("Feature file collection from stack features not yet implemented")
-	testDir := createTestDirectory(t, "TestFeatureFilesIndependent")
+	testDir := createTestDirectory(t, "TestResourceFeatureFilesIndependent")
 
 	// Create a minimal test with inline feature and stack
 	projectContent := `

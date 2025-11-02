@@ -15,13 +15,13 @@ import (
 // BASIC FILE OPERATIONS
 // =============================================================================
 
-func TestProjectFileCreateSuccess(t *testing.T) {
+func TestResourceProjectFileCreateSuccess(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestProjectFileCreateSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileCreateSuccess")
 
 	// CLAUDE_HOME is not needed when using --dangerously-skip-permissions
 	// The flag bypasses all authentication and permission checks
@@ -216,13 +216,13 @@ resource "tofukit_project" "hello_world" {
 	t.Log("✅ All tests completed successfully!")
 }
 
-// TestProjectFileAddMiddleFileSuccess tests adding a file in the middle position
+// TestResourceProjectFileAddMiddleFileSuccess tests adding a file in the middle position
 // This ensures files are tracked by path, not by position in the list
-func TestProjectFileAddMiddleFileSuccess(t *testing.T) {
+func TestResourceProjectFileAddMiddleFileSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileAddMiddleFileSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileAddMiddleFileSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -413,14 +413,14 @@ resource "tofukit_project" "hello_world" {
 	t.Log("✅ Add middle file test completed!")
 }
 
-// TestProjectFileRemovalSuccess tests file removal functionality
-func TestProjectFileRemovalSuccess(t *testing.T) {
+// TestResourceProjectFileRemovalSuccess tests file removal functionality
+func TestResourceProjectFileRemovalSuccess(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestProjectFileRemovalSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileRemovalSuccess")
 
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
@@ -635,14 +635,14 @@ resource "tofukit_project" "hello_world" {
 	t.Log("✅ File removal test completed!")
 }
 
-// TestProjectFileRenameSuccess tests that renaming a file properly deletes the old file
-func TestProjectFileRenameSuccess(t *testing.T) {
+// TestResourceProjectFileRenameSuccess tests that renaming a file properly deletes the old file
+func TestResourceProjectFileRenameSuccess(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestProjectFileRenameSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileRenameSuccess")
 
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
@@ -794,12 +794,12 @@ resource "tofukit_project" "hello_world" {
 // RECURSIVE/NESTED FILE OPERATIONS
 // =============================================================================
 
-// TestProjectFileNestedCreateSuccess tests creating an initial nested file
-func TestProjectFileNestedCreateSuccess(t *testing.T) {
+// TestResourceProjectFileNestedCreateSuccess tests creating an initial nested file
+func TestResourceProjectFileNestedCreateSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileNestedCreateSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileNestedCreateSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	// Step 1: Generate single project.tofu with all configuration
@@ -883,12 +883,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Initial nested file created successfully!")
 }
 
-// TestProjectFileNestedAddSuccess tests adding another nested file
-func TestProjectFileNestedAddSuccess(t *testing.T) {
+// TestResourceProjectFileNestedAddSuccess tests adding another nested file
+func TestResourceProjectFileNestedAddSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileNestedAddSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileNestedAddSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1017,12 +1017,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Additional nested file added successfully!")
 }
 
-// TestProjectFileNestedDeeperNestingSuccess tests creating deeply nested directories
-func TestProjectFileNestedDeeperNestingSuccess(t *testing.T) {
+// TestResourceProjectFileNestedDeeperNestingSuccess tests creating deeply nested directories
+func TestResourceProjectFileNestedDeeperNestingSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileNestedDeeperNestingSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileNestedDeeperNestingSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1162,12 +1162,12 @@ resource "tofukit_project" "recursive_test" {
 	t.Log("✅ Deeper nested file created successfully!")
 }
 
-// TestProjectFileNestedRemovalSuccess tests removing nested files and cleaning up empty directories
-func TestProjectFileNestedRemovalSuccess(t *testing.T) {
+// TestResourceProjectFileNestedRemovalSuccess tests removing nested files and cleaning up empty directories
+func TestResourceProjectFileNestedRemovalSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileNestedRemovalSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileNestedRemovalSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1318,12 +1318,12 @@ resource "tofukit_project" "recursive_test" {
 // VERIFICATION OPERATIONS
 // =============================================================================
 
-// TestProjectFileVerificationSuccess tests that verification passes when expectations are met
-func TestProjectFileVerificationSuccess(t *testing.T) {
+// TestResourceProjectFileVerificationSuccess tests that verification passes when expectations are met
+func TestResourceProjectFileVerificationSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileVerificationSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileVerificationSuccess")
 	t.Log("Testing verification success...")
 
 	var err error
@@ -1425,12 +1425,12 @@ resource "tofukit_project" "verification_test" {
 	t.Log("✅ Verification success test completed!")
 }
 
-// TestProjectFileVerificationFailure tests that verification failures are properly detected and reported
-func TestProjectFileVerificationFailure(t *testing.T) {
+// TestResourceProjectFileVerificationFailure tests that verification failures are properly detected and reported
+func TestResourceProjectFileVerificationFailure(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileVerificationFailure")
+	testDir := createTestDirectory(t, "TestResourceProjectFileVerificationFailure")
 	t.Log("Testing verification failure detection...")
 
 	var err error
@@ -1536,14 +1536,14 @@ resource "tofukit_project" "verification_test" {
 	}
 }
 
-// TestProjectFileVerificationRetrySuccess tests that the retry mechanism works when verification fails initially
-func TestProjectFileVerificationRetrySuccess(t *testing.T) {
+// TestResourceProjectFileVerificationRetrySuccess tests that the retry mechanism works when verification fails initially
+func TestResourceProjectFileVerificationRetrySuccess(t *testing.T) {
 	// Set TF_LOG=DEBUG for debug logging
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestProjectFileVerificationRetrySuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileVerificationRetrySuccess")
 
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
@@ -1780,13 +1780,13 @@ resource "tofukit_project" "verification_test" {
 // INSTRUCTION-BASED FILES
 // =============================================================================
 
-// TestProjectFileInstructionRenameSuccess tests renaming files with instructions (dynamic/generated content)
+// TestResourceProjectFileInstructionRenameSuccess tests renaming files with instructions (dynamic/generated content)
 // This ensures rename detection works for instruction-based files, not just static content files
-func TestProjectFileInstructionRenameSuccess(t *testing.T) {
+func TestResourceProjectFileInstructionRenameSuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileInstructionRenameSuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileInstructionRenameSuccess")
 	t.Log("Skipping CLAUDE_HOME setup (not needed with --dangerously-skip-permissions)")
 
 	var err error
@@ -1965,15 +1965,15 @@ resource "tofukit_project" "hello_world" {
 // FILE ORDERING
 // =============================================================================
 
-// TestProjectFileOrderingConsistencySuccess verifies that files maintain their config order
+// TestResourceProjectFileOrderingConsistencySuccess verifies that files maintain their config order
 // between plan and apply, preventing "Provider produced inconsistent result" errors.
 // This specifically tests the bug where alphabetical sorting caused apply to return
 // files in a different order than plan expected.
-func TestProjectFileOrderingConsistencySuccess(t *testing.T) {
+func TestResourceProjectFileOrderingConsistencySuccess(t *testing.T) {
 	os.Setenv("TF_LOG", "DEBUG")
 	defer os.Unsetenv("TF_LOG")
 
-	testDir := createTestDirectory(t, "TestProjectFileOrderingConsistencySuccess")
+	testDir := createTestDirectory(t, "TestResourceProjectFileOrderingConsistencySuccess")
 
 	var err error
 

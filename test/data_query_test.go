@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestQuerySimpleSuccess tests the tofukit_query data source with simple questions
-func TestQuerySimpleSuccess(t *testing.T) {
+// TestDataQuerySimpleSuccess tests the tofukit_query data source with simple questions
+func TestDataQuerySimpleSuccess(t *testing.T) {
 	// Create unique test directory in test-output
-	testDir := createTestDirectory(t, "TestQuerySimpleSuccess")
+	testDir := createTestDirectory(t, "TestDataQuerySimpleSuccess")
 
 	// CLAUDE_HOME is not needed when using --dangerously-skip-permissions
 	// The flag bypasses all authentication and permission checks
