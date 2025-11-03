@@ -25,7 +25,7 @@ func createTestDirectory(t *testing.T, testName string) string {
 	}
 
 	timestamp := generateTestTimestamp()
-	testDir := filepath.Join(projectRoot, "test-output", fmt.Sprintf("%s-%s", testName, timestamp))
+	testDir := filepath.Join(projectRoot, "test-output", fmt.Sprintf("%s-%s", timestamp, testName))
 
 	if err := os.MkdirAll(testDir, 0755); err != nil {
 		t.Fatalf("Failed to create test directory %s: %v", testDir, err)

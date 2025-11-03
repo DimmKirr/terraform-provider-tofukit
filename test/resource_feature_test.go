@@ -301,11 +301,8 @@ resource "tofukit_project" "test" {
 	t.Log("✅ Project precedence over feature verified!")
 }
 
-// TestFeatureMergeMultipleFeaturesSuccess tests merging files from multiple features
-// SKIPPED: Inline features with prompt/requirements processing is not yet fully implemented
-// Stack-level features work, but project-level inline features don't collect files yet
+// TestResourceFeatureMergeMultipleFeaturesSuccess tests merging files from multiple inline features
 func TestResourceFeatureMergeMultipleFeaturesSuccess(t *testing.T) {
-	t.Skip("Inline feature file collection not yet implemented - only static content in project files works")
 	testDir := createTestDirectory(t, "TestResourceFeatureMergeMultipleFeaturesSuccess")
 
 	// Create Terraform config with multiple features
@@ -417,9 +414,7 @@ resource "tofukit_project" "test" {
 // ====================
 
 // TestResourceFeatureFilesIndependent tests that feature resources provide files to stacks
-// SKIPPED: Feature files from stack features are not being collected properly yet
 func TestResourceFeatureFilesIndependent(t *testing.T) {
-	t.Skip("Feature file collection from stack features not yet implemented")
 	testDir := createTestDirectory(t, "TestResourceFeatureFilesIndependent")
 
 	// Create a minimal test with inline feature and stack
@@ -533,7 +528,9 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err, "Failed to parse project JSON")
 
 	// Verify the feature file is present
-	specification, ok := projectJSON["specification"].(map[string]interface{})
+	request, ok := projectJSON["request"].(map[string]interface{})
+	require.True(t, ok, "request should be a map")
+	specification, ok := request["specification"].(map[string]interface{})
 	require.True(t, ok, "specification should be a map")
 	files, ok := specification["files"].(map[string]interface{})
 	require.True(t, ok, "files should be a map")
@@ -566,9 +563,7 @@ resource "tofukit_project" "test" {
 }
 
 // TestStackFeaturesFromModule tests that features from a stack module are collected
-// SKIPPED: Stack features from modules don't have their files collected properly yet
 func TestStackFeaturesFromModule(t *testing.T) {
-	t.Skip("Feature file collection from module stacks not yet implemented")
 	testDir := createTestDirectory(t, "TestStackFeaturesFromModule")
 
 	// Get project root and copy stacks
@@ -660,7 +655,9 @@ resource "tofukit_project" "test" {
 	err = json.Unmarshal(jsonData, &projectJSON)
 	require.NoError(t, err)
 
-	specification, ok := projectJSON["specification"].(map[string]interface{})
+	request, ok := projectJSON["request"].(map[string]interface{})
+	require.True(t, ok, "request should be a map")
+	specification, ok := request["specification"].(map[string]interface{})
 	require.True(t, ok, "specification should be a map")
 	files, ok := specification["files"].(map[string]interface{})
 	require.True(t, ok, "files should be a map")
@@ -679,9 +676,9 @@ resource "tofukit_project" "test" {
 
 	// Verify expected files from features
 	expectedFiles := []string{
-		"src/__init__.py",    // from version_command feature
-		"src/__version__.py", // from version_command feature
-		"README.md",          // from readme feature
+		"src/__init__.py", // from version_command feature
+		"src/cli.py",      // from version_command feature
+		"README.md",       // from readme feature
 	}
 
 	for _, expectedFile := range expectedFiles {

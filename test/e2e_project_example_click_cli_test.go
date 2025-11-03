@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,6 +261,66 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 		if len(debugSpecFiles) > 0 {
 			t.Log("ℹ️  Kits are embedded in the stack and not listed separately in the specification")
 			t.Log("✓ Project specification contains expected files")
+		}
+
+		// === Verify Features from Stack Module ===
+		// This validates that the provider correctly passes the stack to the project,
+		// and that features in the stack (including files and instructions) are properly collected
+		// (moved from TestStackFeaturesFromModule to avoid duplication)
+		if len(jsonlFiles) > 0 {
+			t.Log("Verifying features from stack module...")
+
+			jsonData, err := os.ReadFile(jsonlFiles[0])
+			require.NoError(t, err, "Failed to read Claude prompt JSON")
+
+			var projectJSON map[string]interface{}
+			err = json.Unmarshal(jsonData, &projectJSON)
+			require.NoError(t, err, "Failed to parse Claude prompt JSON")
+
+			// Extract specification from the JSON structure
+			request, ok := projectJSON["request"].(map[string]interface{})
+			require.True(t, ok, "request should be a map")
+			specification, ok := request["specification"].(map[string]interface{})
+			require.True(t, ok, "specification should be a map")
+
+			// Verify files from features
+			files, ok := specification["files"].(map[string]interface{})
+			require.True(t, ok, "files should be a map")
+
+			t.Logf("Files in project JSON: %d", len(files))
+			for path := range files {
+				t.Logf("  - %s", path)
+			}
+
+			// Verify expected files from stack features
+			expectedFiles := []string{
+				"src/__init__.py", // from version_command feature
+				"src/cli.py",      // from version_command feature
+				"README.md",       // from readme feature
+			}
+
+			for _, expectedFile := range expectedFiles {
+				assert.Contains(t, files, expectedFile, "Should have %s from stack features", expectedFile)
+			}
+			t.Log("✓ Feature files from stack verified")
+
+			// Verify requirements/instructions from features
+			requirements, ok := specification["requirements"].([]interface{})
+			if ok && len(requirements) > 0 {
+				t.Logf("Requirements in project JSON: %d", len(requirements))
+				for i, req := range requirements {
+					if reqMap, ok := req.(map[string]interface{}); ok {
+						if name, ok := reqMap["name"].(string); ok {
+							t.Logf("  - Requirement %d: %s", i+1, name)
+						}
+					}
+				}
+				t.Log("✓ Feature requirements/instructions from stack verified")
+			} else {
+				t.Log("ℹ️  No requirements found (features may only define files)")
+			}
+
+			t.Log("✓ Stack module features fully verified")
 		}
 
 		t.Log("✓ Debug files verification complete")

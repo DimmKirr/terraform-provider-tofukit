@@ -33,8 +33,10 @@ resource "tofukit_file" "viper_config_internal" {
 
       constraints = [
         "LoadConfig signature MUST match: func LoadConfig(configFile string) error",
+        "ONLY implement LoadConfig function - do NOT add SaveConfig, GetConfig, or any other functions",
         "Missing config files are NOT errors - use defaults",
-        "Never expose viper types in public API"
+        "Never expose viper types in public API",
+        "Use os.ExpandEnv for home directory paths - do NOT import path/filepath"
       ]
     }
   ]
@@ -203,7 +205,9 @@ resource "tofukit_file" "taskfile_yaml" {
       EOF
 
       constraints = [
-        "NO hard-coded versions",
+        "VERSION must be a simple string variable set to '1.0.0', NOT a shell command",
+        "Define VERSION as: VERSION: \"1.0.0\" (simple string assignment, not sh: command)",
+        "CRITICAL: In vars section, VERSION must be defined BEFORE GO_LDFLAGS (variable expansion happens at definition time)",
         "Build output MUST go to bin/ directory",
         "Use Go toolchain commands only"
       ]

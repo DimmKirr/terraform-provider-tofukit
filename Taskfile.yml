@@ -51,42 +51,42 @@ tasks:
   test:
     desc: Run all tests sequentially to avoid resource exhaustion
     cmds:
-      - task: test:query
-      - task: test:example_hello_world
-      - task: test:example_click_cli
-      - task: test:example_go_viper_cli
-      - task: test:project_files
+      - task: test:data_query
+      - task: test:e2e_project_example_hello_world
+      - task: test:e2e_project_example_click_cli
+      - task: test:e2e_project_example_go_viper_cli_hello_world
+      - task: test:resource_project_inline_file
 
 
-  test:query:
+  test:data_query:
     desc: Run query tests
     deps: [build, install]
     cmds:
-      - go test ./test -v -run TestQuery -timeout={{.TEST_TIMEOUT}}
+      - go test ./test -v -run TestDataQuery -timeout={{.TEST_TIMEOUT}}
 
-  test:example_hello_world:
+  test:e2e_project_example_hello_world:
     desc: Run example hello world tests
     deps: [build, install]
     cmds:
-      - go test ./test -v -run TestExampleHelloWorld -timeout={{.TEST_TIMEOUT}}
+      - go test ./test -v -run TestE2EProjectExampleHelloWorld -timeout={{.TEST_TIMEOUT}}
 
-  test:example_click_cli:
+  test:e2e_project_example_click_cli:
     desc: Run example click CLI tests
     deps: [build, install]
     cmds:
-      - go test ./test -v -run TestExampleClickCli -timeout={{.TEST_TIMEOUT}}
+      - go test ./test -v -run TestE2EProjectExampleClickCli -timeout={{.TEST_TIMEOUT}}
 
-  test:example_go_viper_cli:
+  test:e2e_project_example_go_viper_cli_hello_world:
     desc: Run example Go Viper CLI tests
     deps: [build, install]
     cmds:
-      - go test ./test -v -run TestExampleGoViperCliHelloWorld -timeout={{.TEST_TIMEOUT}}
+      - go test ./test -v -run TestE2EProjectExampleGoViperCliHelloWorld -timeout={{.TEST_TIMEOUT}}
 
-  test:project_files:
+  test:resource_project_inline_file:
     desc: Run project files tests
     deps: [build, install]
     cmds:
-      - go test ./test -v -run TestProject -timeout={{.TEST_TIMEOUT}}
+      - go test ./test -v -run TestResourceProjectInlineFileCreateSuccess -timeout={{.TEST_TIMEOUT}}
 
   docs:
     desc: Generate provider documentation

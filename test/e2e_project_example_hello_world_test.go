@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,9 +30,17 @@ func TestE2EProjectExampleHelloWorldSuccess(t *testing.T) {
 		t.Fatalf("Failed to read project.tofu from example: %v", err)
 	}
 
+	// Modify the provider config to use test output directory
+	modifiedContent := string(projectContent)
+	// Add output_path = "output" after the output_format line
+	modifiedContent = strings.Replace(modifiedContent,
+		`output_format         = "json"`,
+		`output_format         = "json"
+  output_path           = "output"`, 1)
+
 	// Write the project.tofu to test directory
 	projectPath := filepath.Join(testDir, "project.tofu")
-	if err := os.WriteFile(projectPath, projectContent, 0644); err != nil {
+	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {
 		t.Fatalf("Failed to write project.tofu: %v", err)
 	}
 
@@ -75,8 +84,7 @@ func TestE2EProjectExampleHelloWorldSuccess(t *testing.T) {
 	t.Log("✓ Apply completed successfully")
 
 	// Step 6: Verify files were created
-	// Note: Files are created directly in testDir, not in output/ subdirectory
-	outputPath := testDir
+	outputPath := filepath.Join(testDir, "output")
 
 	// Verify deterministic inline file
 	inlineDeterministicPath := filepath.Join(outputPath, "inline-deterministic.txt")
