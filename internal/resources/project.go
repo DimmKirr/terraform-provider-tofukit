@@ -489,6 +489,11 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 
 	data.ID = types.StringValue(fmt.Sprintf("project.%s", data.Name.ValueString()))
 
+	tflog.Debug(ctx, "=== CREATE METHOD STARTED ===", map[string]interface{}{
+		"project_id":   data.ID.ValueString(),
+		"project_name": data.Name.ValueString(),
+	})
+
 	// Validate project has at least one content source
 	hasFiles := !data.Files.IsNull() && !data.Files.IsUnknown() && len(data.Files.Elements()) > 0
 	hasKits := !data.Kits.IsNull() && !data.Kits.IsUnknown()
@@ -726,8 +731,31 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.DriftDetected = types.BoolValue(false)
 	data.DriftedFiles = types.ListNull(types.StringType)
 
+	tflog.Debug(ctx, "=== CREATE: INITIALIZED DRIFT FLAGS ===", map[string]interface{}{
+		"project_id":       data.ID.ValueString(),
+		"drift_detected":   data.DriftDetected.ValueBool(),
+		"drift_is_null":    data.DriftDetected.IsNull(),
+		"drift_is_unknown": data.DriftDetected.IsUnknown(),
+	})
+
 	tflog.Trace(ctx, fmt.Sprintf("created project resource: %s", data.ID.ValueString()))
+
+	tflog.Debug(ctx, "=== CREATE: SAVING STATE ===", map[string]interface{}{
+		"project_id":     data.ID.ValueString(),
+		"drift_detected": data.DriftDetected.ValueBool(),
+	})
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		tflog.Error(ctx, "=== CREATE: ERROR SAVING STATE ===", map[string]interface{}{
+			"errors": resp.Diagnostics.Errors(),
+		})
+	} else {
+		tflog.Debug(ctx, "=== CREATE: STATE SAVED SUCCESSFULLY ===", map[string]interface{}{
+			"project_id": data.ID.ValueString(),
+		})
+	}
 }
 
 func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -736,6 +764,15 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	tflog.Debug(ctx, "=== READ METHOD STARTED ===", map[string]interface{}{
+		"project_id":           data.ID.ValueString(),
+		"drift_detected_in":    data.DriftDetected.ValueBoolPointer(),
+		"drift_is_null_in":     data.DriftDetected.IsNull(),
+		"drift_is_unknown_in":  data.DriftDetected.IsUnknown(),
+		"drifted_files_null":   data.DriftedFiles.IsNull(),
+		"drifted_files_length": len(data.DriftedFiles.Elements()),
+	})
 
 	// Get provider configuration
 	outputPath := ".tofukit"
@@ -759,13 +796,66 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	projectPath := data.ProjectPath.ValueString()
 	driftedFiles := []string{}
 
-	if projectPath != "" && !data.Files.IsNull() {
-		filesMap := make(map[string]schemas.FileModel)
-		data.Files.ElementsAs(ctx, &filesMap, false)
+	tflog.Debug(ctx, "=== READ: STARTING DRIFT DETECTION ===", map[string]interface{}{
+		"project_path":    projectPath,
+		"files_is_null":   data.Files.IsNull(),
+		"files_elements":  len(data.Files.Elements()),
+		"will_check_drift": projectPath != "" && !data.Files.IsNull(),
+	})
 
+	if projectPath != "" && !data.Files.IsNull() {
+		tflog.Debug(ctx, "=== READ: BEFORE ElementsAs ===", map[string]interface{}{
+			"files_elements": len(data.Files.Elements()),
+			"files_type":     fmt.Sprintf("%T", data.Files),
+		})
+
+		filesMap := make(map[string]schemas.FileModel)
+		diags := data.Files.ElementsAs(ctx, &filesMap, false)
+
+		tflog.Debug(ctx, "=== READ: AFTER ElementsAs ===", map[string]interface{}{
+			"filesMap_size": len(filesMap),
+			"has_diags":     diags.HasError(),
+			"diags_errors":  len(diags.Errors()),
+		})
+
+		if diags.HasError() {
+			errorStrings := []string{}
+			for _, diag := range diags.Errors() {
+				errorStrings = append(errorStrings, diag.Summary()+": "+diag.Detail())
+			}
+			tflog.Error(ctx, "=== READ: ElementsAs FAILED ===", map[string]interface{}{
+				"error_count":    len(diags.Errors()),
+				"error_messages": errorStrings,
+			})
+		}
+
+		// Log each file in the map
+		for key := range filesMap {
+			tflog.Debug(ctx, "=== READ: File in filesMap ===", map[string]interface{}{
+				"path": key,
+			})
+		}
+
+		iterationCount := 0
 		for path, fileModel := range filesMap {
+			iterationCount++
+			tflog.Debug(ctx, "=== READ: ITERATING FILE ===", map[string]interface{}{
+				"iteration":         iterationCount,
+				"path":              path,
+				"file_hash_null":    fileModel.FileHash.IsNull(),
+				"file_hash_unknown": fileModel.FileHash.IsUnknown(),
+				"file_hash_value":   fileModel.FileHash.ValueString(),
+				"content_hash_null": fileModel.ContentHash.IsNull(),
+				"modtime_null":      fileModel.FileModTime.IsNull(),
+			})
+
 			// Skip if no hash stored yet (first run after upgrade)
 			if fileModel.FileHash.IsNull() || fileModel.FileHash.IsUnknown() {
+				tflog.Warn(ctx, "=== READ: SKIPPING FILE (no hash) ===", map[string]interface{}{
+					"path":              path,
+					"file_hash_null":    fileModel.FileHash.IsNull(),
+					"file_hash_unknown": fileModel.FileHash.IsUnknown(),
+				})
 				continue
 			}
 
@@ -821,12 +911,23 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 					"expected_hash": fileModel.FileHash.ValueString()[:8] + "...",
 					"current_hash":  currentHash[:8] + "...",
 				})
+				tflog.Debug(ctx, "=== READ: DRIFT DETECTED FOR FILE ===", map[string]interface{}{
+					"path":          path,
+					"expected_hash": fileModel.FileHash.ValueString()[:8],
+					"current_hash":  currentHash[:8],
+				})
 				driftedFiles = append(driftedFiles, path)
 			}
 		}
+
+		tflog.Debug(ctx, "=== READ: DRIFT CHECK COMPLETED ===", map[string]interface{}{
+			"files_checked":   len(filesMap),
+			"drifted_count":   len(driftedFiles),
+			"drifted_files":   driftedFiles,
+		})
 	}
 
-	// Set computed drift fields (triggers Update if changed)
+	// Set computed drift fields and restore files if drift detected
 	if len(driftedFiles) > 0 {
 		data.DriftDetected = types.BoolValue(true)
 		driftList, diags := types.ListValueFrom(ctx, types.StringType, driftedFiles)
@@ -838,14 +939,56 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 			data.DriftedFiles = driftList
 		}
 
-		tflog.Info(ctx, "Drift detected in project files", map[string]interface{}{
+		tflog.Info(ctx, "Drift detected in project files - initiating auto-restoration", map[string]interface{}{
 			"project_id":    data.ID.ValueString(),
 			"drifted_count": len(driftedFiles),
 			"drifted_files": driftedFiles,
 		})
+
+		// AUTO-RESTORE: Execute Claude to restore drifted files
+		// Get merged files and enrich with drift instructions
+		mergedFiles := r.collectAndMergeFiles(ctx, data)
+		enrichedFiles := r.addDriftInstructions(ctx, mergedFiles, driftedFiles)
+
+		// Build output data for Claude
+		outputData := r.buildOutputData(ctx, data)
+
+		// Execute Claude to restore files
+		tflog.Info(ctx, "Executing Claude to restore drifted files", map[string]interface{}{
+			"project_id": data.ID.ValueString(),
+		})
+
+		if err := r.executeClaudeCode(ctx, &data, outputData, enrichedFiles, projectPath, claudeHomeDir, false); err != nil {
+			tflog.Error(ctx, "Failed to restore drifted files", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+				"error":      err.Error(),
+			})
+			// Don't fail Read(), just log the error and leave drift flag set
+		} else {
+			// Successfully restored - recompute hashes and clear drift flags
+			outputHash := r.computeOutputHash(ctx, projectPath)
+			data.OutputHash = types.StringValue(outputHash)
+
+			if err := r.computeAndStoreFileHashes(ctx, &data, mergedFiles); err != nil {
+				tflog.Warn(ctx, "Failed to recompute file hashes after restoration", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+
+			// Clear drift flags
+			data.DriftDetected = types.BoolValue(false)
+			data.DriftedFiles = types.ListNull(types.StringType)
+
+			tflog.Info(ctx, "Successfully restored drifted files and cleared drift flags", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+			})
+		}
 	} else {
 		data.DriftDetected = types.BoolValue(false)
 		data.DriftedFiles = types.ListNull(types.StringType)
+		tflog.Debug(ctx, "=== READ: SET DRIFT_DETECTED=FALSE ===", map[string]interface{}{
+			"drifted_count": 0,
+		})
 	}
 
 	// DEBUG: Check kits in Read
@@ -909,14 +1052,42 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	}
 
 	// Initialize drift detection fields if not set
+	tflog.Debug(ctx, "=== READ: BEFORE DRIFT INIT CHECK ===", map[string]interface{}{
+		"drift_detected":   data.DriftDetected.ValueBoolPointer(),
+		"drift_is_null":    data.DriftDetected.IsNull(),
+		"drift_is_unknown": data.DriftDetected.IsUnknown(),
+	})
+
 	if data.DriftDetected.IsNull() || data.DriftDetected.IsUnknown() {
+		tflog.Debug(ctx, "=== READ: REINITIALIZING DRIFT_DETECTED TO FALSE ===", map[string]interface{}{
+			"was_null":    data.DriftDetected.IsNull(),
+			"was_unknown": data.DriftDetected.IsUnknown(),
+		})
 		data.DriftDetected = types.BoolValue(false)
 	}
 	if data.DriftedFiles.IsNull() || data.DriftedFiles.IsUnknown() {
 		data.DriftedFiles = types.ListNull(types.StringType)
 	}
 
+	tflog.Debug(ctx, "=== READ: SAVING STATE ===", map[string]interface{}{
+		"project_id":       data.ID.ValueString(),
+		"drift_detected":   data.DriftDetected.ValueBool(),
+		"drift_is_null":    data.DriftDetected.IsNull(),
+		"drift_is_unknown": data.DriftDetected.IsUnknown(),
+		"drifted_files":    len(data.DriftedFiles.Elements()),
+	})
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		tflog.Error(ctx, "=== READ: ERROR SAVING STATE ===", map[string]interface{}{
+			"errors": resp.Diagnostics.Errors(),
+		})
+	} else {
+		tflog.Debug(ctx, "=== READ: STATE SAVED SUCCESSFULLY ===", map[string]interface{}{
+			"project_id": data.ID.ValueString(),
+		})
+	}
 }
 
 func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -937,6 +1108,13 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	// Check if update triggered by drift vs config change
 	isDriftTriggered := state.DriftDetected.ValueBool()
+
+	tflog.Debug(ctx, "=== UPDATE: DRIFT CHECK ===", map[string]interface{}{
+		"project_id":           state.ID.ValueString(),
+		"isDriftTriggered":     isDriftTriggered,
+		"drift_detected_value": state.DriftDetected.ValueBool(),
+		"drift_detected_null":  state.DriftDetected.IsNull(),
+	})
 
 	if isDriftTriggered {
 		tflog.Info(ctx, "Update triggered by drift detection", map[string]interface{}{
@@ -1016,16 +1194,28 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	})
 
 	// Add drift context if update triggered by drift
+	tflog.Debug(ctx, "=== UPDATE: BEFORE DRIFT INSTRUCTIONS ===", map[string]interface{}{
+		"isDriftTriggered":        isDriftTriggered,
+		"drifted_files_null":      state.DriftedFiles.IsNull(),
+		"drifted_files_unknown":   state.DriftedFiles.IsUnknown(),
+		"enriched_files_count":    len(enrichedFiles),
+	})
+
 	if isDriftTriggered {
 		var driftedPaths []string
 		if !state.DriftedFiles.IsNull() && !state.DriftedFiles.IsUnknown() {
 			state.DriftedFiles.ElementsAs(ctx, &driftedPaths, false)
 
-			tflog.Info(ctx, "Adding drift instructions", map[string]interface{}{
+			tflog.Debug(ctx, "=== UPDATE: ADDING DRIFT INSTRUCTIONS ===", map[string]interface{}{
 				"drifted_files": driftedPaths,
+				"drifted_count": len(driftedPaths),
 			})
 
 			enrichedFiles = r.addDriftInstructions(ctx, enrichedFiles, driftedPaths)
+
+			tflog.Debug(ctx, "=== UPDATE: AFTER addDriftInstructions ===", map[string]interface{}{
+				"enriched_files_count": len(enrichedFiles),
+			})
 		}
 	}
 
@@ -1053,7 +1243,15 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 	// Declare variables outside if/else to make them available in both branches
 	var outputData map[string]interface{}
 
-	if promptChanged || fileSpecChanged || outputDrifted {
+	tflog.Debug(ctx, "=== UPDATE: EXECUTION TRIGGER CHECK ===", map[string]interface{}{
+		"promptChanged":    promptChanged,
+		"fileSpecChanged":  fileSpecChanged,
+		"outputDrifted":    outputDrifted,
+		"isDriftTriggered": isDriftTriggered,
+		"will_execute":     promptChanged || fileSpecChanged || outputDrifted || isDriftTriggered,
+	})
+
+	if promptChanged || fileSpecChanged || outputDrifted || isDriftTriggered {
 		if promptChanged {
 			tflog.Info(ctx, "Config changed - triggering re-execution", map[string]interface{}{
 				"project_id":      data.ID.ValueString(),
@@ -1070,6 +1268,11 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		}
 		if outputDrifted {
 			tflog.Info(ctx, "Output drift detected - triggering re-execution", map[string]interface{}{
+				"project_id": data.ID.ValueString(),
+			})
+		}
+		if isDriftTriggered {
+			tflog.Info(ctx, "Drift detected - triggering restoration", map[string]interface{}{
 				"project_id": data.ID.ValueString(),
 			})
 		}
@@ -2435,7 +2638,7 @@ func convertVerificationsList(ctx context.Context, list types.List) []schemas.Ve
 
 // parseFeature extracts FeatureModel from either resource reference or inline definition
 func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue attr.Value) (*schemas.FeatureModel, error) {
-	tflog.Info(ctx, "=== parseFeature START ===", map[string]interface{}{
+	tflog.Debug(ctx, "=== parseFeature START ===", map[string]interface{}{
 		"feature_value_type": fmt.Sprintf("%T", featureValue),
 	})
 
@@ -2794,7 +2997,7 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 
 // collectFeaturesFromDynamic extracts feature files from a Dynamic list of feature references
 func (r *ProjectResourceFinal) collectFeaturesFromDynamic(ctx context.Context, featuresDynamic types.Dynamic, reg *registry.Registry) []schemas.FileModelWithPath {
-	tflog.Info(ctx, "=== collectFeaturesFromDynamic START ===", map[string]interface{}{
+	tflog.Debug(ctx, "=== collectFeaturesFromDynamic START ===", map[string]interface{}{
 		"is_null":      featuresDynamic.IsNull(),
 		"is_unknown":   featuresDynamic.IsUnknown(),
 		"has_registry": reg != nil,
@@ -2907,7 +3110,7 @@ func (r *ProjectResourceFinal) collectFeaturesFromDynamic(ctx context.Context, f
 		}
 	}
 
-	tflog.Info(ctx, "=== collectFeaturesFromDynamic END ===", map[string]interface{}{
+	tflog.Debug(ctx, "=== collectFeaturesFromDynamic END ===", map[string]interface{}{
 		"total_files": len(allFiles),
 	})
 
@@ -2916,7 +3119,7 @@ func (r *ProjectResourceFinal) collectFeaturesFromDynamic(ctx context.Context, f
 
 // collectFeatureFiles extracts files from all features in the project
 func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data ProjectModelFinal) []schemas.FileModelWithPath {
-	tflog.Info(ctx, "=== collectFeatureFiles START ===", map[string]interface{}{
+	tflog.Debug(ctx, "=== collectFeatureFiles START ===", map[string]interface{}{
 		"features_is_null":    data.Features.IsNull(),
 		"features_is_unknown": data.Features.IsUnknown(),
 	})
@@ -3002,7 +3205,7 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 			})
 		}
 
-		tflog.Info(ctx, "=== collectFeatureFiles END (Object path) ===", map[string]interface{}{
+		tflog.Debug(ctx, "=== collectFeatureFiles END (Object path) ===", map[string]interface{}{
 			"total_files_collected": len(allFiles),
 		})
 
@@ -3059,7 +3262,7 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 		})
 	}
 
-	tflog.Info(ctx, "=== collectFeatureFiles END ===", map[string]interface{}{
+	tflog.Debug(ctx, "=== collectFeatureFiles END ===", map[string]interface{}{
 		"total_files_collected": len(allFiles),
 	})
 
@@ -3746,14 +3949,26 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 ) error {
 	projectPath := data.ProjectPath.ValueString()
 
+	tflog.Debug(ctx, "=== computeAndStoreFileHashes STARTED ===", map[string]interface{}{
+		"project_path":    projectPath,
+		"merged_files":    len(mergedFiles),
+		"files_is_null":   data.Files.IsNull(),
+		"files_is_unknown": data.Files.IsUnknown(),
+	})
+
 	// If Files is null or unknown, nothing to update
 	if data.Files.IsNull() || data.Files.IsUnknown() {
+		tflog.Debug(ctx, "=== computeAndStoreFileHashes: Files is null/unknown, skipping ===", nil)
 		return nil
 	}
 
 	// Extract current files map as attr.Value elements (not Go structs)
 	filesElements := data.Files.Elements()
 	newFilesMap := make(map[string]attr.Value)
+
+	tflog.Debug(ctx, "=== computeAndStoreFileHashes: Processing files ===", map[string]interface{}{
+		"files_elements_count": len(filesElements),
+	})
 
 	// Build a map of merged files for quick lookup
 	mergedFilesMap := make(map[string]schemas.FileModelWithPath)
@@ -3814,6 +4029,13 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 					"file_hash":    fileHash[:8] + "...",
 				})
 
+				tflog.Debug(ctx, "=== computeAndStoreFileHashes: Setting hashes for file ===", map[string]interface{}{
+					"path":         path,
+					"content_hash": contentHash[:8],
+					"file_hash":    fileHash[:8],
+					"modtime":      modTime,
+				})
+
 				// Update hash fields in attributes
 				attrs["content_hash"] = types.StringValue(contentHash)
 				attrs["file_hash"] = types.StringValue(fileHash)
@@ -3855,7 +4077,18 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 		return fmt.Errorf("failed to convert files map: %s", diags.Errors())
 	}
 
+	tflog.Debug(ctx, "=== computeAndStoreFileHashes: Creating new Files map ===", map[string]interface{}{
+		"new_map_elements": len(newFilesMap),
+		"has_diags":        diags.HasError(),
+	})
+
 	data.Files = newMap
+
+	tflog.Debug(ctx, "=== computeAndStoreFileHashes COMPLETED ===", map[string]interface{}{
+		"files_elements": len(data.Files.Elements()),
+		"files_is_null":  data.Files.IsNull(),
+	})
+
 	return nil
 }
 
@@ -3865,6 +4098,12 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 	files []schemas.FileModelWithPath,
 	driftedPaths []string,
 ) []schemas.FileModelWithPath {
+	tflog.Debug(ctx, "=== addDriftInstructions STARTED ===", map[string]interface{}{
+		"files_count":      len(files),
+		"drifted_paths":    driftedPaths,
+		"drifted_count":    len(driftedPaths),
+	})
+
 	// Build drift map for O(1) lookup
 	driftMap := make(map[string]bool)
 	for _, path := range driftedPaths {
@@ -3872,7 +4111,14 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 	}
 
 	// Add drift warnings to affected files
+	modifiedCount := 0
 	for i, file := range files {
+		tflog.Debug(ctx, "=== addDriftInstructions: Checking file ===", map[string]interface{}{
+			"file_path":       file.Path,
+			"is_drifted":      driftMap[file.Path],
+			"existing_instr":  len(file.Instructions),
+		})
+
 		if driftMap[file.Path] {
 			driftInstruction := schemas.InstructionModel{
 				Prompt: types.StringValue(fmt.Sprintf(
@@ -3888,8 +4134,9 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 				},
 			}
 
-			tflog.Info(ctx, "Adding drift instruction to file", map[string]interface{}{
-				"path": file.Path,
+			tflog.Debug(ctx, "=== addDriftInstructions: Adding drift instruction ===", map[string]interface{}{
+				"path":            file.Path,
+				"drift_prompt":    driftInstruction.Prompt.ValueString(),
 			})
 
 			// Prepend drift instruction (highest priority)
@@ -3897,8 +4144,18 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 				[]schemas.InstructionModel{driftInstruction},
 				file.Instructions...,
 			)
+			modifiedCount++
+
+			tflog.Debug(ctx, "=== addDriftInstructions: After adding instruction ===", map[string]interface{}{
+				"path":                file.Path,
+				"new_instr_count":     len(files[i].Instructions),
+			})
 		}
 	}
+
+	tflog.Debug(ctx, "=== addDriftInstructions COMPLETED ===", map[string]interface{}{
+		"files_modified": modifiedCount,
+	})
 
 	return files
 }
