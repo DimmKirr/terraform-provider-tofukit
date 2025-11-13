@@ -50,6 +50,8 @@ func (r *BaseComponent) SaveToRegistry(ctx context.Context, id string, data inte
 			registry.SetFile(id, data)
 		case "feature":
 			registry.SetFeature(id, data)
+		case "integration":
+			registry.SetIntegration(id, data)
 		default:
 			registry.SetComponent(id, data)
 		}
@@ -71,6 +73,8 @@ func (r *BaseComponent) GetFromRegistry(ctx context.Context, id string) (interfa
 			return registry.GetFile(id)
 		case "feature":
 			return registry.GetFeature(id)
+		case "integration":
+			return registry.GetIntegration(id)
 		default:
 			return registry.GetComponent(id)
 		}
@@ -93,6 +97,8 @@ func (r *BaseComponent) RemoveFromRegistry(ctx context.Context, id string) {
 			registry.RemoveFile(id)
 		case "feature":
 			registry.RemoveFeature(id)
+		case "integration":
+			registry.RemoveIntegration(id)
 		default:
 			registry.RemoveComponent(id)
 		}
