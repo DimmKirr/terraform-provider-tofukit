@@ -626,6 +626,23 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	// Build output data with enriched files
 	outputData := r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
 
+	// Build project context for feature introspection
+	projectContext := r.buildProjectContext(ctx, data)
+
+	// Add project context to output data
+	if projectContext != nil && len(projectContext) > 0 {
+		outputData["_project_context"] = projectContext
+		tflog.Debug(ctx, "Added project context to output data", map[string]interface{}{
+			"context_keys": func() []string {
+				keys := make([]string, 0, len(projectContext))
+				for k := range projectContext {
+					keys = append(keys, k)
+				}
+				return keys
+			}(),
+		})
+	}
+
 	// Add resource registry to output data if present
 	if resourceRegistry != nil && len(resourceRegistry) > 0 {
 		outputData["_resource_registry"] = resourceRegistry
@@ -1323,6 +1340,23 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		// Use enriched files (with action-based instructions) for output
 		// Build output data with enriched files
 		outputData = r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
+
+		// Build project context for feature introspection
+		projectContext := r.buildProjectContext(ctx, data)
+
+		// Add project context to output data
+		if projectContext != nil && len(projectContext) > 0 {
+			outputData["_project_context"] = projectContext
+			tflog.Debug(ctx, "Added project context to output data in Update", map[string]interface{}{
+				"context_keys": func() []string {
+					keys := make([]string, 0, len(projectContext))
+					for k := range projectContext {
+						keys = append(keys, k)
+					}
+					return keys
+				}(),
+			})
+		}
 
 		// Add resource registry to output data if present
 		if resourceRegistry != nil && len(resourceRegistry) > 0 {
@@ -2634,6 +2668,136 @@ func convertVerificationsList(ctx context.Context, list types.List) []schemas.Ve
 		}
 	}
 	return result
+}
+
+// buildProjectContext creates metadata about the project for introspection by features
+// This enables features (like diagram generation) to discover project components without circular dependencies
+func (r *ProjectResourceFinal) buildProjectContext(
+	ctx context.Context,
+	data ProjectModelFinal,
+) map[string]interface{} {
+	projectContext := map[string]interface{}{
+		"project_info": map[string]interface{}{
+			"name":        data.Name.ValueString(),
+			"description": data.Description.ValueString(),
+			"version":     data.Version.ValueString(),
+		},
+	}
+
+	// Collect features metadata
+	if !data.Features.IsNull() && !data.Features.IsUnknown() {
+		underlyingVal := data.Features.UnderlyingValue()
+		if featuresMap, ok := underlyingVal.(types.Map); ok {
+			featuresMetadata := []map[string]interface{}{}
+
+			for featureName, featureValue := range featuresMap.Elements() {
+				feature, err := r.parseFeature(ctx, featureValue)
+				if err != nil {
+					tflog.Warn(ctx, "Failed to parse feature for context", map[string]interface{}{
+						"feature_name": featureName,
+						"error":        err.Error(),
+					})
+					continue
+				}
+
+				if feature == nil {
+					continue
+				}
+
+				featureMeta := map[string]interface{}{
+					"name": featureName,
+				}
+
+				// Add prompt from requirements if present
+				if len(feature.Requirements) > 0 {
+					// Get the prompt from the first requirement's first instruction
+					if len(feature.Requirements[0].Instructions) > 0 {
+						if !feature.Requirements[0].Instructions[0].Prompt.IsNull() {
+							featureMeta["prompt"] = feature.Requirements[0].Instructions[0].Prompt.ValueString()
+						}
+					}
+				}
+
+				// Add description if available (this would come from FeatureResourceModel)
+				// For inline features, we don't have a description field in FeatureModel
+
+				// Add feature files if present
+				if !feature.Files.IsNull() && !feature.Files.IsUnknown() {
+					files := []string{}
+					for path := range feature.Files.Elements() {
+						files = append(files, path)
+					}
+					if len(files) > 0 {
+						featureMeta["files"] = files
+					}
+				}
+
+				// Add feature kits if present
+				if !feature.Kits.IsNull() && !feature.Kits.IsUnknown() {
+					kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+					if len(kitIDs) > 0 {
+						featureMeta["kits"] = kitIDs
+					}
+				}
+
+				featuresMetadata = append(featuresMetadata, featureMeta)
+			}
+
+			if len(featuresMetadata) > 0 {
+				projectContext["features"] = featuresMetadata
+			}
+		}
+	}
+
+	// TODO: Collect integrations metadata (from registry) when integration resource is implemented
+	// For now, integrations are not part of the project context
+
+	// Collect kits metadata
+	projectKitIDs := extractIDsFromDynamicList(ctx, data.Kits)
+	featureKitIDs := r.collectFeatureKitIDs(ctx, data)
+	allKitIDs := append(projectKitIDs, featureKitIDs...)
+
+	// Deduplicate kit IDs
+	seenKits := make(map[string]bool)
+	uniqueKitIDs := []string{}
+	for _, id := range allKitIDs {
+		if !seenKits[id] {
+			uniqueKitIDs = append(uniqueKitIDs, id)
+			seenKits[id] = true
+		}
+	}
+
+	if len(uniqueKitIDs) > 0 {
+		kitsMetadata := []map[string]interface{}{}
+		for _, kitID := range uniqueKitIDs {
+			// Include the kit ID for reference
+			// Kits are stored with their full data in the registry
+			// We'll just include the ID for now - full kit details can be looked up if needed
+			kitsMetadata = append(kitsMetadata, map[string]interface{}{
+				"id": kitID,
+			})
+		}
+		projectContext["kits"] = kitsMetadata
+	}
+
+	// Collect requirements metadata
+	if len(data.Requirements) > 0 {
+		requirementsMetadata := []map[string]interface{}{}
+		for _, req := range data.Requirements {
+			requirementsMetadata = append(requirementsMetadata, map[string]interface{}{
+				"name": req.Name.ValueString(),
+			})
+		}
+		projectContext["requirements"] = requirementsMetadata
+	}
+
+	tflog.Debug(ctx, "Built project context for introspection", map[string]interface{}{
+		"has_features":     projectContext["features"] != nil,
+		"has_kits":         projectContext["kits"] != nil,
+		"has_requirements": projectContext["requirements"] != nil,
+	})
+
+	return projectContext
 }
 
 // parseFeature extracts FeatureModel from either resource reference or inline definition

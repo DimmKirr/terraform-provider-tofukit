@@ -1,0 +1,23 @@
+# Generated diagrams
+docs/
+*.drawio
+*.png
+*.pdf
+*.svg
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+
+# TofuKit debug output
+.debug/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -19,6 +19,7 @@ type PromptRequest struct {
 	ProjectInfo      ProjectInfo              `json:"project_info"`
 	Specification    map[string]interface{}   `json:"specification"`
 	ResourceRegistry map[string]interface{}   `json:"resource_registry,omitempty"`
+	ProjectContext   map[string]interface{}   `json:"project_context,omitempty"`
 	Instructions     []string                 `json:"instructions"`
 	FileDetails      *FileInstructions        `json:"file_details,omitempty"`
 	FileOperations   []map[string]interface{} `json:"file_operations,omitempty"`
@@ -205,6 +206,22 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			"When you see these URIs in prompts or instructions, treat them as explicit dependencies that you should integrate with."
 	}
 
+	// Extract project context if present
+	var projectContext map[string]interface{}
+	if ctx, ok := projectSpec["_project_context"].(map[string]interface{}); ok {
+		projectContext = ctx
+
+		// Enhance system prompt with project context instructions
+		systemPrompt += "\n\n## Project Context Introspection\n\n" +
+			"The project_context field in the specification contains complete metadata about this project:\n" +
+			"- features: All features defined in this project with their prompts, files, and capabilities\n" +
+			"- integrations: All external API/service integrations referenced by this project\n" +
+			"- kits: All language/framework/tool kits configured for this project\n" +
+			"- requirements: All high-level requirements for this project\n\n" +
+			"Features can introspect this context to automatically discover project components without requiring explicit configuration. " +
+			"For example, diagram generation features can visualize the entire architecture by reading the project_context field."
+	}
+
 	// Build the structured prompt
 	prompt := &ProjectPrompt{
 		SystemPrompt: systemPrompt,
@@ -213,6 +230,7 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			ProjectInfo:      projectInfo,
 			Specification:    projectSpec,
 			ResourceRegistry: resourceRegistry,
+			ProjectContext:   projectContext,
 			Instructions:     instructions,
 			FileOperations:   fileOperations,
 			FileDetails: &FileInstructions{
