@@ -3549,29 +3549,99 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 
 // convertFeaturesToRequirements transforms features into requirements for Claude
 func (r *ProjectResourceFinal) convertFeaturesToRequirements(ctx context.Context, data ProjectModelFinal) []schemas.RequirementModel {
+	tflog.Info(ctx, "=== convertFeaturesToRequirements START ===", nil)
+
 	if data.Features.IsNull() || data.Features.IsUnknown() {
+		tflog.Info(ctx, "Features is null or unknown, returning empty requirements", nil)
 		return []schemas.RequirementModel{}
 	}
 
 	// Extract the underlying value from Dynamic
 	underlyingVal := data.Features.UnderlyingValue()
+	tflog.Info(ctx, "Extracted underlying value from Features", map[string]interface{}{
+		"type": fmt.Sprintf("%T", underlyingVal),
+	})
 
 	// Try to cast to types.Map (for map structure)
 	featuresMap, ok := underlyingVal.(types.Map)
 	if !ok {
-		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+		tflog.Warn(ctx, "Features is not types.Map - checking for basetypes.ObjectValue", map[string]interface{}{
+			"type": fmt.Sprintf("%T", underlyingVal),
+		})
+
+		// Try basetypes.ObjectValue (this is what Dynamic often returns)
+		if fObj, objOk := underlyingVal.(basetypes.ObjectValue); objOk {
+			tflog.Info(ctx, "Features is basetypes.ObjectValue - processing attributes", map[string]interface{}{
+				"attribute_count": len(fObj.Attributes()),
+			})
+
+			var requirements []schemas.RequirementModel
+
+			for featureName, featureValue := range fObj.Attributes() {
+				tflog.Info(ctx, "Processing feature from ObjectValue", map[string]interface{}{
+					"feature_name": featureName,
+				})
+
+				feature, err := r.parseFeature(ctx, featureValue)
+				if err != nil {
+					tflog.Warn(ctx, "Failed to parse feature from ObjectValue", map[string]interface{}{
+						"feature_name": featureName,
+						"error":        err.Error(),
+					})
+					continue
+				}
+
+				tflog.Info(ctx, "Successfully parsed feature", map[string]interface{}{
+					"feature_name":      featureName,
+					"requirement_count": len(feature.Requirements),
+				})
+
+				// Feature already has requirements! Just pass them through
+				requirements = append(requirements, feature.Requirements...)
+
+				tflog.Debug(ctx, "Converted feature to requirements", map[string]interface{}{
+					"feature_name":      featureName,
+					"requirement_count": len(feature.Requirements),
+				})
+			}
+
+			tflog.Info(ctx, "=== convertFeaturesToRequirements END (ObjectValue path) ===", map[string]interface{}{
+				"total_requirements": len(requirements),
+			})
+			return requirements
+		}
+
+		// Neither Map nor ObjectValue - return empty
+		tflog.Warn(ctx, "Features is neither types.Map nor basetypes.ObjectValue, returning empty", map[string]interface{}{
 			"type": fmt.Sprintf("%T", underlyingVal),
 		})
 		return []schemas.RequirementModel{}
 	}
 
+	tflog.Info(ctx, "Features is types.Map, processing elements", map[string]interface{}{
+		"element_count": len(featuresMap.Elements()),
+	})
+
 	var requirements []schemas.RequirementModel
 
 	for featureName, featureValue := range featuresMap.Elements() {
+		tflog.Info(ctx, "Processing feature from Map", map[string]interface{}{
+			"feature_name": featureName,
+		})
+
 		feature, err := r.parseFeature(ctx, featureValue)
 		if err != nil {
+			tflog.Warn(ctx, "Failed to parse feature from Map", map[string]interface{}{
+				"feature_name": featureName,
+				"error":        err.Error(),
+			})
 			continue
 		}
+
+		tflog.Info(ctx, "Successfully parsed feature", map[string]interface{}{
+			"feature_name":      featureName,
+			"requirement_count": len(feature.Requirements),
+		})
 
 		// Feature already has requirements! Just pass them through
 		requirements = append(requirements, feature.Requirements...)
@@ -3582,6 +3652,9 @@ func (r *ProjectResourceFinal) convertFeaturesToRequirements(ctx context.Context
 		})
 	}
 
+	tflog.Info(ctx, "=== convertFeaturesToRequirements END (Map path) ===", map[string]interface{}{
+		"total_requirements": len(requirements),
+	})
 	return requirements
 }
 
