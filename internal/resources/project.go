@@ -463,6 +463,11 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 
 	// NOTE: With map schema, files are keyed by path, eliminating position-based comparison issues.
 	// Terraform's MapAttribute compares by key (path), not position, so plan display is now accurate.
+	//
+	// FIX BUG-003: Unchanged files handled by UseStateForUnknown() PlanModifiers
+	// The PlanModifiers on content_hash, file_hash, file_modtime (in schemas/common.go) tell
+	// Terraform to preserve state values when plan values are unknown. This prevents unchanged
+	// files from showing as modified with "(known after apply)" in plan output.
 
 	tflog.Debug(ctx, "ModifyPlan: File operations detected (map schema ensures accurate plan display)", map[string]interface{}{
 		"config_count": len(configFilesList),
@@ -470,6 +475,7 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 		"added":        added,
 		"removed":      removed,
 		"modified":     modified,
+		"unchanged":    unchanged,
 	})
 
 	// Update the plan
