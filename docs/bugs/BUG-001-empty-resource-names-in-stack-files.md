@@ -4,7 +4,7 @@
 **Priority:** High
 **Discovered:** 2025-11-13
 **Fixed:** 2025-11-13
-**Fix Commit:** 740f7c2
+**Fix Commits:** 740f7c2, fea02a3
 **Affects Tests:**
 - TestE2EProjectExampleClickCliSuccess
 - TestE2EProjectExampleGoViperCliHelloWorldSuccess
@@ -66,23 +66,31 @@ go test -v -run TestE2EProjectExampleClickCliSuccess ./test/
 
 ## Resolution
 
-**Fixed in commit:** 740f7c2
+**Fixed in commits:** 740f7c2, fea02a3
 
 **Root Cause:**
-The file `examples/stacks/tofukit-stack-python-click-app/stack.tofu` contained an invalid placeholder resource declaration at line 30:
-```hcl
-resource "tofukit" "" {}
-```
+Two stack files contained invalid placeholder/empty resource declarations:
 
-This was leftover code - likely from an abandoned copy-paste or incomplete resource addition during development. The empty resource name violates HCL syntax requirements.
+1. `examples/stacks/tofukit-stack-python-click-app/stack.tofu` line 30:
+   ```hcl
+   resource "tofukit" "" {}
+   ```
+
+2. `examples/stacks/tofukit-stack-go-viper-cobra-pterm/files.tofu` line 452:
+   ```hcl
+   resource "tofukit_integration" "" {
+     name    = ""
+     version = ""
+   }
+   ```
+
+Both were leftover template/placeholder code - likely from abandoned copy-paste or incomplete resource additions during development. Empty resource names violate HCL syntax requirements.
 
 **Fix Applied:**
-Simply removed the invalid empty resource declaration. The line served no purpose and was not referenced anywhere in the codebase.
+Removed both invalid empty resource declarations. These lines served no purpose and were not referenced anywhere in the codebase.
 
 **Verification:**
-All three affected E2E tests now pass initialization:
-- TestE2EProjectExampleClickCliSuccess
-- TestE2EProjectExampleGoViperCliHelloWorldSuccess
-- TestStackFeaturesFromModule
-
-**Note:** The bug documentation mentioned a second empty resource in `examples/stacks/tofukit-stack-go-viper-cobra-pterm/files.tofu:452`, but code inspection revealed only the single empty resource in the python-click-app stack file. The second reference may have been from stale documentation or already fixed in a previous commit.
+All three affected E2E tests now pass:
+- TestE2EProjectExampleClickCliSuccess ✅
+- TestE2EProjectExampleGoViperCliHelloWorldSuccess ✅
+- TestStackFeaturesFromModule ✅
