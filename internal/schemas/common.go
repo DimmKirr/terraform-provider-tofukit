@@ -46,6 +46,12 @@ type FileModel struct {
 	ContentHash   types.String `tfsdk:"content_hash"`
 	FileHash      types.String `tfsdk:"file_hash"`
 	FileModTime   types.String `tfsdk:"file_modtime"`
+
+	// Optional resource metadata fields (present when referencing tofukit_file)
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Link        types.String `tfsdk:"link"`
+	Description types.String `tfsdk:"description"`
 }
 
 // ScaffoldModel is deprecated, use FileModel instead

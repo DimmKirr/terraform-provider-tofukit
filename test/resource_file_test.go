@@ -184,25 +184,16 @@ resource "tofukit_project" "test" {
 
 	t.Log("✓ Refreshed state to capture drift")
 
-	// Step 6: Verify drift is detected in state
+	// Step 6: Verify drift was auto-restored during refresh
 	showCmd = exec.Command("tofu", "show", "-json")
 	showCmd.Dir = testDir
 	showOutput, err = showCmd.CombinedOutput()
 	require.NoError(t, err, "tofu show failed after refresh: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected":true`, "State should have drift_detected=true after refresh")
-	assert.Contains(t, stateJSON, "hello.txt", "State should list hello.txt as drifted")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after auto-restore")
 
-	t.Log("✓ Drift detected in state")
-
-	// Step 7: Apply to restore file to original content
-	applyCmd = exec.Command("tofu", "apply", "-auto-approve")
-	applyCmd.Dir = testDir
-	applyOutput, err = applyCmd.CombinedOutput()
-	require.NoError(t, err, "tofu apply (restore) failed: %s", string(applyOutput))
-
-	t.Log("✓ Applied to restore file")
+	t.Log("✓ Drift was auto-restored during refresh")
 
 	// Step 8: Verify file content restored to "Hello World"
 	restoredContent, err := os.ReadFile(helloPath)
