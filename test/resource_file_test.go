@@ -149,7 +149,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err, "tofu show failed: %s", string(showOutput))
 
 	stateJSON := string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "Initial state should have drift_detected=false")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "Initial state should have drift_detected=false")
 
 	t.Log("✓ Initial state verified - no drift")
 
@@ -191,7 +191,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err, "tofu show failed after refresh: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": true`, "State should have drift_detected=true after refresh")
+	assert.Contains(t, stateJSON, `"drift_detected":true`, "State should have drift_detected=true after refresh")
 	assert.Contains(t, stateJSON, "hello.txt", "State should list hello.txt as drifted")
 
 	t.Log("✓ Drift detected in state")
@@ -218,7 +218,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err, "tofu show failed after restore: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "State should have drift_detected=false after restore")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after restore")
 
 	t.Log("✓ Drift cleared from state")
 

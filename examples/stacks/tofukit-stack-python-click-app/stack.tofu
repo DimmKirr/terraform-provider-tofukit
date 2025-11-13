@@ -25,3 +25,6 @@ resource "tofukit_stack" "click_app" {
   # Stack provides no files directly - features provide all application files
   files = {}
 }
+
+
+resource "tofukit" "" {}

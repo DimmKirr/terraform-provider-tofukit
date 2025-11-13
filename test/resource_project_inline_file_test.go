@@ -2457,7 +2457,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed: %s", string(showOutput))
 
 	stateJSON := string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "Initial state should have drift_detected=false")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "Initial state should have drift_detected=false")
 
 	// Step 5: Manually edit .gitignore outside Terraform
 	gitignorePath := filepath.Join(testDir, "output", ".gitignore")
@@ -2493,7 +2493,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed after refresh: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": true`, "State should have drift_detected=true after refresh")
+	assert.Contains(t, stateJSON, `"drift_detected":true`, "State should have drift_detected=true after refresh")
 	assert.Contains(t, stateJSON, ".gitignore", "State should list .gitignore as drifted")
 
 	// Step 9: Apply to restore file
@@ -2518,7 +2518,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed after restore: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "State should have drift_detected=false after restore")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after restore")
 
 	t.Log("✓ Drift detection and restoration completed successfully")
 }
@@ -2598,7 +2598,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed: %s", string(showOutput))
 
 	stateJSON := string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": true`, "State should detect drift from deleted file")
+	assert.Contains(t, stateJSON, `"drift_detected":true`, "State should detect drift from deleted file")
 	assert.Contains(t, stateJSON, "README.md", "State should list README.md as drifted")
 
 	// Step 6: Apply to recreate file
@@ -2624,7 +2624,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed after recreate: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "State should have drift_detected=false after recreate")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after recreate")
 
 	t.Log("✓ Deleted file drift detection and restoration completed successfully")
 }
@@ -2697,7 +2697,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed: %s", string(showOutput))
 
 	stateJSON := string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "Initial state should have drift_detected=false")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "Initial state should have drift_detected=false")
 
 	// Step 4: Edit 2 out of 3 files manually
 	outputDir := filepath.Join(testDir, "output")
@@ -2731,7 +2731,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed after refresh: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": true`, "State should have drift_detected=true")
+	assert.Contains(t, stateJSON, `"drift_detected":true`, "State should have drift_detected=true")
 	assert.Contains(t, stateJSON, ".gitignore", "State should list .gitignore as drifted")
 	assert.Contains(t, stateJSON, "LICENSE", "State should list LICENSE as drifted")
 	assert.NotContains(t, stateJSON, `"README.md"`, "README.md should NOT be in drifted files (unchanged)")
@@ -2765,7 +2765,7 @@ resource "tofukit_project" "drift_test" {
 	require.NoError(t, err, "tofu show failed after restore: %s", string(showOutput))
 
 	stateJSON = string(showOutput)
-	assert.Contains(t, stateJSON, `"drift_detected": false`, "State should have drift_detected=false after restore")
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after restore")
 
 	t.Log("✓ Multiple file drift detection and restoration completed successfully")
 }
