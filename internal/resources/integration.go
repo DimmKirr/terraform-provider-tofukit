@@ -12,19 +12,23 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+
+	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
 // IntegrationResourceModel represents the integration resource model
 type IntegrationResourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Link        types.String `tfsdk:"link"`
-	Type        types.String `tfsdk:"type"`
-	Description types.String `tfsdk:"description"`
-	BaseURL     types.String `tfsdk:"base_url"`
-	DocsURL     types.String `tfsdk:"docs_url"`
-	Version     types.String `tfsdk:"version"`
-	Metadata    types.Map    `tfsdk:"metadata"`
+	ID           types.String          `tfsdk:"id"`
+	Name         types.String          `tfsdk:"name"`
+	Link         types.String          `tfsdk:"link"`
+	Type         types.String          `tfsdk:"type"`
+	Description  types.String          `tfsdk:"description"`
+	Version      types.String          `tfsdk:"version"`
+	Docs         types.Map             `tfsdk:"docs"`          // Map of documentation URLs
+	Environments types.Map             `tfsdk:"environments"`  // Optional: map of environment URLs
+	SDK          types.Map             `tfsdk:"sdk"`           // Optional: nested SDK info by language
+	Examples     types.Map             `tfsdk:"examples"`      // Optional: example code references
+	Requirements []schemas.RequirementModel `tfsdk:"requirements"` // Implementation requirements
 }
 
 // IntegrationResource is the resource implementation for external service integrations
@@ -85,23 +89,57 @@ func (r *IntegrationResource) Schema(ctx context.Context, req resource.SchemaReq
 				Optional:            true,
 				MarkdownDescription: "Description of the integration",
 			},
-			"base_url": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Base URL for the API endpoint",
-			},
-			"docs_url": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "URL to integration documentation",
-			},
 			"version": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "API version (e.g., 'v1', '2.0')",
 			},
-			"metadata": schema.MapAttribute{
+			"docs": schema.MapAttribute{
 				Optional:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Additional key-value metadata (auth type, rate limits, etc.)",
+				MarkdownDescription: "Map of documentation URLs (e.g., 'main', 'authentication', 'rate_limits', 'examples')",
 			},
+			"environments": schema.MapAttribute{
+				Optional:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "Optional map of environment names to base URLs (e.g., 'production' = 'https://api.example.com', 'sandbox' = 'https://sandbox.example.com')",
+			},
+			"sdk": schema.MapNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Optional SDK information by language",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"package": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "Package name or import path",
+						},
+						"version": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "SDK version",
+						},
+						"docs_url": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "URL to SDK documentation",
+						},
+					},
+				},
+			},
+			"examples": schema.MapNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Optional example code references by name",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"url": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "URL to example code",
+						},
+						"description": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "Description of what the example demonstrates",
+						},
+					},
+				},
+			},
+			"requirements": schemas.GetRequirementsListAttribute(),
 		},
 	}
 }

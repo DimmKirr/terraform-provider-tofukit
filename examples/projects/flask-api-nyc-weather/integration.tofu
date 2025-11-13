@@ -8,27 +8,34 @@ resource "tofukit_integration" "open_meteo" {
   name        = "open-meteo"
   type        = "rest_api"
   description = "Open-Meteo Weather API - Free global weather forecast API"
-  base_url    = "https://api.open-meteo.com/v1"
-  docs_url    = "https://open-meteo.com/en/docs"
   version     = "v1"
 
-  metadata = {
-    # API characteristics (integration-specific)
-    auth_required    = "false"
-    rate_limit       = "10000/day"
-    data_format      = "json"
+  # Structured documentation references
+  docs = {
+    main        = "https://open-meteo.com/en/docs"
+    api         = "https://open-meteo.com/en/docs#api"
+    parameters  = "https://open-meteo.com/en/docs#api_parameters"
+    rate_limits = "https://open-meteo.com/en/features#rate-limits"
+  }
 
-    # Available endpoints
-    endpoint_forecast = "/forecast"
-    endpoint_archive  = "/archive"
+  # Single production environment (no authentication differentiation)
+  environments = {
+    production = "https://api.open-meteo.com/v1"
+  }
 
-    # Supported parameters
-    supported_params = "latitude,longitude,current,hourly,daily,temperature_unit,timezone"
-
-    # Available current weather variables
-    current_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m"
-
-    # Temperature units supported
-    temp_units = "celsius,fahrenheit"
+  # Example API usage patterns
+  examples = {
+    "current-weather" = {
+      url         = "https://open-meteo.com/en/docs#current_weather"
+      description = "Get current weather conditions for any coordinates"
+    }
+    "forecast" = {
+      url         = "https://open-meteo.com/en/docs#forecast"
+      description = "Get weather forecast up to 16 days ahead"
+    }
+    "historical" = {
+      url         = "https://open-meteo.com/en/docs#archive"
+      description = "Access historical weather data archives"
+    }
   }
 }
