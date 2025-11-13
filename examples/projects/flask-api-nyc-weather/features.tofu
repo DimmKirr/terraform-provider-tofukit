@@ -25,10 +25,10 @@ resource "tofukit_feature" "nyc_weather" {
 
           INTEGRATION DETAILS:
           - Service: ${tofukit_integration.open_meteo.description}
-          - Base URL: ${tofukit_integration.open_meteo.base_url}
-          - Documentation: ${tofukit_integration.open_meteo.docs_url}
-          - Authentication: ${tofukit_integration.open_meteo.metadata["auth_required"]}
-          - Rate Limit: ${tofukit_integration.open_meteo.metadata["rate_limit"]}
+          - API Base: ${tofukit_integration.open_meteo.environments["production"]}
+          - Documentation: ${tofukit_integration.open_meteo.docs["main"]}
+          - API Details: ${tofukit_integration.open_meteo.docs["api"]}
+          - Parameters: ${tofukit_integration.open_meteo.docs["parameters"]}
 
           LOCATION: New York City
           - Latitude: ${local.nyc_latitude}
@@ -36,7 +36,7 @@ resource "tofukit_feature" "nyc_weather" {
           - Timezone: ${local.nyc_timezone}
 
           API ENDPOINT:
-          ${tofukit_integration.open_meteo.base_url}${tofukit_integration.open_meteo.metadata["endpoint_forecast"]}
+          ${tofukit_integration.open_meteo.environments["production"]}/forecast
 
           PARAMETERS TO FETCH:
           - Current weather: temperature_2m, relative_humidity_2m, weather_code
@@ -48,6 +48,8 @@ resource "tofukit_feature" "nyc_weather" {
           - Parse JSON response
           - Return structured weather data
           - Handle API errors gracefully
+
+          See ${tofukit_integration.open_meteo.examples["current-weather"].url} for example usage
           EOF
 
           constraints = [
@@ -62,7 +64,7 @@ resource "tofukit_feature" "nyc_weather" {
 
       verifications = [
         {
-          command = "grep -q '${tofukit_integration.open_meteo.base_url}' app.py || grep -q 'api.open-meteo.com' app.py"
+          command = "grep -q 'api.open-meteo.com' app.py"
         },
         {
           command = "grep -q '${local.nyc_latitude}' app.py"
