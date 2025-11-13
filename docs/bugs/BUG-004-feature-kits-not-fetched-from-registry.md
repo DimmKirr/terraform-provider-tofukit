@@ -178,7 +178,7 @@ func convertComponentToKitData(ctx context.Context, component ComponentResourceM
 
 ## Resolution
 
-**Fixed in commit:** a0539d1
+**Fixed in commit:** 7e06a5a
 
 **Root Cause:**
 The bug had two parts:
