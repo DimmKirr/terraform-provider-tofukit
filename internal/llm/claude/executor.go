@@ -293,19 +293,23 @@ func (e *Executor) ExecuteWithVerification(
 				projectSpec["_fix_request"] = map[string]interface{}{
 					"attempt":  attempt,
 					"failures": report.GetFailureSummary(),
-					"instructions": "🔧 **VERIFICATION FAILURES DETECTED**\n\n" +
-						"Your previous implementation had verification failures.\n\n" +
-						"**What you were asked to do:**\n" +
-						"See the original instructions in the project specification above.\n\n" +
-						"**What went wrong:**\n" +
+					"instructions": "🔧 **VERIFICATION FAILURES - IMMEDIATE FIX REQUIRED**\n\n" +
+						"Your previous implementation failed verification. This is an automated retry - execute the fix immediately without any discussion or questions.\n\n" +
+						"**Original Task:** See the project specification above.\n\n" +
+						"**Verification Failures:**\n" +
 						report.GetFailureSummary() + "\n\n" +
-						"**What you need to do:**\n" +
-						"1. Analyze the verification failures carefully\n" +
+						"**Required Actions (execute immediately):**\n" +
+						"1. Read the verification failure output - it shows exactly what's wrong\n" +
 						"2. Identify the root cause of each failure\n" +
 						"3. Fix the issues in the affected files\n" +
 						"4. Ensure ALL verification commands will pass\n\n" +
-						"**Important:** Only modify the files that are causing verification failures. " +
-						"Do not make unnecessary changes to files that are working correctly.",
+						"**IMPORTANT:**\n" +
+						"- This is a NON-INTERACTIVE automated environment\n" +
+						"- Do NOT ask questions or request clarification\n" +
+						"- Do NOT enter design/planning mode\n" +
+						"- Execute the fix IMMEDIATELY\n" +
+						"- Only modify files causing verification failures\n" +
+						"- Do not change files that are working correctly",
 				}
 
 				// Wait before retrying (exponential backoff)
@@ -485,15 +489,20 @@ func (e *Executor) ExecuteWithPromptJSON(
 						"attempt":  attempt,
 						"failures": report.GetFailureSummary(),
 						"instructions": "🔧 **CRITICAL VERIFICATION FAILURES - IMMEDIATE FIX REQUIRED**\n\n" +
-							"❌ Your previous implementation FAILED verification checks.\n\n" +
+							"❌ Your previous implementation FAILED verification checks. This is an automated retry - execute the fix immediately.\n\n" +
 							"**FAILED VERIFICATIONS:**\n" + report.GetFailureSummary() + "\n\n" +
-							"**CRITICAL INSTRUCTIONS - PAY CLOSE ATTENTION:**\n" +
+							"**CRITICAL INSTRUCTIONS - EXECUTE IMMEDIATELY:**\n" +
 							"1. READ the verification failure output CAREFULLY - it shows EXACTLY what's wrong\n" +
 							"2. CHECK the file constraints you were given - you may have IGNORED them\n" +
 							"3. For example: If a constraint says 'NO newline', the file must NOT end with \\n\n" +
 							"4. If a constraint says 'properly formatted', follow the FORMAT specified in verifications\n" +
 							"5. FIX each failed file to satisfy BOTH the instructions AND the verification commands\n" +
 							"6. VERIFY your fixes will pass by checking the verification command expectations\n\n" +
+							"**IMPORTANT:**\n" +
+							"- This is a NON-INTERACTIVE automated environment\n" +
+							"- Do NOT ask questions or request clarification\n" +
+							"- Do NOT enter design/planning mode\n" +
+							"- Execute the fix IMMEDIATELY\n\n" +
 							"This is attempt " + fmt.Sprintf("%d", attempt) + " of " + fmt.Sprintf("%d", maxRetries) + ". " +
 							"You MUST fix these issues or the operation will FAIL.",
 					}
