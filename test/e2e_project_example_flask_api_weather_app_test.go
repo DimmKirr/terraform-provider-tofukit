@@ -30,6 +30,12 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	err = os.WriteFile(filepath.Join(testDir, "integration.tofu"), integrationContent, 0644)
 	require.NoError(t, err)
 
+	// Copy features.tofu
+	featuresContent, err := os.ReadFile(filepath.Join(exampleSrcPath, "features.tofu"))
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(testDir, "features.tofu"), featuresContent, 0644)
+	require.NoError(t, err)
+
 	// Copy and modify project.tofu to use test output directory
 	projectContent, err := os.ReadFile(filepath.Join(exampleSrcPath, "project.tofu"))
 	require.NoError(t, err)
