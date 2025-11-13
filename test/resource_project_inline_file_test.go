@@ -2418,8 +2418,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_project" "drift_test" {
-  name        = "drift-test"
-  output_path = "output"
+  name    = "drift-test"
+  version = "1.0.0"
 
   files = {
     ".gitignore" = {
@@ -2550,8 +2550,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_project" "drift_test" {
-  name        = "drift-delete-test"
-  output_path = "output"
+  name    = "drift-delete-test"
+  version = "1.0.0"
 
   files = {
     "README.md" = {
@@ -2656,8 +2656,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_project" "drift_test" {
-  name        = "drift-multi-test"
-  output_path = "output"
+  name    = "drift-multi-test"
+  version = "1.0.0"
 
   files = {
     ".gitignore" = {

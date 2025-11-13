@@ -42,8 +42,8 @@ resource "tofukit_file" "hello" {
 }
 
 resource "tofukit_project" "test" {
-  name        = "file-test"
-  output_path = "output"
+  name    = "file-test"
+  version = "1.0.0"
 
   files = {
     "hello.txt" = tofukit_file.hello
@@ -110,8 +110,8 @@ resource "tofukit_file" "hello" {
 }
 
 resource "tofukit_project" "test" {
-  name        = "file-drift-test"
-  output_path = "output"
+  name    = "file-drift-test"
+  version = "1.0.0"
 
   files = {
     "hello.txt" = tofukit_file.hello
