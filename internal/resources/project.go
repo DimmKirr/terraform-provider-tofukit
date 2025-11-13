@@ -2029,6 +2029,120 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 		fmt.Fprintf(debugFile, "DEBUG buildOutputData: final kits map has %d entries\n", len(kits))
 	}
 
+	// Collect feature kit IDs and fetch their data from registry
+	featureKitIDs := r.collectFeatureKitIDs(ctx, data)
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "DEBUG feature kits: collected %d kit IDs: %v\n", len(featureKitIDs), featureKitIDs)
+		fmt.Fprintf(debugFile, "DEBUG feature kits: registry exists=%v\n", reg != nil)
+	}
+
+	// Fetch feature kits from registry and add to kits map
+	if reg != nil && len(featureKitIDs) > 0 {
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "DEBUG feature kits: entering fetch loop for %d kits\n", len(featureKitIDs))
+		}
+
+		for _, kitID := range featureKitIDs {
+			if compData, exists := reg.GetComponent(kitID); exists {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "DEBUG feature kits: FOUND kit %s in registry (type=%T)\n", kitID, compData)
+				}
+
+				// Convert ComponentResourceModel to kit data format
+				if component, ok := compData.(ComponentResourceModel); ok {
+					kitData := map[string]interface{}{
+						"id":          component.ID.ValueString(),
+						"name":        component.Name.ValueString(),
+						"description": component.Description.ValueString(),
+						"version":     component.Version.ValueString(),
+					}
+
+					// Add requirements if present
+					if len(component.Requirements) > 0 {
+						requirementsData := []map[string]interface{}{}
+						for _, req := range component.Requirements {
+							reqData := map[string]interface{}{
+								"name": req.Name.ValueString(),
+							}
+
+							// Add instructions
+							if len(req.Instructions) > 0 {
+								instructions := []map[string]interface{}{}
+								for _, inst := range req.Instructions {
+									instData := map[string]interface{}{
+										"prompt": inst.Prompt.ValueString(),
+									}
+
+									// Add constraints if present
+									if inst.Constraints != nil && len(inst.Constraints) > 0 {
+										constraints := []string{}
+										for _, c := range inst.Constraints {
+											if !c.IsNull() && !c.IsUnknown() {
+												constraints = append(constraints, c.ValueString())
+											}
+										}
+										if len(constraints) > 0 {
+											instData["constraints"] = constraints
+										}
+									}
+
+									instructions = append(instructions, instData)
+								}
+								reqData["instructions"] = instructions
+							}
+
+							// Add verifications if present
+							if len(req.Verifications) > 0 {
+								verifications := []map[string]string{}
+								for _, v := range req.Verifications {
+									verif := map[string]string{
+										"command": v.Command.ValueString(),
+									}
+									if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+										verif["expect"] = v.Expect.ValueString()
+									}
+									verifications = append(verifications, verif)
+								}
+								reqData["verification"] = verifications
+							}
+
+							requirementsData = append(requirementsData, reqData)
+						}
+						kitData["requirements"] = requirementsData
+					}
+
+					kits[kitID] = kitData
+					tflog.Info(ctx, "Added feature kit from registry", map[string]interface{}{
+						"kit_id": kitID,
+					})
+
+					if debugFile != nil {
+						fmt.Fprintf(debugFile, "DEBUG feature kits: Added kit %s to kits map\n", kitID)
+					}
+				} else {
+					tflog.Warn(ctx, "Feature kit is not ComponentResourceModel", map[string]interface{}{
+						"kit_id": kitID,
+						"type":   fmt.Sprintf("%T", compData),
+					})
+					if debugFile != nil {
+						fmt.Fprintf(debugFile, "DEBUG feature kits: Component %s has wrong type: %T\n", kitID, compData)
+					}
+				}
+			} else {
+				tflog.Warn(ctx, "Feature kit not found in registry", map[string]interface{}{
+					"kit_id": kitID,
+				})
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "DEBUG feature kits: NOT FOUND kit %s in registry\n", kitID)
+				}
+			}
+		}
+	} else {
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "DEBUG feature kits: NOT fetching - reg=%v, kit_count=%d\n", reg != nil, len(featureKitIDs))
+		}
+	}
+
 	// Merge stack kits into the kits map
 	if stackKits != nil {
 		for kitID, kitData := range stackKits {
@@ -3473,47 +3587,135 @@ func (r *ProjectResourceFinal) convertFeaturesToRequirements(ctx context.Context
 
 // collectFeatureKitIDs extracts kit IDs from all features
 func (r *ProjectResourceFinal) collectFeatureKitIDs(ctx context.Context, data ProjectModelFinal) []string {
+	// DEBUG logging
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		defer debugFile.Close()
+		fmt.Fprintf(debugFile, "\n=== collectFeatureKitIDs START ===\n")
+	}
+
 	if data.Features.IsNull() || data.Features.IsUnknown() {
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "collectFeatureKitIDs: Features is null or unknown\n")
+		}
 		return []string{}
 	}
 
 	// Extract the underlying value from Dynamic
 	underlyingVal := data.Features.UnderlyingValue()
 
+	var allKitIDs []string
+	seen := make(map[string]bool)
+
 	// Try to cast to types.Map (for map structure)
-	featuresMap, ok := underlyingVal.(types.Map)
-	if !ok {
-		tflog.Warn(ctx, "Features is not a map", map[string]interface{}{
+	if featuresMap, ok := underlyingVal.(types.Map); ok {
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "collectFeatureKitIDs: Features is types.Map with %d elements\n", len(featuresMap.Elements()))
+		}
+
+		for featureName, featureValue := range featuresMap.Elements() {
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Processing feature '%s' from Map\n", featureName)
+			}
+
+			feature, err := r.parseFeature(ctx, featureValue)
+			if err != nil {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "collectFeatureKitIDs: Failed to parse feature '%s': %v\n", featureName, err)
+				}
+				continue
+			}
+
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' kits IsNull=%v IsUnknown=%v\n",
+					featureName, feature.Kits.IsNull(), feature.Kits.IsUnknown())
+			}
+
+			if feature.Kits.IsNull() || feature.Kits.IsUnknown() {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' has no kits\n", featureName)
+				}
+				continue
+			}
+
+			kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' has %d kits: %v\n", featureName, len(kitIDs), kitIDs)
+			}
+
+			for _, kitID := range kitIDs {
+				if !seen[kitID] {
+					allKitIDs = append(allKitIDs, kitID)
+					seen[kitID] = true
+				}
+			}
+
+			tflog.Debug(ctx, "Collected kits from feature", map[string]interface{}{
+				"feature_name": featureName,
+				"kit_count":    len(kitIDs),
+			})
+		}
+	} else if fObj, ok := underlyingVal.(basetypes.ObjectValue); ok {
+		// Handle basetypes.ObjectValue (Dynamic's underlying type for objects)
+		attrs := fObj.Attributes()
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "collectFeatureKitIDs: Features is basetypes.ObjectValue with %d attributes\n", len(attrs))
+		}
+
+		for featureName, featureValue := range attrs {
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Processing feature '%s' from ObjectValue\n", featureName)
+			}
+
+			feature, err := r.parseFeature(ctx, featureValue)
+			if err != nil {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "collectFeatureKitIDs: Failed to parse feature '%s': %v\n", featureName, err)
+				}
+				continue
+			}
+
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' kits IsNull=%v IsUnknown=%v\n",
+					featureName, feature.Kits.IsNull(), feature.Kits.IsUnknown())
+			}
+
+			if feature.Kits.IsNull() || feature.Kits.IsUnknown() {
+				if debugFile != nil {
+					fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' has no kits\n", featureName)
+				}
+				continue
+			}
+
+			kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+			if debugFile != nil {
+				fmt.Fprintf(debugFile, "collectFeatureKitIDs: Feature '%s' has %d kits: %v\n", featureName, len(kitIDs), kitIDs)
+			}
+
+			for _, kitID := range kitIDs {
+				if !seen[kitID] {
+					allKitIDs = append(allKitIDs, kitID)
+					seen[kitID] = true
+				}
+			}
+
+			tflog.Debug(ctx, "Collected kits from feature", map[string]interface{}{
+				"feature_name": featureName,
+				"kit_count":    len(kitIDs),
+			})
+		}
+	} else {
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "collectFeatureKitIDs: Features is neither Map nor ObjectValue, type=%T\n", underlyingVal)
+		}
+		tflog.Warn(ctx, "Features is neither Map nor ObjectValue", map[string]interface{}{
 			"type": fmt.Sprintf("%T", underlyingVal),
 		})
 		return []string{}
 	}
 
-	var allKitIDs []string
-	seen := make(map[string]bool)
-
-	for featureName, featureValue := range featuresMap.Elements() {
-		feature, err := r.parseFeature(ctx, featureValue)
-		if err != nil {
-			continue
-		}
-
-		if feature.Kits.IsNull() || feature.Kits.IsUnknown() {
-			continue
-		}
-
-		kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
-		for _, kitID := range kitIDs {
-			if !seen[kitID] {
-				allKitIDs = append(allKitIDs, kitID)
-				seen[kitID] = true
-			}
-		}
-
-		tflog.Debug(ctx, "Collected kits from feature", map[string]interface{}{
-			"feature_name": featureName,
-			"kit_count":    len(kitIDs),
-		})
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "=== collectFeatureKitIDs END: Total %d kits collected ===\n\n", len(allKitIDs))
 	}
 
 	return allKitIDs
