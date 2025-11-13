@@ -145,11 +145,7 @@ func NewInfrastructureResource() resource.Resource {
 	}
 }
 
-func NewIntegrationResource() resource.Resource {
-	return &ComponentResource{
-		BaseComponent: BaseComponent{Kind: "integration"},
-	}
-}
+// NewIntegrationResource moved to integration.go - using dedicated implementation instead of generic ComponentResource
 
 // initializeFileHashFields sets hash fields to null for registry-only resources
 // These resources don't create actual files, so hash fields should be null

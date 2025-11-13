@@ -4,22 +4,24 @@ import "sync"
 
 // Registry stores all defined resources for dependency resolution
 type Registry struct {
-	mu         sync.RWMutex
-	Components map[string]interface{}
-	Stacks     map[string]interface{}
-	Files      map[string]interface{}
-	Features   map[string]interface{}
-	Projects   map[string]interface{}
+	mu           sync.RWMutex
+	Components   map[string]interface{}
+	Stacks       map[string]interface{}
+	Files        map[string]interface{}
+	Features     map[string]interface{}
+	Projects     map[string]interface{}
+	Integrations map[string]interface{}
 }
 
 // New creates a new Registry instance
 func New() *Registry {
 	return &Registry{
-		Components: make(map[string]interface{}),
-		Stacks:     make(map[string]interface{}),
-		Files:      make(map[string]interface{}),
-		Features:   make(map[string]interface{}),
-		Projects:   make(map[string]interface{}),
+		Components:   make(map[string]interface{}),
+		Stacks:       make(map[string]interface{}),
+		Files:        make(map[string]interface{}),
+		Features:     make(map[string]interface{}),
+		Projects:     make(map[string]interface{}),
+		Integrations: make(map[string]interface{}),
 	}
 }
 
@@ -142,6 +144,42 @@ func (r *Registry) GetAllFeatures() map[string]interface{} {
 	// Return a copy to prevent external modification
 	result := make(map[string]interface{})
 	for k, v := range r.Features {
+		result[k] = v
+	}
+	return result
+}
+
+// SetIntegration stores an integration resource in the registry
+func (r *Registry) SetIntegration(id string, data interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Integrations[id] = data
+	return nil
+}
+
+// GetIntegration retrieves an integration resource from the registry
+func (r *Registry) GetIntegration(id string) (interface{}, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	data, exists := r.Integrations[id]
+	return data, exists
+}
+
+// RemoveIntegration removes an integration resource from the registry
+func (r *Registry) RemoveIntegration(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.Integrations, id)
+	return nil
+}
+
+// GetAllIntegrations returns all integration resources in the registry
+func (r *Registry) GetAllIntegrations() map[string]interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	// Return a copy to prevent external modification
+	result := make(map[string]interface{})
+	for k, v := range r.Integrations {
 		result[k] = v
 	}
 	return result
