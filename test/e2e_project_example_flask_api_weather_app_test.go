@@ -24,29 +24,32 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	// Copy the example project files
 	exampleSrcPath := filepath.Join(projectRoot, "examples", "projects", "flask-api-nyc-weather")
 
-	// Copy integration.tofu
-	integrationContent, err := os.ReadFile(filepath.Join(exampleSrcPath, "integration.tofu"))
-	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(testDir, "integration.tofu"), integrationContent, 0644)
-	require.NoError(t, err)
-
 	// Copy features.tofu
 	featuresContent, err := os.ReadFile(filepath.Join(exampleSrcPath, "features.tofu"))
 	require.NoError(t, err)
 	err = os.WriteFile(filepath.Join(testDir, "features.tofu"), featuresContent, 0644)
 	require.NoError(t, err)
 
-	// Copy and modify project.tofu to use test output directory
+	// Copy and modify project.tofu to use test output directory and fix module paths
 	projectContent, err := os.ReadFile(filepath.Join(exampleSrcPath, "project.tofu"))
 	require.NoError(t, err)
 
-	// Add output_path to the provider block
 	modifiedContent := string(projectContent)
-	// Insert output_path after debug = true in provider block
+
+	// Add output_path to the provider block
 	modifiedContent = strings.Replace(modifiedContent,
 		`debug                 = true`,
 		`debug                 = true
   output_path           = "output"`, 1)
+
+	// Fix module paths to use absolute paths pointing to the actual example modules
+	examplesDir := filepath.Join(projectRoot, "examples")
+	modifiedContent = strings.Replace(modifiedContent,
+		`source = "../../integrations/tofukit-integration-openmeteo"`,
+		`source = "`+filepath.Join(examplesDir, "integrations", "tofukit-integration-openmeteo")+`"`, 1)
+	modifiedContent = strings.Replace(modifiedContent,
+		`source = "../../stacks/tofukit-stack-python-flask-app"`,
+		`source = "`+filepath.Join(examplesDir, "stacks", "tofukit-stack-python-flask-app")+`"`, 1)
 
 	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(modifiedContent), 0644)
 	require.NoError(t, err)
@@ -98,10 +101,10 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	// Determine output directory
 	outputDir := filepath.Join(testDir, "output")
 
-	// Verify generated files exist
+	// Verify generated files exist (refactored stack uses pyproject.toml instead of requirements.txt)
 	expectedFiles := []string{
 		"app.py",
-		"requirements.txt",
+		"pyproject.toml",
 		"README.md",
 		".env.example",
 		".gitignore",
@@ -122,14 +125,14 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	assert.Contains(t, appPyStr, "api.open-meteo.com", "app.py should contain Open-Meteo API URL")
 	assert.Contains(t, appPyStr, "/weather", "app.py should have /weather endpoint")
 
-	// Verify requirements.txt contains expected dependencies
-	requirementsPath := filepath.Join(outputDir, "requirements.txt")
-	requirementsContent, err := os.ReadFile(requirementsPath)
+	// Verify pyproject.toml contains expected dependencies
+	pyprojectPath := filepath.Join(outputDir, "pyproject.toml")
+	pyprojectContent, err := os.ReadFile(pyprojectPath)
 	require.NoError(t, err)
-	requirementsStr := string(requirementsContent)
+	pyprojectStr := string(pyprojectContent)
 
-	assert.Contains(t, requirementsStr, "Flask", "requirements.txt should contain Flask")
-	assert.Contains(t, requirementsStr, "requests", "requirements.txt should contain requests")
+	assert.Contains(t, pyprojectStr, "flask", "pyproject.toml should contain Flask")
+	assert.Contains(t, pyprojectStr, "requests", "pyproject.toml should contain requests")
 
 	// Verify README.md contains integration information
 	readmePath := filepath.Join(outputDir, "README.md")
