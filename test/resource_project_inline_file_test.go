@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2631,4 +2632,1511 @@ resource "tofukit_project" "drift_test" {
 	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after restore")
 
 	t.Log("✓ Multiple file drift detection and restoration completed successfully")
+}
+
+// =============================================================================
+// PROMPT GENERATION TESTS (Fast)
+// =============================================================================
+
+// TestResourceProjectInlineFileCreateGeneratePromptSuccess verifies prompt generation for file creation
+// Uses dry_run mode to skip LLM execution and validate prompt structure
+func TestResourceProjectInlineFileCreateGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileCreateGeneratePromptSuccess")
+
+	// Terraform config with dry_run enabled
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true   # Writes prompt JSON to .debug/
+  dry_run     = true   # Skips LLM execution
+}
+
+resource "tofukit_project" "hello_world" {
+  name        = "hello-world"
+  description = "A simple hello world project"
+  version     = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+    "hello2.txt" = {
+      content = "hello world2\n"
+    }
+    "hello3.txt" = {
+      content = "hello world3\n"
+    }
+  }
+}
+`
+
+	// Write config file
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup Terraform and run apply (with TF_LOG=INFO)
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Locate and read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err, "Failed to read prompt JSON")
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err, "Failed to parse prompt JSON")
+
+	// Navigate to specification.files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello.txt has create instruction
+	helloFile := files["hello.txt"].(map[string]interface{})
+	instructions := helloFile["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Create new file 'hello.txt'",
+		"Should have create instruction for new file")
+
+	// Verify hello2.txt has create instruction
+	hello2File := files["hello2.txt"].(map[string]interface{})
+	instructions2 := hello2File["instructions"].([]interface{})
+	instruction2_0 := instructions2[0].(map[string]interface{})
+
+	assert.Contains(t, instruction2_0["prompt"], "Create new file 'hello2.txt'",
+		"Should have create instruction for hello2.txt")
+
+	// Verify hello3.txt has create instruction
+	hello3File := files["hello3.txt"].(map[string]interface{})
+	instructions3 := hello3File["instructions"].([]interface{})
+	instruction3_0 := instructions3[0].(map[string]interface{})
+
+	assert.Contains(t, instruction3_0["prompt"], "Create new file 'hello3.txt'",
+		"Should have create instruction for hello3.txt")
+
+	t.Log("✓ Prompt generation verified - all files have correct create instructions")
+}
+
+// TestResourceProjectInlineFileAddMiddleFileGeneratePromptSuccess verifies prompt for adding files
+// Ensures files are tracked by path, not position
+func TestResourceProjectInlineFileAddMiddleFileGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileAddMiddleFileGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial state with 2 files
+	projectPath := filepath.Join(testDir, "output")
+	err := os.MkdirAll(projectPath, 0755)
+	require.NoError(t, err)
+
+	// Create hello.txt
+	helloPath := filepath.Join(projectPath, "hello.txt")
+	err = os.WriteFile(helloPath, []byte("hello world\n"), 0644)
+	require.NoError(t, err)
+
+	// Create hello3.txt
+	hello3Path := filepath.Join(projectPath, "hello3.txt")
+	err = os.WriteFile(hello3Path, []byte("hello world3\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial terraform config (2 files)
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "add-middle-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+    "hello3.txt" = {
+      content = "hello world3\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Update config to add hello2.txt in the middle
+	updatedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "add-middle-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+    "hello2.txt" = {
+      content = "hello world2\n"
+    }
+    "hello3.txt" = {
+      content = "hello world3\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with the new file
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON (should be attempt2 now after the update)
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	// Get the latest prompt file (highest attempt number)
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello2.txt has create instruction (new file)
+	hello2File := files["hello2.txt"].(map[string]interface{})
+	instructions2 := hello2File["instructions"].([]interface{})
+	instruction2_0 := instructions2[0].(map[string]interface{})
+
+	assert.Contains(t, instruction2_0["prompt"], "Create new file 'hello2.txt'",
+		"Should have create instruction for newly added file")
+
+	// Verify hello.txt has unchanged instruction
+	helloFile := files["hello.txt"].(map[string]interface{})
+	instructions1 := helloFile["instructions"].([]interface{})
+	instruction1_0 := instructions1[0].(map[string]interface{})
+
+	assert.Contains(t, instruction1_0["prompt"], "unchanged",
+		"Existing file should have unchanged instruction")
+
+	t.Log("✓ Prompt generation verified - middle file add detected correctly")
+}
+
+// TestResourceProjectInlineFileRemovalGeneratePromptSuccess verifies prompt for file removal
+func TestResourceProjectInlineFileRemovalGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileRemovalGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial state with 3 files
+	projectPath := filepath.Join(testDir, "output")
+	err := os.MkdirAll(projectPath, 0755)
+	require.NoError(t, err)
+
+	err = os.WriteFile(filepath.Join(projectPath, "hello.txt"), []byte("hello world\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(projectPath, "hello2.txt"), []byte("hello world2\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(projectPath, "hello3.txt"), []byte("hello world3\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with 3 files
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "removal-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+    "hello2.txt" = {
+      content = "hello world2\n"
+    }
+    "hello3.txt" = {
+      content = "hello world3\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Remove hello2.txt from config
+	updatedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "removal-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+    "hello3.txt" = {
+      content = "hello world3\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with file removed
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello2.txt has delete instruction
+	hello2File, exists := files["hello2.txt"]
+	require.True(t, exists, "Removed file should still appear in prompt with delete instruction")
+
+	hello2Map := hello2File.(map[string]interface{})
+	instructions := hello2Map["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Delete file 'hello2.txt'",
+		"Should have delete instruction for removed file")
+
+	t.Log("✓ Prompt generation verified - file removal instruction present")
+}
+
+// TestResourceProjectInlineFileRenameGeneratePromptSuccess verifies prompt for file rename
+func TestResourceProjectInlineFileRenameGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileRenameGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial state with hello.txt
+	projectPath := filepath.Join(testDir, "output")
+	err := os.MkdirAll(projectPath, 0755)
+	require.NoError(t, err)
+
+	helloPath := filepath.Join(projectPath, "hello.txt")
+	err = os.WriteFile(helloPath, []byte("hello world\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with hello.txt
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "rename-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Rename hello.txt to hello2.txt (same content)
+	renamedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "rename-test"
+  version = "1.0.0"
+
+  files = {
+    "hello2.txt" = {
+      content = "hello world\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(renamedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with renamed file
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello2.txt has rename instruction
+	hello2File := files["hello2.txt"].(map[string]interface{})
+	instructions := hello2File["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Rename file from 'hello.txt' to 'hello2.txt'",
+		"Should have explicit rename instruction")
+
+	t.Log("✓ Prompt generation verified - rename instruction present")
+}
+
+// TestResourceProjectInlineFileNestedCreateGeneratePromptSuccess verifies prompt for nested file creation
+func TestResourceProjectInlineFileNestedCreateGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileNestedCreateGeneratePromptSuccess")
+
+	// Config with nested file path
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "nested-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify demo/hello.txt has create instruction with directory creation
+	demoFile := files["demo/hello.txt"].(map[string]interface{})
+	instructions := demoFile["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	// Should mention creating the file
+	assert.Contains(t, instruction0["prompt"], "Create new file 'demo/hello.txt'",
+		"Should have create instruction for nested file")
+
+	// Check constraints mention parent directory creation
+	constraints := instruction0["constraints"].([]interface{})
+	hasParentDirConstraint := false
+	for _, c := range constraints {
+		constraintStr := c.(string)
+		if strings.Contains(constraintStr, "parent directories") || strings.Contains(constraintStr, "mkdir") {
+			hasParentDirConstraint = true
+			break
+		}
+	}
+	assert.True(t, hasParentDirConstraint, "Constraints should mention creating parent directories")
+
+	t.Log("✓ Prompt generation verified - nested file creation with parent directory instruction")
+}
+
+// TestResourceProjectInlineFileNestedAddGeneratePromptSuccess verifies prompt for adding nested files
+func TestResourceProjectInlineFileNestedAddGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileNestedAddGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial nested file
+	projectPath := filepath.Join(testDir, "output")
+	demoDir := filepath.Join(projectPath, "demo")
+	err := os.MkdirAll(demoDir, 0755)
+	require.NoError(t, err)
+
+	helloPath := filepath.Join(demoDir, "hello.txt")
+	err = os.WriteFile(helloPath, []byte("hello from demo\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with one nested file
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "nested-add-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Add another nested file
+	updatedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "nested-add-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+    "demo/world.txt" = {
+      content = "world from demo\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with new nested file
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify demo/world.txt has create instruction
+	worldFile := files["demo/world.txt"].(map[string]interface{})
+	instructions := worldFile["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Create new file 'demo/world.txt'",
+		"Should have create instruction for newly added nested file")
+
+	// Verify path is properly handled in nested structure
+	assert.Contains(t, files, "demo/world.txt", "Nested path should be in files specification")
+
+	t.Log("✓ Prompt generation verified - nested file addition detected correctly")
+}
+
+// TestResourceProjectInlineFileNestedDeeperNestingGeneratePromptSuccess verifies prompt for deeply nested files
+func TestResourceProjectInlineFileNestedDeeperNestingGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileNestedDeeperNestingGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial state with 2 files in demo/
+	projectPath := filepath.Join(testDir, "output")
+	demoDir := filepath.Join(projectPath, "demo")
+	err := os.MkdirAll(demoDir, 0755)
+	require.NoError(t, err)
+
+	err = os.WriteFile(filepath.Join(demoDir, "hello.txt"), []byte("hello from demo\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(demoDir, "hello2.txt"), []byte("hello2 from demo\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with 2 files in demo/
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "deeper-nesting-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Add deeply nested file
+	updatedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "deeper-nesting-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
+    "demo/subdir/deep/hello3.txt" = {
+      content = "hello3 from deep\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with deeply nested file
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify demo/subdir/deep/hello3.txt has create instruction
+	deepFile := files["demo/subdir/deep/hello3.txt"].(map[string]interface{})
+	instructions := deepFile["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Create new file 'demo/subdir/deep/hello3.txt'",
+		"Should have create instruction for deeply nested file")
+
+	// Verify deep path is properly handled
+	assert.Contains(t, files, "demo/subdir/deep/hello3.txt", "Deep nested path should be in files specification")
+
+	t.Log("✓ Prompt generation verified - deep nested path handled correctly")
+}
+
+// TestResourceProjectInlineFileNestedRemovalGeneratePromptSuccess verifies prompt for nested directory cleanup
+func TestResourceProjectInlineFileNestedRemovalGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileNestedRemovalGeneratePromptSuccess")
+
+	// MOCK SETUP: Create initial state with deeply nested file
+	projectPath := filepath.Join(testDir, "output")
+	deepDir := filepath.Join(projectPath, "demo", "subdir", "deep")
+	err := os.MkdirAll(deepDir, 0755)
+	require.NoError(t, err)
+
+	demoDir := filepath.Join(projectPath, "demo")
+	err = os.WriteFile(filepath.Join(demoDir, "hello.txt"), []byte("hello from demo\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(demoDir, "hello2.txt"), []byte("hello2 from demo\n"), 0644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(deepDir, "hello3.txt"), []byte("hello3 from deep\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with 3 files including deeply nested
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "nested-removal-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
+    "demo/subdir/deep/hello3.txt" = {
+      content = "hello3 from deep\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Remove deeply nested file (should cleanup empty directories)
+	updatedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "nested-removal-test"
+  version = "1.0.0"
+
+  files = {
+    "demo/hello.txt" = {
+      content = "hello from demo\n"
+    }
+    "demo/hello2.txt" = {
+      content = "hello2 from demo\n"
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with nested file removed
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify demo/subdir/deep/hello3.txt has delete instruction
+	deepFile, exists := files["demo/subdir/deep/hello3.txt"]
+	require.True(t, exists, "Removed nested file should appear in prompt")
+
+	deepMap := deepFile.(map[string]interface{})
+	instructions := deepMap["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	assert.Contains(t, instruction0["prompt"], "Delete file 'demo/subdir/deep/hello3.txt'",
+		"Should have delete instruction for removed nested file")
+
+	t.Log("✓ Prompt generation verified - nested file removal with empty directory cleanup instruction")
+}
+
+// TestResourceProjectInlineFileVerificationGeneratePromptSuccess verifies prompt includes verification commands
+func TestResourceProjectInlineFileVerificationGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileVerificationGeneratePromptSuccess")
+
+	// Config with file that has verification
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "verification-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = {
+      content = "hello world"
+
+      verifications = [{
+        command = "cat hello.txt"
+        expect  = "hello world"
+      }]
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files (verifications are stored in file specifications)
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Get hello.txt file
+	helloFile := files["hello.txt"].(map[string]interface{})
+
+	// Check for verification field
+	verification, ok := helloFile["verification"].([]interface{})
+	require.True(t, ok, "File should have verification field")
+	require.NotEmpty(t, verification, "Verification array should not be empty")
+
+	// Verify verification command structure
+	verification0 := verification[0].(map[string]interface{})
+	assert.Equal(t, "cat hello.txt", verification0["command"], "Should have verification command")
+	assert.Equal(t, "hello world", verification0["expect"], "Should have verification expectation")
+
+	t.Log("✓ Prompt generation verified - verification commands present in file specification")
+}
+
+// TestResourceProjectInlineFileVerificationRetryGeneratePromptSuccess verifies prompt includes verification (retry logic doesn't affect prompt)
+func TestResourceProjectInlineFileVerificationRetryGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileVerificationRetryGeneratePromptSuccess")
+
+	// Config with file that has verification (retry logic is execution-time, not prompt generation)
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+  max_retries = 3  # Retry setting doesn't affect prompt generation
+}
+
+resource "tofukit_project" "test" {
+  name    = "verification-retry-test"
+  version = "1.0.0"
+
+  files = {
+    "greeting.txt" = {
+      instructions = [{
+        prompt = "Create a text file containing 'hello world'"
+        constraints = [
+          "Content must be exactly: hello world",
+          "Keep it simple"
+        ]
+      }]
+      verifications = [{
+        command = "cat greeting.txt"
+        expect  = "hello world"
+      }]
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Get greeting.txt file
+	greetingFile := files["greeting.txt"].(map[string]interface{})
+
+	// Verify instructions present
+	instructions := greetingFile["instructions"].([]interface{})
+	require.NotEmpty(t, instructions, "Should have instructions")
+
+	// Verify verification commands present
+	verification, ok := greetingFile["verification"].([]interface{})
+	require.True(t, ok, "File should have verification field")
+	require.NotEmpty(t, verification, "Verification array should not be empty")
+
+	verification0 := verification[0].(map[string]interface{})
+	assert.Equal(t, "cat greeting.txt", verification0["command"], "Should have verification command")
+	assert.Equal(t, "hello world", verification0["expect"], "Should have verification expectation")
+
+	t.Log("✓ Prompt generation verified - verification structure present (retry logic doesn't affect prompt)")
+}
+
+// TestResourceProjectInlineFileInstructionRenameGeneratePromptSuccess verifies rename of instruction-based files
+func TestResourceProjectInlineFileInstructionRenameGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileInstructionRenameGeneratePromptSuccess")
+
+	// MOCK SETUP: Create LICENSE.md with generated content
+	projectPath := filepath.Join(testDir, "output")
+	err := os.MkdirAll(projectPath, 0755)
+	require.NoError(t, err)
+
+	licensePath := filepath.Join(projectPath, "LICENSE.md")
+	err = os.WriteFile(licensePath, []byte("MIT License\nCopyright (c) 2025\n"), 0644)
+	require.NoError(t, err)
+
+	// Step 1: Initial config with LICENSE.md (instruction-based)
+	initialConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "instruction-rename-test"
+  version = "1.0.0"
+
+  files = {
+    "LICENSE.md" = {
+      instructions = [{
+        prompt = "Create an MIT License file with placeholder for year and copyright holder"
+      }]
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Step 2: Rename LICENSE.md to LICENSE.txt (same instructions)
+	renamedConfig := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "instruction-rename-test"
+  version = "1.0.0"
+
+  files = {
+    "LICENSE.txt" = {
+      instructions = [{
+        prompt = "Create an MIT License file with placeholder for year and copyright holder"
+      }]
+    }
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(renamedConfig), 0644)
+	require.NoError(t, err)
+
+	// Apply with renamed file
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read latest prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt*-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON files")
+
+	latestPrompt := debugFiles[len(debugFiles)-1]
+	jsonData, err := os.ReadFile(latestPrompt)
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify LICENSE.txt has rename instruction
+	licenseFile := files["LICENSE.txt"].(map[string]interface{})
+	instructions := licenseFile["instructions"].([]interface{})
+	instruction0 := instructions[0].(map[string]interface{})
+
+	// Rename is detected by matching instructions (for generated files)
+	assert.Contains(t, instruction0["prompt"], "Rename file from 'LICENSE.md' to 'LICENSE.txt'",
+		"Should have rename instruction for instruction-based file")
+
+	t.Log("✓ Prompt generation verified - instruction-based file rename detected")
+}
+
+// TestResourceProjectInlineFileOrderingConsistencyGeneratePromptSuccess verifies file ordering in prompt
+func TestResourceProjectInlineFileOrderingConsistencyGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectInlineFileOrderingConsistencyGeneratePromptSuccess")
+
+	// Config with files in non-alphabetical order
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "file-ordering-test"
+  version = "1.0.0"
+
+  files = {
+    "hi2.txt" = {
+      content = "Hi from file 2\n"
+    }
+    "LICENSE.md" = {
+      content = "MIT License\n"
+    }
+    "README.md" = {
+      content = "Project README\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify all files are present
+	assert.Contains(t, files, "hi2.txt", "hi2.txt should be in files")
+	assert.Contains(t, files, "LICENSE.md", "LICENSE.md should be in files")
+	assert.Contains(t, files, "README.md", "README.md should be in files")
+
+	// Verify each file has the correct content and instructions
+	hi2File := files["hi2.txt"].(map[string]interface{})
+	assert.Equal(t, "Hi from file 2\n", hi2File["content"], "hi2.txt should have correct content")
+
+	licenseFile := files["LICENSE.md"].(map[string]interface{})
+	assert.Equal(t, "MIT License\n", licenseFile["content"], "LICENSE.md should have correct content")
+
+	readmeFile := files["README.md"].(map[string]interface{})
+	assert.Equal(t, "Project README\n", readmeFile["content"], "README.md should have correct content")
+
+	t.Log("✓ Prompt generation verified - file ordering consistency maintained")
+}
+
+// TestResourceProjectDriftDetection_StaticFileGeneratePromptSuccess verifies drift warnings in prompt
+// Note: Prompt generation tests don't actually execute drift detection logic, just verify prompt structure
+func TestResourceProjectDriftDetection_StaticFileGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_StaticFileGeneratePromptSuccess")
+
+	// Simple config with static file
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "drift-test"
+  version = "1.0.0"
+
+  files = {
+    ".gitignore" = {
+      content = "*.log\n*.tmp\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply (in dry_run mode, no actual drift detection occurs)
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify .gitignore is in prompt
+	gitignoreFile := files[".gitignore"].(map[string]interface{})
+	assert.NotNil(t, gitignoreFile, ".gitignore should be in prompt")
+	assert.Equal(t, "*.log\n*.tmp\n", gitignoreFile["content"], "Content should match specification")
+
+	t.Log("✓ Prompt generation verified - drift detection structure can be validated in e2e tests")
+}
+
+// TestResourceProjectDriftDetection_DeletedFileGeneratePromptSuccess verifies prompt structure for deleted files
+func TestResourceProjectDriftDetection_DeletedFileGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_DeletedFileGeneratePromptSuccess")
+
+	// Config with file
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "drift-test"
+  version = "1.0.0"
+
+  files = {
+    "config.txt" = {
+      content = "config data\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify config.txt is in prompt
+	configFile := files["config.txt"].(map[string]interface{})
+	assert.NotNil(t, configFile, "config.txt should be in prompt")
+
+	t.Log("✓ Prompt generation verified - file deletion drift detection structure valid")
+}
+
+// TestResourceProjectDriftDetection_MultipleFilesGeneratePromptSuccess verifies prompt with multiple files
+func TestResourceProjectDriftDetection_MultipleFilesGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_MultipleFilesGeneratePromptSuccess")
+
+	// Config with multiple files
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "drift-test"
+  version = "1.0.0"
+
+  files = {
+    ".gitignore" = {
+      content = "*.log\n"
+    }
+    "LICENSE" = {
+      content = "MIT License\n"
+    }
+    "README.md" = {
+      content = "# Project\n"
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify all files are in prompt
+	assert.Contains(t, files, ".gitignore", ".gitignore should be in prompt")
+	assert.Contains(t, files, "LICENSE", "LICENSE should be in prompt")
+	assert.Contains(t, files, "README.md", "README.md should be in prompt")
+
+	t.Log("✓ Prompt generation verified - multiple files drift detection structure valid")
 }

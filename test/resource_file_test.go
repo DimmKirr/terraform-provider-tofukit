@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -344,4 +345,160 @@ resource "tofukit_file" "test" {
 			assert.Contains(t, string(validateOutput), tt.expectedError, "Error message should mention the validation issue")
 		})
 	}
+}
+
+// =============================================================================
+// PROMPT GENERATION TESTS (Fast)
+// =============================================================================
+
+// TestResourceFile_CreateGeneratePromptSuccess verifies prompt generation for file resource
+func TestResourceFile_CreateGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_CreateGeneratePromptSuccess")
+
+	// Config with file resource
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_file" "hello" {
+  name    = "hello.txt"
+  content = "Hello World"
+}
+
+resource "tofukit_project" "test" {
+  name    = "file-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = tofukit_file.hello
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup Terraform and run apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello.txt is in files specification
+	helloFile, exists := files["hello.txt"]
+	require.True(t, exists, "hello.txt should be in files specification")
+
+	helloMap := helloFile.(map[string]interface{})
+
+	// Verify content from file resource
+	assert.Equal(t, "Hello World", helloMap["content"], "Content should match file resource")
+
+	// Verify instructions for file creation
+	instructions := helloMap["instructions"].([]interface{})
+	require.NotEmpty(t, instructions, "Should have instructions")
+
+	instruction0 := instructions[0].(map[string]interface{})
+	assert.Contains(t, instruction0["prompt"], "Create new file 'hello.txt'",
+		"Should have create instruction for file resource")
+
+	t.Log("✓ Prompt generation verified - file resource content in specification")
+}
+
+// TestResourceFile_DriftDetectionGeneratePromptSuccess verifies prompt structure for file resource (no actual drift in dry_run)
+func TestResourceFile_DriftDetectionGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_DriftDetectionGeneratePromptSuccess")
+
+	// Config with file resource
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true
+}
+
+resource "tofukit_file" "hello" {
+  name    = "hello.txt"
+  content = "Hello World"
+}
+
+resource "tofukit_project" "test" {
+  name    = "file-drift-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = tofukit_file.hello
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup and apply (dry_run mode doesn't execute actual drift detection)
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Navigate to files
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	files := specification["files"].(map[string]interface{})
+
+	// Verify hello.txt is in prompt with correct structure
+	helloFile, exists := files["hello.txt"]
+	require.True(t, exists, "hello.txt should be in files specification")
+
+	helloMap := helloFile.(map[string]interface{})
+	assert.Equal(t, "Hello World", helloMap["content"], "Content should match file resource")
+
+	t.Log("✓ Prompt generation verified - file resource drift detection structure valid")
 }

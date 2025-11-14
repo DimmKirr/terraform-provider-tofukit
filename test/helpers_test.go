@@ -394,3 +394,12 @@ func setupTerraform(t *testing.T, testDir string) string {
 	runTerraformInit(t, iacTool, testDir)
 	return iacTool
 }
+
+// Helper function to get map keys
+func getKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
