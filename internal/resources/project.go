@@ -3289,8 +3289,19 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	featureModel := &schemas.FeatureModel{}
 
 	// Extract requirements (optional)
+	tflog.Info(ctx, "Checking for requirements attribute", map[string]interface{}{
+		"has_requirements": attrs["requirements"] != nil,
+	})
+
 	if requirementsVal, exists := attrs["requirements"]; exists {
+		tflog.Info(ctx, "Requirements attribute found", map[string]interface{}{
+			"type": fmt.Sprintf("%T", requirementsVal),
+		})
+
 		if requirementsList, ok := requirementsVal.(types.List); ok {
+			tflog.Info(ctx, "Successfully cast to types.List", map[string]interface{}{
+				"element_count": len(requirementsList.Elements()),
+			})
 			elements := requirementsList.Elements()
 			featureModel.Requirements = make([]schemas.RequirementModel, 0, len(elements))
 			for _, elem := range elements {
@@ -3372,7 +3383,118 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 					featureModel.Requirements = append(featureModel.Requirements, req)
 				}
 			}
+		} else if requirementsTuple, ok := requirementsVal.(basetypes.TupleValue); ok {
+			// Handle basetypes.TupleValue (what inline features actually use)
+			tflog.Info(ctx, "Successfully cast to basetypes.TupleValue", map[string]interface{}{
+				"element_count": len(requirementsTuple.Elements()),
+			})
+			elements := requirementsTuple.Elements()
+			featureModel.Requirements = make([]schemas.RequirementModel, 0, len(elements))
+			for _, elem := range elements {
+				if reqObj, ok := elem.(types.Object); ok {
+					reqAttrs := reqObj.Attributes()
+					req := schemas.RequirementModel{}
+
+					// Extract name
+					if nameVal, exists := reqAttrs["name"]; exists {
+						if nameStr, ok := nameVal.(types.String); ok {
+							req.Name = nameStr
+						}
+					}
+
+					// Extract instructions
+					if instructionsVal, exists := reqAttrs["instructions"]; exists {
+						// Instructions might also be a Tuple
+						var instrElements []attr.Value
+						if instrList, ok := instructionsVal.(types.List); ok {
+							instrElements = instrList.Elements()
+						} else if instrTuple, ok := instructionsVal.(basetypes.TupleValue); ok {
+							instrElements = instrTuple.Elements()
+						}
+
+						if instrElements != nil {
+							req.Instructions = make([]schemas.InstructionModel, 0, len(instrElements))
+							for _, instrElem := range instrElements {
+								if instrObj, ok := instrElem.(types.Object); ok {
+									instrAttrs := instrObj.Attributes()
+									instr := schemas.InstructionModel{}
+
+									// Extract prompt
+									if promptVal, exists := instrAttrs["prompt"]; exists {
+										if promptStr, ok := promptVal.(types.String); ok {
+											instr.Prompt = promptStr
+										}
+									}
+
+									// Extract constraints
+									if constraintsVal, exists := instrAttrs["constraints"]; exists {
+										var constraintsElements []attr.Value
+										if constraintsList, ok := constraintsVal.(types.List); ok {
+											constraintsElements = constraintsList.Elements()
+										} else if constraintsTuple, ok := constraintsVal.(basetypes.TupleValue); ok {
+											constraintsElements = constraintsTuple.Elements()
+										}
+
+										if constraintsElements != nil {
+											instr.Constraints = make([]types.String, 0, len(constraintsElements))
+											for _, constraintElem := range constraintsElements {
+												if constraintStr, ok := constraintElem.(types.String); ok {
+													instr.Constraints = append(instr.Constraints, constraintStr)
+												}
+											}
+										}
+									}
+
+									req.Instructions = append(req.Instructions, instr)
+								}
+							}
+						}
+					}
+
+					// Extract verifications
+					if verificationsVal, exists := reqAttrs["verifications"]; exists {
+						var verifsElements []attr.Value
+						if verifsList, ok := verificationsVal.(types.List); ok {
+							verifsElements = verifsList.Elements()
+						} else if verifsTuple, ok := verificationsVal.(basetypes.TupleValue); ok {
+							verifsElements = verifsTuple.Elements()
+						}
+
+						if verifsElements != nil {
+							req.Verifications = make([]schemas.VerificationModel, 0, len(verifsElements))
+							for _, verifElem := range verifsElements {
+								if verifObj, ok := verifElem.(types.Object); ok {
+									verifAttrs := verifObj.Attributes()
+									verif := schemas.VerificationModel{}
+
+									if commandVal, exists := verifAttrs["command"]; exists {
+										if commandStr, ok := commandVal.(types.String); ok {
+											verif.Command = commandStr
+										}
+									}
+
+									if expectVal, exists := verifAttrs["expect"]; exists {
+										if expectStr, ok := expectVal.(types.String); ok {
+											verif.Expect = expectStr
+										}
+									}
+
+									req.Verifications = append(req.Verifications, verif)
+								}
+							}
+						}
+					}
+
+					featureModel.Requirements = append(featureModel.Requirements, req)
+				}
+			}
+		} else {
+			tflog.Warn(ctx, "Failed to cast requirements to types.List or basetypes.TupleValue", map[string]interface{}{
+				"actual_type": fmt.Sprintf("%T", requirementsVal),
+			})
 		}
+	} else {
+		tflog.Warn(ctx, "Requirements attribute NOT found in inline feature", nil)
 	}
 
 	// Extract files (optional)

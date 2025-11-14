@@ -676,7 +676,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "hello" = {
-      prompt = "Add hello greeting capability"
+      requirements = [
+        {
+          name = "Feature Implementation"
+          instructions = [
+            {
+              prompt = "Add hello greeting capability"
+            }
+          ]
+        }
+      ]
       files = {
         "hello.txt" = {
           content = "Hello from inline feature.\n"
