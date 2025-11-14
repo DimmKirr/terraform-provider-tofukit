@@ -23,8 +23,8 @@ func TestCollectKitVerifications(t *testing.T) {
 			"requirements": []interface{}{
 				map[string]interface{}{
 					"name": "Install Test Tool",
-					"verifications": []interface{}{
-						map[string]interface{}{
+					"verification": []interface{}{
+						map[string]string{
 							"command": "test-tool --version && echo 'OK'",
 							"expect":  "OK",
 						},
@@ -38,12 +38,12 @@ func TestCollectKitVerifications(t *testing.T) {
 			"requirements": []interface{}{
 				map[string]interface{}{
 					"name": "Python Installation",
-					"verifications": []interface{}{
-						map[string]interface{}{
+					"verification": []interface{}{
+						map[string]string{
 							"command": "python3 --version && echo 'OK'",
 							"expect":  "OK",
 						},
-						map[string]interface{}{
+						map[string]string{
 							"command": "which python3 && echo 'found'",
 							"expect":  "found",
 						},
@@ -51,8 +51,8 @@ func TestCollectKitVerifications(t *testing.T) {
 				},
 				map[string]interface{}{
 					"name": "Pip Installation",
-					"verifications": []interface{}{
-						map[string]interface{}{
+					"verification": []interface{}{
+						map[string]string{
 							"command": "pip3 --version",
 							"expect":  "",
 						},
@@ -159,12 +159,12 @@ func TestCollectKitVerificationsPseudoPathFormat(t *testing.T) {
 			"requirements": []interface{}{
 				map[string]interface{}{
 					"name": "Tool Setup",
-					"verifications": []interface{}{
-						map[string]interface{}{
+					"verification": []interface{}{
+						map[string]string{
 							"command": "my-tool --version",
 							"expect":  "v1.0",
 						},
-						map[string]interface{}{
+						map[string]string{
 							"command": "my-tool check",
 							"expect":  "OK",
 						},

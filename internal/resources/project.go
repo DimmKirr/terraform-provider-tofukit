@@ -4162,20 +4162,20 @@ func (r *ProjectResourceFinal) CollectKitVerifications(
 			reqName, _ := reqMap["name"].(string)
 
 			// Get verifications array
-			verificationsData, ok := reqMap["verifications"].([]interface{})
+			verificationsData, ok := reqMap["verification"].([]interface{})
 			if !ok {
 				continue
 			}
 
 			// Convert each verification to FileModelWithPath for consistency
 			for idx, verifyInterface := range verificationsData {
-				verifyMap, ok := verifyInterface.(map[string]interface{})
+				verifyMap, ok := verifyInterface.(map[string]string)
 				if !ok {
 					continue
 				}
 
-				command, _ := verifyMap["command"].(string)
-				expect, _ := verifyMap["expect"].(string)
+				command := verifyMap["command"]
+				expect := verifyMap["expect"]  // Empty expect is valid
 
 				if command == "" {
 					continue
