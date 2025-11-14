@@ -45,16 +45,7 @@ func TestE2EProjectExampleHelloWorldSuccess(t *testing.T) {
 	}
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running tofu init...")

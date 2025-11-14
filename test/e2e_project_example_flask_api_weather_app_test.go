@@ -52,16 +52,7 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Determine which Terraform CLI to use
-	var tfCmd string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		tfCmd = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		tfCmd = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	tfCmd := detectIaCTool(t)
 
 	// Run tofu init
 	t.Log("Running tofu init...")

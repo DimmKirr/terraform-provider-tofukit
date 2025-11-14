@@ -69,16 +69,7 @@ resource "tofukit_feature" "hello_cmd" {
 	require.NoError(t, err)
 
 	// Detect IaC tool
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Run init
 	cmd := exec.Command(iacTool, "init")
@@ -169,16 +160,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err)
 
 	// Detect IaC tool
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Run init
 	t.Log("Running init...")
@@ -261,16 +243,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err)
 
 	// Detect IaC tool
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Run init
 	t.Log("Running init...")
@@ -359,16 +332,7 @@ resource "tofukit_project" "test" {
 	require.NoError(t, err)
 
 	// Detect IaC tool
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Run init
 	t.Log("Running init...")
@@ -487,10 +451,7 @@ resource "tofukit_project" "test" {
 	t.Log("Testing independent feature files...")
 
 	// Determine which IaC tool to use
-	iacTool := "tofu"
-	if _, err := exec.LookPath("tofu"); err != nil {
-		iacTool = "terraform"
-	}
+	iacTool := detectIaCTool(t)
 	t.Logf("Using %s", iacTool)
 
 	// Initialize
@@ -624,10 +585,7 @@ resource "tofukit_project" "test" {
 	t.Log("Testing stack features from module...")
 
 	// Determine which IaC tool to use
-	iacTool := "tofu"
-	if _, err := exec.LookPath("tofu"); err != nil {
-		iacTool = "terraform"
-	}
+	iacTool := detectIaCTool(t)
 
 	// Init and apply
 	initCmd := exec.Command(iacTool, "init", "-no-color")
@@ -686,4 +644,456 @@ resource "tofukit_project" "test" {
 	}
 
 	t.Log("✅ Stack features from module test completed successfully!")
+}
+
+// ====================
+// Prompt Generation Tests (with dry_run)
+// ====================
+
+// TestResourceFeatureInlineGeneratePromptSuccess tests that inline features appear in the generated prompt
+func TestResourceFeatureInlineGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFeatureInlineGeneratePromptSuccess")
+
+	// Create Terraform config with inline feature
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source = "registry.terraform.io/DimmKirr/tofukit"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug = true
+  dry_run = true  # Skip LLM execution, just generate prompt
+}
+
+resource "tofukit_project" "test" {
+  name    = "inline-feature-test"
+  version = "0.1.0"
+
+  features = {
+    "hello" = {
+      prompt = "Add hello greeting capability"
+      files = {
+        "hello.txt" = {
+          content = "Hello from inline feature.\n"
+        }
+      }
+    }
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup Terraform and run apply
+	iacTool := setupTerraform(t, testDir)
+	output := runTerraformApply(t, iacTool, testDir)
+
+	// Log output to see TF_LOG=INFO messages (includes prompt path)
+	if testing.Verbose() {
+		t.Logf("Apply output:\n%s", output)
+	}
+	t.Log("✓ Apply completed successfully")
+
+	// Check debug output
+	outputDir := filepath.Join(testDir, "output")
+	debugDir := filepath.Join(outputDir, ".debug")
+	require.DirExists(t, debugDir, "Debug directory should exist")
+
+	// Find and read project JSON
+	debugFiles, err := filepath.Glob(filepath.Join(debugDir, "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have prompt JSON file")
+
+	projectJSONPath := debugFiles[0]
+	t.Logf("Reading prompt JSON: %s", projectJSONPath)
+
+	jsonData, err := os.ReadFile(projectJSONPath)
+	require.NoError(t, err, "Failed to read prompt JSON")
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err, "Failed to parse prompt JSON")
+
+	// Navigate to _project_context
+	request, ok := promptJSON["request"].(map[string]interface{})
+	require.True(t, ok, "request should be a map")
+	specification, ok := request["specification"].(map[string]interface{})
+	require.True(t, ok, "specification should be a map")
+
+	// **THIS IS THE KEY CHECK - Would catch BUG-008**
+	projectContext, ok := specification["_project_context"].(map[string]interface{})
+	require.True(t, ok, "Should have _project_context in specification")
+
+	features, ok := projectContext["features"].([]interface{})
+	require.True(t, ok, "Should have features array in project_context")
+	require.NotEmpty(t, features, "Features should not be empty")
+
+	// Verify the specific feature
+	feature0 := features[0].(map[string]interface{})
+	assert.Equal(t, "hello", feature0["name"], "Feature name should be 'hello'")
+	assert.Equal(t, "Add hello greeting capability", feature0["prompt"], "Feature prompt should match")
+
+	// Verify feature has files
+	featureFiles, ok := feature0["files"].([]interface{})
+	require.True(t, ok, "Feature should have files array")
+	assert.NotEmpty(t, featureFiles, "Feature files should not be empty")
+
+	t.Log("✅ Feature appears in generated prompt!")
+}
+
+// TestProjectPrecedenceOverFeatureGeneratePromptSuccess tests precedence in generated prompt
+func TestProjectPrecedenceOverFeatureGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestProjectPrecedenceOverFeatureGeneratePromptSuccess")
+
+	// Create Terraform config with feature and project override
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source = "registry.terraform.io/DimmKirr/tofukit"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug = true
+  dry_run = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "precedence-test"
+  version = "0.1.0"
+
+  features = {
+    "base_config" = {
+      prompt = "Provide base configuration"
+      files = {
+        "config.txt" = {
+          content = "Config from feature\n"
+        }
+      }
+    }
+  }
+
+  files = {
+    "config.txt" = {
+      content = "Config from project\n"
+    }
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup Terraform and run apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles)
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Check _project_context has the feature
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	projectContext := specification["_project_context"].(map[string]interface{})
+	features := projectContext["features"].([]interface{})
+
+	require.Len(t, features, 1, "Should have 1 feature")
+	feature := features[0].(map[string]interface{})
+	assert.Equal(t, "base_config", feature["name"])
+
+	// Check that the final files list has project override (not feature file)
+	files := specification["files"].(map[string]interface{})
+	configFile := files["config.txt"].(map[string]interface{})
+	content := configFile["content"].(string)
+	assert.Equal(t, "Config from project\n", content, "Project file should override feature file")
+
+	t.Log("✅ Feature in prompt, project precedence maintained!")
+}
+
+// TestResourceFeatureInlineMergeMultipleFeaturesGeneratePromptSuccess tests multiple features in prompt
+func TestResourceFeatureInlineMergeMultipleFeaturesGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFeatureInlineMergeMultipleFeaturesGeneratePromptSuccess")
+
+	// Create Terraform config with multiple features
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source = "registry.terraform.io/DimmKirr/tofukit"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug = true
+  dry_run = true
+}
+
+resource "tofukit_project" "test" {
+  name    = "multi-feature-test"
+  version = "0.1.0"
+
+  features = {
+    "logging" = {
+      prompt = "Add logging capability"
+      files = {
+        "log.txt" = {
+          content = "Logging enabled\n"
+        }
+      }
+    }
+    "config" = {
+      prompt = "Add configuration capability"
+      files = {
+        "config.txt" = {
+          content = "Config loaded\n"
+        }
+      }
+    }
+    "metrics" = {
+      prompt = "Add metrics capability"
+      files = {
+        "metrics.txt" = {
+          content = "Metrics tracking\n"
+        }
+      }
+    }
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Setup Terraform and run apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Read prompt JSON
+	debugFiles, err := filepath.Glob(filepath.Join(testDir, "output", ".debug", "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles)
+
+	jsonData, err := os.ReadFile(debugFiles[0])
+	require.NoError(t, err)
+
+	var promptJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &promptJSON)
+	require.NoError(t, err)
+
+	// Check all 3 features in _project_context
+	request := promptJSON["request"].(map[string]interface{})
+	specification := request["specification"].(map[string]interface{})
+	projectContext := specification["_project_context"].(map[string]interface{})
+	features := projectContext["features"].([]interface{})
+
+	require.Len(t, features, 3, "Should have 3 features")
+
+	// Collect feature names
+	featureNames := make([]string, 0, 3)
+	for _, f := range features {
+		feature := f.(map[string]interface{})
+		featureNames = append(featureNames, feature["name"].(string))
+	}
+
+	// Verify all 3 features present
+	assert.Contains(t, featureNames, "logging", "Should have logging feature")
+	assert.Contains(t, featureNames, "config", "Should have config feature")
+	assert.Contains(t, featureNames, "metrics", "Should have metrics feature")
+
+	t.Log("✅ All 3 features appear in generated prompt!")
+}
+
+// TestResourceFeatureFilesIndependentGeneratePromptSuccess tests that feature resource references appear in the generated prompt with dry_run
+func TestResourceFeatureFilesIndependentGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFeatureFilesIndependentGeneratePromptSuccess")
+
+	// Create a minimal test with standalone feature resource referenced directly by project
+	projectContent := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  dry_run     = true  # Skip LLM execution, just generate prompt
+}
+
+# Define a standalone feature resource
+resource "tofukit_feature" "test_feature" {
+  name        = "test-feature"
+  description = "A simple test feature"
+
+  requirements = [
+    {
+      name = "Test File"
+      instructions = [
+        {
+          prompt = "Add a simple test file capability"
+        }
+      ]
+    }
+  ]
+
+  files = {
+    "test.txt" = {
+      content = "Hello from feature\n"
+    }
+  }
+
+  verifications = [
+    {
+      command = "test -f test.txt"
+      expect  = ""
+    }
+  ]
+}
+
+# Project references the feature directly
+resource "tofukit_project" "test" {
+  name        = "test-feature-files"
+  description = "Test feature resource reference with dry_run"
+  version     = "1.0.0"
+
+  features = {
+    "test_feature" = tofukit_feature.test_feature
+  }
+}
+`
+
+	projectPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(projectPath, []byte(projectContent), 0644)
+	require.NoError(t, err, "Failed to write project.tofu")
+
+	// Setup Terraform and run apply
+	iacTool := setupTerraform(t, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Check debug output
+	outputDir := filepath.Join(testDir, "output")
+	debugDir := filepath.Join(outputDir, ".debug")
+	require.DirExists(t, debugDir, "Debug directory should exist")
+
+	// Find and read project JSON
+	debugFiles, err := filepath.Glob(filepath.Join(debugDir, "claude-prompt-attempt1-*.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, debugFiles, "Should have project JSON file")
+
+	projectJSONPath := debugFiles[0]
+	t.Logf("Reading project JSON: %s", projectJSONPath)
+
+	jsonData, err := os.ReadFile(projectJSONPath)
+	require.NoError(t, err, "Failed to read project JSON")
+
+	var projectJSON map[string]interface{}
+	err = json.Unmarshal(jsonData, &projectJSON)
+	require.NoError(t, err, "Failed to parse project JSON")
+
+	// Verify the feature files are present in specification.files
+	request, ok := projectJSON["request"].(map[string]interface{})
+	require.True(t, ok, "request should be a map")
+	specification, ok := request["specification"].(map[string]interface{})
+	require.True(t, ok, "specification should be a map")
+	files, ok := specification["files"].(map[string]interface{})
+	require.True(t, ok, "files should be a map")
+
+	t.Logf("Files in project JSON: %d", len(files))
+	for path := range files {
+		t.Logf("  - %s", path)
+	}
+
+	require.NotEmpty(t, files, "Should have files from feature")
+	assert.Contains(t, files, "test.txt", "Should have test.txt from feature")
+
+	// Verify the content is correct
+	testFile := files["test.txt"].(map[string]interface{})
+	content, ok := testFile["content"].(string)
+	require.True(t, ok, "content should be a string")
+	assert.Equal(t, "Hello from feature\n", content, "Content should match")
+
+	// **KEY CHECK: Verify feature appears in _project_context with complete metadata**
+	projectContext, ok := specification["_project_context"].(map[string]interface{})
+	require.True(t, ok, "Should have _project_context in specification")
+
+	t.Logf("Project context keys: %v", getKeys(projectContext))
+
+	// **CRITICAL BUG-008 FINDING**: Feature resource references do NOT appear in _project_context at all!
+	// Only inline project features show up (but with incomplete metadata)
+	features, hasFeatures := projectContext["features"].([]interface{})
+
+	if !hasFeatures || len(features) == 0 {
+		t.Log("⚠️  BUG-008 CONFIRMED: Feature resource references missing from _project_context")
+		t.Log("Expected: features array with referenced feature's metadata")
+		t.Log("Actual: No features field or empty features array")
+
+		// Print context for debugging
+		prettyContext, _ := json.MarshalIndent(projectContext, "", "  ")
+		t.Logf("Actual _project_context:\n%s", string(prettyContext))
+
+		// This test documents the bug - it SHOULD fail
+		t.Fatal("Feature resource references are not included in _project_context (BUG-008)")
+	}
+
+	// If we get here, the bug is fixed
+	t.Log("✅ Feature resource references appear in _project_context!")
+
+	// Verify the specific feature metadata
+	feature0 := features[0].(map[string]interface{})
+	assert.Equal(t, "test_feature", feature0["name"], "Feature name should be 'test_feature'")
+
+	// **CRITICAL: Check if prompt field is present**
+	// Feature resource references SHOULD have full metadata including prompt
+	if feature0["prompt"] != nil {
+		t.Logf("✓ Feature has prompt: %v", feature0["prompt"])
+		assert.Equal(t, "Add a simple test file capability", feature0["prompt"], "Feature prompt should match")
+	} else {
+		t.Error("❌ Feature is missing prompt field (extracted from requirements)")
+	}
+
+	// Verify feature has files
+	featureFiles, ok := feature0["files"].([]interface{})
+	require.True(t, ok, "Feature should have files array")
+	assert.NotEmpty(t, featureFiles, "Feature files should not be empty")
+	assert.Contains(t, featureFiles, "test.txt", "Feature should list test.txt in its files")
+
+	t.Log("✅ Feature resource reference appears in generated prompt with complete metadata!")
+}
+
+// Helper function to get map keys
+func getKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

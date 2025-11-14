@@ -47,16 +47,7 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 	}
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Clean up resources at the end
 	defer func() {

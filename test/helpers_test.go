@@ -328,3 +328,69 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// detectIaCTool detects whether tofu or terraform is available
+// Returns the tool name or skips the test if neither is available
+func detectIaCTool(t *testing.T) string {
+	if _, err := exec.LookPath("tofu"); err == nil {
+		t.Log("Using OpenTofu")
+		return "tofu"
+	}
+	if _, err := exec.LookPath("terraform"); err == nil {
+		t.Log("Using Terraform")
+		return "terraform"
+	}
+	t.Skip("Neither terraform nor tofu available - skipping test")
+	return ""
+}
+
+// runTerraformInit runs terraform/tofu init in the specified directory
+// Enables TF_LOG=INFO to show provider logs
+func runTerraformInit(t *testing.T, iacTool, testDir string) {
+	t.Log("Running init...")
+	cmd := exec.Command(iacTool, "init", "-no-color")
+	cmd.Dir = testDir
+	cmd.Env = append(os.Environ(), "TF_LOG=INFO")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Init output:\n%s", output)
+		t.Fatalf("Init failed: %v", err)
+	}
+}
+
+// runTerraformApply runs terraform/tofu apply in the specified directory
+// Enables TF_LOG=INFO to show provider logs including prompt paths
+// Returns the command output for inspection
+func runTerraformApply(t *testing.T, iacTool, testDir string) []byte {
+	t.Log("Running apply...")
+	cmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color")
+	cmd.Dir = testDir
+	cmd.Env = append(os.Environ(), "TF_LOG=INFO")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Apply output:\n%s", output)
+		t.Fatalf("Apply failed: %v", err)
+	}
+	return output
+}
+
+// runTerraformDestroy runs terraform/tofu destroy in the specified directory
+func runTerraformDestroy(t *testing.T, iacTool, testDir string) {
+	t.Log("Running destroy...")
+	cmd := exec.Command(iacTool, "destroy", "-auto-approve", "-no-color")
+	cmd.Dir = testDir
+	cmd.Env = append(os.Environ(), "TF_LOG=INFO")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Destroy output:\n%s", output)
+		t.Fatalf("Destroy failed: %v", err)
+	}
+}
+
+// setupTerraform detects the IaC tool and runs init
+// Returns the tool name for subsequent commands
+func setupTerraform(t *testing.T, testDir string) string {
+	iacTool := detectIaCTool(t)
+	runTerraformInit(t, iacTool, testDir)
+	return iacTool
+}

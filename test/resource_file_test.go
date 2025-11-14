@@ -253,7 +253,7 @@ resource "tofukit_file" "test" {
 			require.NoError(t, err)
 
 			// Get IaC tool
-			iacTool := getIacTool(t)
+			iacTool := detectIaCTool(t)
 
 			// Init
 			initCmd := exec.Command(iacTool, "init", "-no-color")
@@ -318,7 +318,7 @@ resource "tofukit_file" "test" {
 			require.NoError(t, err)
 
 			// Get IaC tool
-			iacTool := getIacTool(t)
+			iacTool := detectIaCTool(t)
 
 			// Init
 			initCmd := exec.Command(iacTool, "init", "-no-color")
@@ -343,16 +343,5 @@ resource "tofukit_file" "test" {
 			// Check that error message contains expected text
 			assert.Contains(t, string(validateOutput), tt.expectedError, "Error message should mention the validation issue")
 		})
-	}
-}
-
-func getIacTool(t *testing.T) string {
-	if _, err := exec.LookPath("tofu"); err == nil {
-		return "tofu"
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		return "terraform"
-	} else {
-		t.Skip("Neither terraform nor tofu available")
-		return ""
 	}
 }

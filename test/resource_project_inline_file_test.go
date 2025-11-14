@@ -72,16 +72,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 4: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Clean up resources at the end
 	defer func() {
@@ -264,16 +255,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err, "Failed to write initial project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running tofu init...")
@@ -466,16 +448,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 4: Run init
 	t.Log("Running tofu init...")
@@ -682,16 +655,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 4: Run init
 	t.Log("Running tofu init...")
@@ -834,16 +798,7 @@ resource "tofukit_project" "recursive_test" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 4: Run init
 	t.Log("Running tofu init...")
@@ -926,16 +881,7 @@ resource "tofukit_project" "recursive_test" {
 	require.NoError(t, err, "Failed to write initial project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running tofu init...")
@@ -1064,16 +1010,7 @@ resource "tofukit_project" "recursive_test" {
 	require.NoError(t, err, "Failed to write initial project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running tofu init...")
@@ -1213,16 +1150,7 @@ resource "tofukit_project" "recursive_test" {
 	require.NoError(t, err, "Failed to write initial project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running tofu init...")
@@ -1374,16 +1302,7 @@ resource "tofukit_project" "verification_test" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 5: Run init
 	t.Log("Running tofu init...")
@@ -1483,16 +1402,7 @@ resource "tofukit_project" "verification_test" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 5: Run init
 	t.Log("Running tofu init...")
@@ -1608,16 +1518,7 @@ resource "tofukit_project" "verification_test" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Clean up resources at the end
 	defer func() {
@@ -1832,13 +1733,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err)
 
 	// Step 2: Determine which IaC tool to use
-	iacTool := "tofu"
-	if _, err := exec.LookPath("tofu"); err != nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform (tofu not found)")
-	} else {
-		t.Log("Using OpenTofu")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run tofu init
 	t.Log("Running tofu init...")
@@ -2020,16 +1915,7 @@ resource "tofukit_project" "hello_world" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Check for tofu/terraform
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Run init
 	t.Log("Running tofu init...")
@@ -2137,16 +2023,7 @@ resource "tofukit_project" "test_app" {
 	require.NoError(t, err, "Failed to write project.tofu")
 
 	// Step 2: Check if terraform/tofu is available
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-		t.Log("Using OpenTofu")
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-		t.Log("Using Terraform")
-	} else {
-		t.Skip("Neither terraform nor tofu available - skipping test")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Step 3: Run init
 	t.Log("Running init...")
@@ -2241,14 +2118,7 @@ resource "tofukit_project" "test_app" {
 	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
 	require.NoError(t, err, "Failed to write project.tofu")
 
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-	} else {
-		t.Skip("Neither terraform nor tofu available")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Init
 	initCmd := exec.Command(iacTool, "init", "-no-color")
@@ -2340,14 +2210,7 @@ resource "tofukit_project" "app2" {
 	err = os.WriteFile(filepath.Join(testDir, "project.tofu"), []byte(projectTofuContent), 0644)
 	require.NoError(t, err, "Failed to write project.tofu")
 
-	var iacTool string
-	if _, err := exec.LookPath("tofu"); err == nil {
-		iacTool = "tofu"
-	} else if _, err := exec.LookPath("terraform"); err == nil {
-		iacTool = "terraform"
-	} else {
-		t.Skip("Neither terraform nor tofu available")
-	}
+	iacTool := detectIaCTool(t)
 
 	// Init
 	initCmd := exec.Command(iacTool, "init", "-no-color")
