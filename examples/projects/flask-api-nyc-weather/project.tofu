@@ -138,7 +138,7 @@ resource "tofukit_project" "flask_weather" {
     "app.py" = {
       instructions = [
         {
-          prompt = "Create Flask application with /weather and /health endpoints as specified in requirements"
+          prompt = "Implement /weather endpoint as specified. Flask app setup is handled by the stack."
         }
       ]
 
@@ -150,14 +150,6 @@ resource "tofukit_project" "flask_weather" {
       ]
     }
 
-    "requirements.txt" = {
-      instructions = [
-        {
-          prompt = "Create requirements.txt with Flask, requests, python-dotenv, flask-cors with specific versions"
-        }
-      ]
-    }
-
     "README.md" = {
       instructions = [
         {
@@ -165,49 +157,11 @@ resource "tofukit_project" "flask_weather" {
         }
       ]
     }
-
-    ".env.example" = {
-      instructions = [
-        {
-          prompt = "Create example environment file with PORT=5000, FLASK_ENV=development"
-        }
-      ]
-    }
-
-    ".gitignore" = {
-      content = <<-EOF
-      # Python
-      __pycache__/
-      *.py[cod]
-      *$py.class
-      *.so
-      .Python
-      venv/
-      ENV/
-
-      # Flask
-      instance/
-      .env
-
-      # IDE
-      .vscode/
-      .idea/
-      *.swp
-
-      # OS
-      .DS_Store
-      Thumbs.db
-
-      # TofuKit
-      .terraform/
-      *.tfstate
-      *.tfstate.backup
-      EOF
-    }
   }
 
   depends_on = [
-    tofukit_integration.open_meteo,
+    module.openmeteo,
+    module.flask_stack,
     tofukit_feature.nyc_weather
   ]
 }
