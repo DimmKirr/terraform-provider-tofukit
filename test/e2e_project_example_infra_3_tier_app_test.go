@@ -27,6 +27,22 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 	// Step 1: Copy the example configuration files
 	exampleDir := filepath.Join(projectRoot, "examples", "projects", "infra-3-tier-app")
 
+	// Copy the tools directory (required for module references)
+	toolsSourceDir := filepath.Join(projectRoot, "examples", "tools")
+	toolsDestDir := filepath.Join(filepath.Dir(testDir), "tools")
+
+	// Check if tools directory exists and needs to be copied
+	if _, err := os.Stat(toolsSourceDir); err == nil {
+		// Remove existing tools directory in test-output if it exists
+		os.RemoveAll(toolsDestDir)
+
+		// Copy tools directory
+		if err := copyDir(toolsSourceDir, toolsDestDir); err != nil {
+			t.Fatalf("Failed to copy tools directory: %v", err)
+		}
+		t.Logf("✓ Copied tools directory to: %s", toolsDestDir)
+	}
+
 	// Copy the project.tofu
 	projectContent, err := os.ReadFile(filepath.Join(exampleDir, "project.tofu"))
 	if err != nil {
@@ -40,6 +56,13 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 		`output_format         = "json"`,
 		`output_format         = "json"
   output_path           = "output"`, 1)
+
+	// Update module source path to point to the copied tools directory
+	// Original: source = "../../tools/tofukit-tool-opentofu"
+	// New: source = "../tools/tofukit-tool-opentofu" (relative to test-output/<test-name>/)
+	modifiedContent = strings.Replace(modifiedContent,
+		`source = "../../tools/tofukit-tool-opentofu"`,
+		`source = "../tools/tofukit-tool-opentofu"`, 1)
 
 	projectPath := filepath.Join(testDir, "project.tofu")
 	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {

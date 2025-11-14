@@ -122,6 +122,65 @@ resource "tofukit_feature" "architecture_diagram" {
 
 
 # ========================================
+# TOOL MODULES
+# ========================================
+module "tool_opentofu" {
+  source = "../../tools/tofukit-tool-opentofu"
+}
+
+
+# ========================================
+# INFRASTRUCTURE FEATURES
+# ========================================
+resource "tofukit_feature" "infra_app_server" {
+  name = "App Server"
+  requirements = [
+    {
+      name = "Provision App Server"
+      instructions = [{
+        prompt = "Create app server infrastructure using ${module.tool_opentofu.link}"
+      }]
+    },
+    {
+      name = "Link DB"
+      instructions = [{
+        prompt = "Add a tag to the DB containing db host of ${tofukit_feature.infra_database.link}"
+      }]
+    }
+  ]
+}
+
+resource "tofukit_feature" "infra_load_balancer" {
+  name = "Load Balancer"
+  requirements = [
+    {
+      name = "Create an ALB"
+      instructions = [{
+        prompt = "Create an ALB using ${module.tool_opentofu.link}"
+      }]
+    },
+    {
+      name = "Add App Host"
+      instructions = [{
+        prompt = "Add ${tofukit_feature.infra_app_server.link} to a target group"
+      }]
+    }
+  ]
+}
+
+resource "tofukit_feature" "infra_database" {
+  name = "Database"
+  requirements = [
+    {
+      name = "Create an DB"
+      instructions = [{
+        prompt = "Create an rds serverless v2 using latest community module ALB using terraform-aws-modules/rds/aws latest module"
+      }]
+    }
+  ]
+}
+
+# ========================================
 # PROJECT RESOURCE
 # ========================================
 resource "tofukit_project" "three_tier_app" {
@@ -131,76 +190,13 @@ resource "tofukit_project" "three_tier_app" {
 
   model = "haiku"
 
+
+
   # Define infrastructure features inline
   features = {
-    "load_balancer" = {
-      requirements = [
-        {
-          name = "Load Balancer Setup"
-          instructions = [
-            {
-              prompt = "Document the load balancer configuration and setup"
-            }
-          ]
-        }
-      ]
-
-      files = {
-        "load-balancer.md" = {
-          instructions = [
-            {
-              prompt = "Create documentation for the load balancer tier that distributes traffic across web servers"
-            }
-          ]
-        }
-      }
-    }
-
-    "web_server" = {
-      requirements = [
-        {
-          name = "Web Server Configuration"
-          instructions = [
-            {
-              prompt = "Document the web server setup and configuration"
-            }
-          ]
-        }
-      ]
-
-      files = {
-        "web-server.md" = {
-          instructions = [
-            {
-              prompt = "Create documentation for the web server tier that handles HTTP requests and serves content"
-            }
-          ]
-        }
-      }
-    }
-
-    "database" = {
-      requirements = [
-        {
-          name = "Database Setup"
-          instructions = [
-            {
-              prompt = "Document the database configuration"
-            }
-          ]
-        }
-      ]
-
-      files = {
-        "database.md" = {
-          instructions = [
-            {
-              prompt = "Create documentation for the database server (SQL) that stores application data"
-            }
-          ]
-        }
-      }
-    }
+    "load_balancer" = tofukit_feature.infra_load_balancer
+    "web_server" = tofukit_feature.infra_app_server
+    "database" = tofukit_feature.infra_database
 
     # Diagram feature auto-discovers all above features!
     "architecture_diagram" = tofukit_feature.architecture_diagram

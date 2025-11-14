@@ -144,6 +144,47 @@ func (p *ProjectPrompt) ToMarkdown() string {
 }
 
 // BuildProjectPrompt creates a structured prompt from project specification
+// buildFileDetails creates FileInstructions based on whether files are specified
+func buildFileDetails(hasFiles bool) *FileInstructions {
+	if hasFiles {
+		// Files ARE specified - strict mode
+		return &FileInstructions{
+			Description: "IMPORTANT: The specification contains a \"files\" object. This is an EXHAUSTIVE list - you MUST manage ONLY these files:",
+			Rules: []string{
+				"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
+				"**EXHAUSTIVE LIST**: The \"files\" section contains the COMPLETE list of files. Do NOT create any files beyond those listed, even if requirements suggest additional files are needed. All functionality must be implemented within the specified files.",
+				"**NON-NEGOTIABLE**: Files listed in the \"files\" section are MANDATORY. Even if you believe a file shouldn't exist or isn't needed, you MUST create it exactly as specified. If you think main.tf shouldn't exist but it's specified, create main.tf anyway and work around your concerns. The files list is the user's explicit directive and cannot be questioned or skipped.",
+				"Create each file at the exact path specified as a key in the files object (relative to current working directory)",
+				"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
+				"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
+				"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",
+				"IMPORTANT: For generated content, ensure it satisfies ALL instructions AND the verification requirements",
+				"IMPORTANT: Generated files should be production-ready and follow best practices for the file type",
+				"IMPORTANT: If content ends with \\n, the file MUST have a newline at the end. Use echo or printf appropriately",
+				"Remove any existing file files that are NOT in the current specification",
+				"When removing the last file from a directory, also remove the empty directory",
+				"These are template/example files that should be created/updated/removed as specified",
+				"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
+			},
+		}
+	}
+
+	// NO files specified - flexible mode
+	return &FileInstructions{
+		Description: "IMPORTANT: No explicit files are specified. Create files as needed to satisfy the requirements:",
+		Rules: []string{
+			"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
+			"Analyze the requirements and determine what files are needed to implement them fully",
+			"Create appropriate file structure and naming conventions based on best practices for the languages/frameworks involved",
+			"If a path contains directories (e.g., 'src/cli.py'), create the parent directories first",
+			"Generate production-ready, well-documented code that follows best practices",
+			"Ensure all generated content satisfies the requirements AND any verification requirements",
+			"IMPORTANT: Only create files that are necessary to fulfill the requirements - do not create unnecessary files",
+			"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
+		},
+	}
+}
+
 func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt string) *ProjectPrompt {
 	// Extract project info
 	projectInfo := ProjectInfo{
@@ -170,16 +211,38 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		systemPrompt = DefaultSystemPrompt()
 	}
 
-	// Check if this is a fix request
+	// Check if files are specified in the specification
+	hasFiles := false
+	if filesObj, ok := projectSpec["files"].(map[string]interface{}); ok && len(filesObj) > 0 {
+		hasFiles = true
+	}
+
+	// Build instructions - conditional based on whether files are specified
 	instructions := []string{
 		"**CRITICAL - Working Directory**: ALL files must be created directly in the current working directory. DO NOT create any project-name subdirectories. DO NOT use 'cd' commands. The current directory IS the project directory.",
-		"**Managing file files**: If the specification includes \"files\", create these files exactly as specified **in the current working directory** with their exact paths and content. IMPORTANT: All file operations must be performed in the current working directory (use pwd to verify). Never create files in /tmp/ or other directories. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
+	}
+
+	// File handling instructions - different behavior based on whether files are specified
+	if hasFiles {
+		// Files ARE specified - create ONLY those files (exhaustive list)
+		instructions = append(instructions,
+			"**Managing specified files - EXHAUSTIVE LIST**: The specification includes a \"files\" object. This is the COMPLETE and EXHAUSTIVE list of files you must create - do not create any additional files beyond this list. Create these files exactly as specified **in the current working directory** with their exact paths and content. IMPORTANT: All file operations must be performed in the current working directory (use pwd to verify). Never create files in /tmp/ or other directories. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
+			"**Requirements when files are specified**: If the specification also contains \"requirements\", treat them as context and constraints for HOW to implement the specified files. Requirements provide implementation guidance but should NOT result in creating additional files beyond those explicitly listed in the \"files\" section. All requirement logic must be incorporated into the specified files.",
+		)
+	} else {
+		// NO files specified - create files as needed based on requirements
+		instructions = append(instructions,
+			"**Creating files based on requirements**: No explicit files are specified. Create whatever files and directories are needed to fulfill the requirements listed in the \"requirements\" section. Use your expertise to determine the appropriate file structure, naming conventions, and content organization. All paths should be relative to the current working directory - DO NOT create a project-name subdirectory.",
+		)
+	}
+
+	// Common instructions for both cases
+	instructions = append(instructions,
 		"**Analyzing the specification**: Understand all the requirements, kits, and dependencies specified in the JSON",
-		"**Creating files**: Create files and directories as needed (e.g., 'src/cli.py' requires creating 'src/' directory), but all paths are relative to current directory - DO NOT create a project-name directory",
 		"**Implementing all requirements**: Follow each requirement listed in the \"requirements\" section",
 		"**Installing and configuring all kits**: Set up all the tools, frameworks, languages, and methodologies specified in the \"kits\" section",
 		"**Following verification steps**: Ensure each requirement can be verified as specified",
-	}
+	)
 
 	// If this is a fix request, prepend fix instructions
 	if fixRequest, ok := projectSpec["_fix_request"].(map[string]interface{}); ok {
@@ -233,23 +296,7 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 			ProjectContext:   projectContext,
 			Instructions:     instructions,
 			FileOperations:   fileOperations,
-			FileDetails: &FileInstructions{
-				Description: "IMPORTANT: If the specification contains a \"files\" object, you MUST manage these files exactly as specified:",
-				Rules: []string{
-					"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
-					"Create each file at the exact path specified as a key in the files object (relative to current working directory)",
-					"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
-					"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
-					"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",
-					"IMPORTANT: For generated content, ensure it satisfies ALL instructions AND the verification requirements",
-					"IMPORTANT: Generated files should be production-ready and follow best practices for the file type",
-					"IMPORTANT: If content ends with \\n, the file MUST have a newline at the end. Use echo or printf appropriately",
-					"Remove any existing file files that are NOT in the current specification",
-					"When removing the last file from a directory, also remove the empty directory",
-					"These are template/example files that should be created/updated/removed as specified",
-					"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
-				},
-			},
+			FileDetails: buildFileDetails(hasFiles),
 			Guidelines: []string{
 				"Follow the exact specifications provided in the JSON",
 				"Create file files exactly as specified without modification",

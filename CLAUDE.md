@@ -316,31 +316,40 @@ This approach:
 - Bundles capabilities (files + kits + verifications) into reusable components
 - Can be used as standalone registry entries or inline definitions in projects
 - **Key properties**:
-  - `prompt` - What the feature does (LLM-facing requirement)
-  - `constraints` - Implementation constraints (what NOT to do)
-  - `files` - Map of files keyed by path
-  - `kits` - Kit dependencies for this feature
-  - `verifications` - Verification commands for this feature
+  - `name` (required) - Unique name for the feature
+  - `description` (optional) - Description of the feature
+  - `requirements` (required, array) - At least one requirement defining what the feature does
+    - Each requirement has: `name` (required), `instructions` (optional array with `prompt` and `constraints`), `verifications` (optional array)
+  - `files` (optional) - Map of files keyed by path
+  - `kits` (optional) - Kit dependencies for this feature
+  - `verifications` (optional) - Feature-level verification commands
 - **Usage patterns**:
   - **Standalone resource**: Define once, reference in multiple projects via `tofukit_feature.name`
   - **Inline definition**: Define directly in project's `features` map
 - **Registry behavior**: Features save themselves to registry on Create/Update, enabling cross-project reuse
-- **Validation**: Must have at least one of: files, kits, or verifications
+- **Validation**: Must have at least one `requirement`
 - **Example**:
   ```hcl
   resource "tofukit_feature" "logging" {
-    name   = "structured-logging"
-    prompt = "Add structured logging capability"
+    name = "structured-logging"
+    description = "Structured logging capability"
+
+    requirements = [{
+      name = "Logging Setup"
+      instructions = [{
+        prompt = "Add structured logging capability"
+        constraints = ["Do not use print statements"]
+      }]
+      verifications = [{
+        command = "python -m pytest tests/test_logger.py"
+      }]
+    }]
 
     files = {
       "logger.py" = {
         content = "# Logging configuration\n"
       }
     }
-
-    verifications = [{
-      command = "python -m pytest tests/test_logger.py"
-    }]
   }
 
   resource "tofukit_project" "app" {
