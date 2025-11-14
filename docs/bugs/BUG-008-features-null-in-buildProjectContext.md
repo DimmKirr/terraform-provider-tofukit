@@ -8,12 +8,19 @@
 
 ## Summary
 
-The `buildProjectContext()` function receives `data.Features` as Null or Unknown, causing it to skip the entire features processing block. This results in `project_context` sent to Claude missing the `features` field entirely, even though features are properly defined in the Terraform configuration and successfully processed by other functions like `collectFeatureKitIDs()`.
+**UPDATE 2025-11-14:** Fast tests with `dry_run` reveal features ARE included in `_project_context` but with **incomplete metadata** - the `prompt` field is missing.
 
-**Impact:** Claude cannot introspect project features, leading to:
-- Diagram generation using generic names instead of actual feature names
-- Lost feature metadata that should guide LLM generation
-- Broken feature introspection system
+The `buildProjectContext()` function includes features in the output but does not extract all feature metadata fields. Specifically:
+- ✅ Feature `name` is included
+- ✅ Feature `files` array is included
+- ❌ Feature `prompt` is **MISSING**
+- ❌ Feature `constraints` likely **MISSING**
+- ❌ Feature `kits` likely **MISSING**
+
+**Impact:** Claude cannot introspect complete feature metadata, leading to:
+- Diagram generation using generic names instead of feature prompts
+- Lost feature context that should guide LLM generation
+- Incomplete feature introspection system
 
 ## Root Cause
 
@@ -194,9 +201,10 @@ Cannot verify the fix works because:
 ### Immediate Actions
 
 1. ✅ Add explicit Null/Unknown warning logs to `buildProjectContext()`
-2. ⏸️ Switch from file logging to `tflog` (Terraform's native logging)
-3. ⏸️ Add breakpoint debugging or panic-based logging to confirm execution
-4. ⏸️ Compare `data` values between `buildOutputData()` and `buildProjectContext()` calls
+2. ✅ **DONE: Added fast tests with dry_run** - Can now reproduce in <1 second
+3. 🔍 **Current Finding:** Features ARE included in `_project_context` but **missing `prompt` field**
+4. ⏸️ Fix feature metadata extraction in `buildProjectContext()` to include `prompt` field
+5. ⏸️ Verify fix with fast tests: `go test -v -run "GeneratePromptSuccess" ./test/`
 
 ### Investigation Paths
 
@@ -221,18 +229,52 @@ Cannot verify the fix works because:
 
 ## Testing
 
-### Reproduce
+### Fast Reproduction (< 1 second with dry_run)
+
+**NEW: Fast test added with dry_run support!**
 
 ```bash
-# Diagram test (uses features)
+# Fast test - skips LLM execution, just validates prompt generation
+go test -v -run "TestResourceFeatureInlineGeneratePromptSuccess" ./test/ -timeout 30s
+
+# All three fast tests (single feature, precedence, multiple features)
+go test -v -run "GeneratePromptSuccess" ./test/ -timeout 1m
+```
+
+**These tests use `dry_run = true` to skip Claude execution and complete in <1 second each.**
+
+**Test Results:**
+- ✅ `TestProjectPrecedenceOverFeatureGeneratePromptSuccess` - PASSES (features present but incomplete)
+- ✅ `TestResourceFeatureMergeMultipleFeaturesGeneratePromptSuccess` - PASSES (features present but incomplete)
+- ❌ `TestResourceFeatureInlineGeneratePromptSuccess` - **FAILS** - Catches missing `prompt` field in feature
+
+**Actual Output from Failing Test:**
+```json
+{
+  "_project_context": {
+    "features": [
+      {
+        "files": ["hello.txt"],
+        "name": "hello"
+        // ❌ MISSING: "prompt" field
+      }
+    ]
+  }
+}
+```
+
+**Expected:** `features[0].prompt == "Add hello greeting capability"`
+**Actual:** `features[0].prompt == nil`
+
+### Slow Reproduction (10+ seconds with full LLM execution)
+
+```bash
+# Diagram test (uses features) - runs actual Claude execution
 go test -v -run "^TestE2EProjectExampleInfra3TierAppSuccess$" ./test/ -timeout 10m
 
 # Check Claude prompt
 jq '.request.specification._project_context' test-output/.../claude-prompt-attempt1-*.json
 ```
-
-**Expected:** `features` field with 4 feature objects
-**Actual:** No `features` field, only `kits` and `project_info`
 
 ### Verify Fix
 
@@ -240,6 +282,7 @@ Once resolved, `project_context` should contain:
 ```json
 {
   "features": [
+    {"name": "hello", "prompt": "Add hello greeting capability", "files": ["hello.txt"]},
     {"name": "load_balancer", "prompt": "...", "files": [...], "kits": [...]},
     {"name": "web_server", "prompt": "...", "files": [...], "kits": [...]},
     {"name": "database", "prompt": "...", "files": [...], "kits": [...]},

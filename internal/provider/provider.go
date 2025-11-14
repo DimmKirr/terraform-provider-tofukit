@@ -38,6 +38,7 @@ type TofukitProviderModel struct {
 	Debug                      types.Bool   `tfsdk:"debug"`
 	MaxRetries                 types.Int64  `tfsdk:"max_retries"`
 	DangerouslySkipPermissions types.Bool   `tfsdk:"dangerously_skip_permissions"`
+	DryRun                     types.Bool   `tfsdk:"dry_run"`
 }
 
 func (p *TofukitProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -81,6 +82,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Skip Claude CLI permission prompts (default: true). When enabled, Claude can create/modify files without prompting. When combined with --add-dir, Claude's access is still restricted to the output directory.",
 				Optional:            true,
 			},
+			"dry_run": schema.BoolAttribute{
+				MarkdownDescription: "Generate prompt JSON and write debug files but skip LLM execution (default: false). Useful for testing prompt generation without waiting for LLM responses.",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -103,6 +108,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	debug := false
 	maxRetries := 3                    // Default to 3 verification retry attempts
 	dangerouslySkipPermissions := true // Default to true for backward compatibility
+	dryRun := false                    // Default to false - execute LLM normally
 
 	if !data.OutputFormat.IsNull() {
 		outputFormat = data.OutputFormat.ValueString()
@@ -137,6 +143,10 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if !data.DangerouslySkipPermissions.IsNull() {
 		dangerouslySkipPermissions = data.DangerouslySkipPermissions.ValueBool()
+	}
+
+	if !data.DryRun.IsNull() {
+		dryRun = data.DryRun.ValueBool()
 	}
 
 	// Create LLM executor based on type
@@ -191,6 +201,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		Debug:                      debug,
 		MaxRetries:                 maxRetries,
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
+		DryRun:                     dryRun,
 		Registry:                   registry.New(),
 		LLMExecutor:                llmExecutor,
 	}
@@ -239,6 +250,7 @@ type ProviderData struct {
 	Debug                      bool
 	MaxRetries                 int
 	DangerouslySkipPermissions bool
+	DryRun                     bool
 	Registry                   *registry.Registry
 	LLMExecutor                llm.LLMExecutor
 }
@@ -286,6 +298,11 @@ func (p *ProviderData) GetDangerouslySkipPermissions() bool {
 // GetLLMExecutor returns the LLM executor
 func (p *ProviderData) GetLLMExecutor() llm.LLMExecutor {
 	return p.LLMExecutor
+}
+
+// GetDryRun returns whether dry run mode is enabled
+func (p *ProviderData) GetDryRun() bool {
+	return p.DryRun
 }
 
 // validateUnbufferAvailable checks if the unbuffer command is available in PATH

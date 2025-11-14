@@ -849,9 +849,9 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	driftedFiles := []string{}
 
 	tflog.Debug(ctx, "=== READ: STARTING DRIFT DETECTION ===", map[string]interface{}{
-		"project_path":    projectPath,
-		"files_is_null":   data.Files.IsNull(),
-		"files_elements":  len(data.Files.Elements()),
+		"project_path":     projectPath,
+		"files_is_null":    data.Files.IsNull(),
+		"files_elements":   len(data.Files.Elements()),
 		"will_check_drift": projectPath != "" && !data.Files.IsNull(),
 	})
 
@@ -973,9 +973,9 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 		}
 
 		tflog.Debug(ctx, "=== READ: DRIFT CHECK COMPLETED ===", map[string]interface{}{
-			"files_checked":   len(filesMap),
-			"drifted_count":   len(driftedFiles),
-			"drifted_files":   driftedFiles,
+			"files_checked": len(filesMap),
+			"drifted_count": len(driftedFiles),
+			"drifted_files": driftedFiles,
 		})
 	}
 
@@ -1257,10 +1257,10 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 	// Add drift context if update triggered by drift
 	tflog.Debug(ctx, "=== UPDATE: BEFORE DRIFT INSTRUCTIONS ===", map[string]interface{}{
-		"isDriftTriggered":        isDriftTriggered,
-		"drifted_files_null":      state.DriftedFiles.IsNull(),
-		"drifted_files_unknown":   state.DriftedFiles.IsUnknown(),
-		"enriched_files_count":    len(enrichedFiles),
+		"isDriftTriggered":      isDriftTriggered,
+		"drifted_files_null":    state.DriftedFiles.IsNull(),
+		"drifted_files_unknown": state.DriftedFiles.IsUnknown(),
+		"enriched_files_count":  len(enrichedFiles),
 	})
 
 	if isDriftTriggered {
@@ -2235,15 +2235,18 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 // If PlannedPromptJSON is available (from plan phase), it uses that exact prompt
 // Otherwise, it builds the prompt from outputData (legacy path)
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
-	// Check if debug mode is enabled
+	// Check if debug mode and dry_run are enabled
 	debug := false
 	dangerouslySkipPermissions := false
+	dryRun := false
 	if provData, ok := r.ProviderData.(interface {
 		GetDebug() bool
 		GetDangerouslySkipPermissions() bool
+		GetDryRun() bool
 	}); ok {
 		debug = provData.GetDebug()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
+		dryRun = provData.GetDryRun()
 	}
 
 	// Get system prompt from resource data
@@ -2295,20 +2298,57 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		})
 	}
 
-	// Execute with the prompt
-	status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, mergedFiles, maxRetries)
-	if err != nil {
-		// Execution or verification failed
-		data.ExecutionStatus = types.StringValue("failed")
-		if report != nil && !report.AllPassed {
-			// Verification failed after retries
-			data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed after %d attempts:\n%s", maxRetries, report.GetFailureSummary()))
-			data.ExecutionStatus = types.StringValue("verification_failed")
-		} else {
-			// Execution failed
-			data.ExecutionError = types.StringValue(err.Error())
+	// Execute with the prompt (or skip if dry_run is enabled)
+	if dryRun {
+		// Dry run mode: Skip LLM execution but still write debug files
+		tflog.Info(ctx, "Dry run mode enabled - skipping LLM execution")
+
+		// Mock successful execution status
+		status = &claude.ExecutionStatus{
+			State:       "completed",
+			StartedAt:   time.Now().Format(time.RFC3339),
+			CompletedAt: time.Now().Format(time.RFC3339),
+			ProjectPath: outputPath,
+			Error:       "",
 		}
-		return fmt.Errorf("Claude Code execution failed: %w", err)
+
+		// Create empty verification report (all passed)
+		report = &files.VerificationReport{
+			AllPassed: true,
+		}
+
+		// Write debug files if debug is enabled
+		if debug {
+			debugDir := filepath.Join(outputPath, ".debug")
+			if err := os.MkdirAll(debugDir, 0755); err != nil {
+				tflog.Warn(ctx, "Failed to create debug directory", map[string]interface{}{"error": err.Error()})
+			} else {
+				// Write prompt JSON
+				timestamp := time.Now().Format("20060102-150405")
+				promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt1-%s.json", timestamp))
+				if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err != nil {
+					tflog.Warn(ctx, "Failed to write prompt JSON", map[string]interface{}{"error": err.Error()})
+				} else {
+					tflog.Info(ctx, "Wrote prompt JSON for dry run", map[string]interface{}{"path": promptPath})
+				}
+			}
+		}
+	} else {
+		// Normal execution: run LLM
+		status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, mergedFiles, maxRetries)
+		if err != nil {
+			// Execution or verification failed
+			data.ExecutionStatus = types.StringValue("failed")
+			if report != nil && !report.AllPassed {
+				// Verification failed after retries
+				data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed after %d attempts:\n%s", maxRetries, report.GetFailureSummary()))
+				data.ExecutionStatus = types.StringValue("verification_failed")
+			} else {
+				// Execution failed
+				data.ExecutionError = types.StringValue(err.Error())
+			}
+			return fmt.Errorf("Claude Code execution failed: %w", err)
+		}
 	}
 
 	// Update the model with execution results
@@ -4554,9 +4594,9 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 	projectPath := data.ProjectPath.ValueString()
 
 	tflog.Debug(ctx, "=== computeAndStoreFileHashes STARTED ===", map[string]interface{}{
-		"project_path":    projectPath,
-		"merged_files":    len(mergedFiles),
-		"files_is_null":   data.Files.IsNull(),
+		"project_path":     projectPath,
+		"merged_files":     len(mergedFiles),
+		"files_is_null":    data.Files.IsNull(),
 		"files_is_unknown": data.Files.IsUnknown(),
 	})
 
@@ -4703,9 +4743,9 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 	driftedPaths []string,
 ) []schemas.FileModelWithPath {
 	tflog.Debug(ctx, "=== addDriftInstructions STARTED ===", map[string]interface{}{
-		"files_count":      len(files),
-		"drifted_paths":    driftedPaths,
-		"drifted_count":    len(driftedPaths),
+		"files_count":   len(files),
+		"drifted_paths": driftedPaths,
+		"drifted_count": len(driftedPaths),
 	})
 
 	// Build drift map for O(1) lookup
@@ -4718,9 +4758,9 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 	modifiedCount := 0
 	for i, file := range files {
 		tflog.Debug(ctx, "=== addDriftInstructions: Checking file ===", map[string]interface{}{
-			"file_path":       file.Path,
-			"is_drifted":      driftMap[file.Path],
-			"existing_instr":  len(file.Instructions),
+			"file_path":      file.Path,
+			"is_drifted":     driftMap[file.Path],
+			"existing_instr": len(file.Instructions),
 		})
 
 		if driftMap[file.Path] {
@@ -4739,8 +4779,8 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 			}
 
 			tflog.Debug(ctx, "=== addDriftInstructions: Adding drift instruction ===", map[string]interface{}{
-				"path":            file.Path,
-				"drift_prompt":    driftInstruction.Prompt.ValueString(),
+				"path":         file.Path,
+				"drift_prompt": driftInstruction.Prompt.ValueString(),
 			})
 
 			// Prepend drift instruction (highest priority)
@@ -4751,8 +4791,8 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 			modifiedCount++
 
 			tflog.Debug(ctx, "=== addDriftInstructions: After adding instruction ===", map[string]interface{}{
-				"path":                file.Path,
-				"new_instr_count":     len(files[i].Instructions),
+				"path":            file.Path,
+				"new_instr_count": len(files[i].Instructions),
 			})
 		}
 	}
