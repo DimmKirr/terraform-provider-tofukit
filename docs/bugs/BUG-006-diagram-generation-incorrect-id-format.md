@@ -1,14 +1,17 @@
-# BUG-006: Diagram Generation Uses Wrong ID Format
+# BUG-006: Diagram Generation Missing Feature Names
 
-**Status:** Open
-**Priority:** Medium
+**Status:** Open - In Progress
+**Priority:** High
 **Discovered:** 2025-11-13
+**Updated:** 2025-11-14
 **Affects Tests:**
 - TestE2EProjectExampleInfra3TierAppSuccess
 
 ## Summary
 
-When generating draw.io diagrams, Claude creates IDs using snake_case (e.g., `id="lb"`) instead of the expected format that test assertions check for (e.g., `"load_balancer"`). Additionally, the PNG export file `architecture.drawio.png` is not being generated.
+When generating draw.io diagrams, Claude creates generic labels ("Load Balancer", "Web Server", "Database") derived from the project description instead of using actual feature names from the Terraform configuration ("load_balancer", "web_server", "database"). This occurs because `project_context` sent to Claude is missing the `features` field entirely.
+
+**Root Cause:** `data.Features` is Null or Unknown when `buildProjectContext()` is called during Create/Update, causing the features processing block to be skipped entirely.
 
 ## How to Reproduce
 
@@ -18,92 +21,134 @@ go test -v -run "^TestE2EProjectExampleInfra3TierAppSuccess$" ./test/ -timeout 1
 ```
 
 **Expected Behavior:**
-1. Generated XML diagram should contain specific IDs that match the architecture components:
-   - `"load_balancer"` for load balancer component
-   - `"web_server"` for web server components
-   - `"database"` for database component
+1. `project_context` sent to Claude should contain:
+   ```json
+   {
+     "features": [
+       {"name": "load_balancer", "prompt": "Configure load balancer infrastructure"},
+       {"name": "web_server", "prompt": "Setup web server tier"},
+       {"name": "database", "prompt": "Configure database tier"},
+       {"name": "architecture_diagram", "prompt": "Generate architecture diagram..."}
+     ],
+     "kits": [{"id": "tool.drawio"}],
+     "project_info": {...}
+   }
+   ```
 
-2. PNG file `architecture.drawio.png` should be generated from the XML diagram
+2. Claude should generate diagram with IDs/labels matching feature names
 
 **Actual Behavior:**
-1. XML diagram uses human-readable labels but abbreviated IDs:
-   - Uses `id="lb"` instead of full identifier
-   - Uses `id="ws1"`, `id="ws2"`, `id="ws3"` for web servers
-   - Uses `id="db"` for database
-   - Test assertions fail looking for full names in the XML
+1. `project_context` sent to Claude only contains:
+   ```json
+   {
+     "kits": [{"id": "tool.drawio"}],
+     "project_info": {
+       "description": "3-tier infrastructure diagram example with load balancer, web server, and database",
+       ...
+     }
+     // ❌ NO "features" field
+   }
+   ```
 
-2. PNG file is not generated:
-   ```
-   Error: unable to find file ".../output/architecture.drawio.png"
-   ```
+2. Claude generates diagram using generic names from project description:
+   - "Load Balancer" instead of "load_balancer"
+   - "Web Server 1/2/3" instead of "web_server"
+   - "Primary Database" instead of "database"
 
 **Test Output:**
 ```
-Error: "<?xml version=\"1.0\"...Load Balancer..." does not contain "load_balancer"
-Error: ...does not contain "web_server"
-Error: ...does not contain "database"
-Error: unable to find file ".../architecture.drawio.png"
+Error: "...Load Balancer..." does not contain "load_balancer"
+Error: "...Web Server..." does not contain "web_server"
+Error: "...Database..." does not contain "database"
 ```
+
+## Root Cause Investigation
+
+### Key Finding: Features Are Null/Unknown in buildProjectContext()
+
+**Evidence:**
+1. `project_context` HAS `kits` but MISSING `features`
+2. Kits are added unconditionally (line 3052)
+3. Features are only added if `!data.Features.IsNull() && !data.Features.IsUnknown()` (line 2882)
+4. Therefore: `data.Features.IsNull()` or `.IsUnknown()` must be TRUE
+
+### Mystery: Features Are Populated in Other Functions
+
+`collectFeatureKitIDs()` debug logs show:
+```
+collectFeatureKitIDs: Features is basetypes.ObjectValue with 4 attributes
+collectFeatureKitIDs: Processing feature 'load_balancer' from ObjectValue
+collectFeatureKitIDs: Processing feature 'web_server' from ObjectValue
+collectFeatureKitIDs: Processing feature 'architecture_diagram' from ObjectValue
+collectFeatureKitIDs: Processing feature 'database' from ObjectValue
+```
+
+**This proves features ARE populated as `basetypes.ObjectValue` when `collectFeatureKitIDs()` is called.**
+
+### Theory: Execution Timing Issue
+
+**Hypothesis:** `buildProjectContext()` and `collectFeatureKitIDs()` are called at different times or with different `data` values:
+- `collectFeatureKitIDs()`: Called from `buildOutputData()` → features are populated
+- `buildProjectContext()`: Called separately → features are Null/Unknown
+
+**Supporting Evidence:**
+- Both functions are called from different code paths
+- `buildOutputData()` is called from Read(), Create(), Update()
+- `buildProjectContext()` is only called from Create() and Update()
+- Debug logs show `collectFeatureKitIDs()` executes, but NO logs from `buildProjectContext()`
 
 ## Files Involved
 
 **Test File:**
-- `/Users/dmitry/dev/dimmkirr/terraform-provider-tofukit/test/e2e_project_example_infra_3_tier_app_test.go:126-149`
-  - Lines 126-128: XML content assertions checking for component IDs
-  - Line 143: PNG file existence check
-  - Line 149: PNG content validation
+- `/test/e2e_project_example_infra_3_tier_app_test.go:126-128`
+  - Lines checking for feature names in XML
 
 **Provider Code:**
-- Likely in diagram generation logic (Claude prompt or post-processing)
-- May involve XML parsing/generation code
-- PNG export functionality
+- `/internal/resources/project.go`
+  - Line 643-650: Create() calls `buildProjectContext()`
+  - Line 1386-1399: Update() calls `buildProjectContext()`
+  - Line 2853-3073: `buildProjectContext()` implementation
+  - Line 2882: Conditional check that skips features if Null/Unknown
+  - Line 3028-3053: Kits added unconditionally (why diagram test has kits)
 
-## Top 3 Theories for Fix
+**Terraform Config:**
+- `/examples/projects/infra-3-tier-app/project.tofu:136-212`
+  - Defines 4 features: load_balancer, web_server, database, architecture_diagram
 
-### Theory 1: Test Assertions Are Too Strict
-**Likelihood:** High
-**Reasoning:** The XML uses short IDs (`lb`, `ws1`, `db`) which are valid but don't match full names. Tests expect full identifiers like `"load_balancer"`.
+## Investigation Progress
 
-**Potential Fix:**
-- Update test assertions to check for the actual ID format used (`id="lb"`, `id="ws1"`, `id="db"`)
-- OR update test to check for the human-readable values instead (`value="Load Balancer"`)
-- Tests should match the actual output format, not assume a specific ID scheme
+### Attempted Fix (Incomplete)
 
-### Theory 2: Claude Prompt Needs to Specify ID Format
-**Likelihood:** Medium
-**Reasoning:** Claude is generating valid diagrams but using abbreviated IDs. The prompt may not specify the required ID format.
+Added `basetypes.ObjectValue` handling to `buildProjectContext()` following pattern from commit 8c1e0ec (lines 2959-3021).
 
-**Potential Fix:**
-- Update the system prompt or requirement instructions to specify: "Use full component names as IDs (e.g., `id=\"load_balancer\"` not `id=\"lb\"`)"
-- Add examples showing the expected ID format
-- Add verification step that checks ID format matches requirements
+**Status:** Fix implemented but NOT verified because `buildProjectContext()` appears to not be executing or receiving Null features.
 
-### Theory 3: PNG Export Not Implemented
-**Likelihood:** High
-**Reasoning:** The draw.io XML is generated correctly, but there's no code to convert it to PNG format.
+### Debugging Blockers
 
-**Potential Fix:**
-- Implement PNG export using draw.io CLI tools or libraries
-- Add a post-processing step after XML generation that:
-  1. Checks if draw.io CLI is available
-  2. Runs: `drawio --export --format png --output architecture.drawio.png architecture.drawio.xml`
-  3. Handles case where draw.io is not installed (skip PNG generation with warning)
-- Alternative: Use headless Chrome/Puppeteer to render the XML as PNG
-- Alternative: Make PNG generation optional and update test to check XML only
+1. **No Create()/Update() logs appear** despite adding extensive debug logging
+2. Cannot confirm if `buildProjectContext()` is actually being called
+3. Cannot confirm the actual state of `data.Features` when called
+4. File-based debug logging works for Read() but not Create()/Update()
 
-## Related Code Locations
+### Comparison with Working Code
 
-**Diagram Generation:**
-- Likely in project execution flow when requirements include diagram generation
-- May be in Claude prompt templates
-- XML parsing/validation logic
+`collectFeatureKitIDs()` successfully processes `basetypes.ObjectValue` features. The same pattern was added to `buildProjectContext()` but cannot verify it's working.
 
-**PNG Export:**
-- May need new implementation (doesn't exist yet)
-- Would require external tool (draw.io CLI) or library integration
+## Next Steps
+
+1. ✅ Add explicit Null/Unknown logging to `buildProjectContext()`
+2. ⏸️ Investigate why Create()/Update() debug logs don't appear
+3. ⏸️ Determine execution timing difference between `buildProjectContext()` and `collectFeatureKitIDs()`
+4. ⏸️ Find why `data.Features` is Null in one context but populated in another
+
+## Related Issues
+
+**See Also:** BUG-008 - Features missing from project_context in buildProjectContext()
 
 ## Additional Context
 
-- The XML diagram itself is valid and contains all required components
-- The issue is with ID naming convention and missing PNG export
-- This is a test expectation mismatch combined with missing feature (PNG export)
+- System prompt tells Claude that `project_context` will contain features
+- Requirement instructs Claude to "introspect project_context"
+- But actual `project_context` data has no features field
+- Claude only has project description: "3-tier infrastructure diagram example with load balancer, web server, and database"
+- Claude generates reasonable names from description text since no feature metadata available

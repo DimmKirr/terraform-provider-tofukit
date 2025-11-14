@@ -484,7 +484,15 @@ func (r *ProjectResourceFinal) ModifyPlan(ctx context.Context, req resource.Modi
 }
 
 func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	// Write debug to file
+	// DEBUG: Log at very start of Create()
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "\n=== Create() ENTRY ===\n")
+		defer func() {
+			fmt.Fprintf(debugFile, "=== Create() EXIT ===\n")
+			debugFile.Close()
+		}()
+	}
 
 	var data ProjectModelFinal
 
@@ -588,11 +596,10 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	data.ExecutionStarted = types.StringValue(time.Now().Format(time.RFC3339))
 
 	// DEBUG: Check kits in Create
-	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if debugFile != nil {
-		fmt.Fprintf(debugFile, "\n=== Create method ===\n")
-		fmt.Fprintf(debugFile, "Create: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
-		debugFile.Close()
+	if debugFile2, err := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil && debugFile2 != nil {
+		fmt.Fprintf(debugFile2, "\n=== Create method ===\n")
+		fmt.Fprintf(debugFile2, "Create: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
+		debugFile2.Close()
 	}
 
 	// Scan for URIs and build resource registry
@@ -633,7 +640,29 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	outputData := r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
 
 	// Build project context for feature introspection
+	// DEBUG: Log before buildProjectContext call
+	if debugFile3, err3 := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err3 == nil && debugFile3 != nil {
+		fmt.Fprintf(debugFile3, "Create(): About to call buildProjectContext\n")
+		fmt.Fprintf(debugFile3, "Create(): Features.IsNull()=%v, IsUnknown()=%v\n", data.Features.IsNull(), data.Features.IsUnknown())
+		debugFile3.Close()
+	}
+
 	projectContext := r.buildProjectContext(ctx, data)
+
+	// DEBUG: Log after buildProjectContext returns
+	if debugFile4, err4 := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err4 == nil && debugFile4 != nil {
+		if projectContext != nil {
+			fmt.Fprintf(debugFile4, "Create(): buildProjectContext returned, has features: %v\n", projectContext["features"] != nil)
+			if featuresData, ok := projectContext["features"]; ok {
+				fmt.Fprintf(debugFile4, "Create(): features type: %T, count: %d\n", featuresData, len(featuresData.([]map[string]interface{})))
+			} else {
+				fmt.Fprintf(debugFile4, "Create(): NO FEATURES in returned context!\n")
+			}
+		} else {
+			fmt.Fprintf(debugFile4, "Create(): buildProjectContext returned nil\n")
+		}
+		debugFile4.Close()
+	}
 
 	// Add project context to output data
 	if projectContext != nil && len(projectContext) > 0 {
@@ -1114,6 +1143,16 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 }
 
 func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	// DEBUG: Log at very start of Update()
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		fmt.Fprintf(debugFile, "\n=== Update() ENTRY ===\n")
+		defer func() {
+			fmt.Fprintf(debugFile, "=== Update() EXIT ===\n")
+			debugFile.Close()
+		}()
+	}
+
 	var data ProjectModelFinal
 	var state ProjectModelFinal
 
@@ -1348,7 +1387,27 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 		outputData = r.buildOutputDataWithFiles(ctx, data, enrichedFiles)
 
 		// Build project context for feature introspection
+		// DEBUG: Log before buildProjectContext call
+		if debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); debugFile != nil {
+			fmt.Fprintf(debugFile, "Update(): About to call buildProjectContext\n")
+			fmt.Fprintf(debugFile, "Update(): Features.IsNull()=%v, IsUnknown()=%v\n", data.Features.IsNull(), data.Features.IsUnknown())
+			debugFile.Close()
+		}
+
 		projectContext := r.buildProjectContext(ctx, data)
+
+		// DEBUG: Log after buildProjectContext returns
+		if debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); debugFile != nil {
+			if projectContext != nil {
+				fmt.Fprintf(debugFile, "Update(): buildProjectContext returned, has features: %v\n", projectContext["features"] != nil)
+				if featuresData, ok := projectContext["features"]; ok {
+					fmt.Fprintf(debugFile, "Update(): features type: %T\n", featuresData)
+				}
+			} else {
+				fmt.Fprintf(debugFile, "Update(): buildProjectContext returned nil\n")
+			}
+			debugFile.Close()
+		}
 
 		// Add project context to output data
 		if projectContext != nil && len(projectContext) > 0 {
@@ -2805,9 +2864,35 @@ func (r *ProjectResourceFinal) buildProjectContext(
 	}
 
 	// Collect features metadata
+	// DEBUG logging to file WITH WARNING IF NULL/UNKNOWN
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if debugFile != nil {
+		defer debugFile.Close()
+		fmt.Fprintf(debugFile, "\n=== buildProjectContext START ===\n")
+		fmt.Fprintf(debugFile, "buildProjectContext: Features.IsNull()=%v, IsUnknown()=%v\n", data.Features.IsNull(), data.Features.IsUnknown())
+
+		if data.Features.IsNull() {
+			fmt.Fprintf(debugFile, "⚠️  buildProjectContext: data.Features IS NULL - will NOT add features to context!\n")
+		}
+		if data.Features.IsUnknown() {
+			fmt.Fprintf(debugFile, "⚠️  buildProjectContext: data.Features IS UNKNOWN - will NOT add features to context!\n")
+		}
+	}
+
 	if !data.Features.IsNull() && !data.Features.IsUnknown() {
 		underlyingVal := data.Features.UnderlyingValue()
+
+		if debugFile != nil {
+			fmt.Fprintf(debugFile, "buildProjectContext: Features type: %T\n", underlyingVal)
+		}
+
+		tflog.Debug(ctx, "[DEBUG-BUG-006] buildProjectContext: features underlying type", map[string]interface{}{
+			"type": fmt.Sprintf("%T", underlyingVal),
+		})
 		if featuresMap, ok := underlyingVal.(types.Map); ok {
+			tflog.Debug(ctx, "[DEBUG-BUG-006] buildProjectContext: successfully cast to types.Map", map[string]interface{}{
+				"num_features": len(featuresMap.Elements()),
+			})
 			featuresMetadata := []map[string]interface{}{}
 
 			for featureName, featureValue := range featuresMap.Elements() {
@@ -2865,6 +2950,80 @@ func (r *ProjectResourceFinal) buildProjectContext(
 
 			if len(featuresMetadata) > 0 {
 				projectContext["features"] = featuresMetadata
+			}
+		} else {
+			tflog.Warn(ctx, "[DEBUG-BUG-006] buildProjectContext: features type cast to types.Map FAILED - checking for basetypes.ObjectValue", map[string]interface{}{
+				"actual_type": fmt.Sprintf("%T", underlyingVal),
+			})
+
+			// Try basetypes.ObjectValue (this is what Dynamic often returns when reading from state)
+			if fObj, objOk := underlyingVal.(basetypes.ObjectValue); objOk {
+				tflog.Debug(ctx, "[DEBUG-BUG-006] buildProjectContext: successfully cast to basetypes.ObjectValue", map[string]interface{}{
+					"num_attributes": len(fObj.Attributes()),
+				})
+				featuresMetadata := []map[string]interface{}{}
+
+				for featureName, featureValue := range fObj.Attributes() {
+					feature, err := r.parseFeature(ctx, featureValue)
+					if err != nil {
+						tflog.Warn(ctx, "Failed to parse feature for context (ObjectValue)", map[string]interface{}{
+							"feature_name": featureName,
+							"error":        err.Error(),
+						})
+						continue
+					}
+
+					if feature == nil {
+						continue
+					}
+
+					featureMeta := map[string]interface{}{
+						"name": featureName,
+					}
+
+					// Add prompt from requirements if present
+					if len(feature.Requirements) > 0 {
+						// Get the prompt from the first requirement's first instruction
+						if len(feature.Requirements[0].Instructions) > 0 {
+							if !feature.Requirements[0].Instructions[0].Prompt.IsNull() {
+								featureMeta["prompt"] = feature.Requirements[0].Instructions[0].Prompt.ValueString()
+							}
+						}
+					}
+
+					// Add feature files if present
+					if !feature.Files.IsNull() && !feature.Files.IsUnknown() {
+						files := []string{}
+						for path := range feature.Files.Elements() {
+							files = append(files, path)
+						}
+						if len(files) > 0 {
+							featureMeta["files"] = files
+						}
+					}
+
+					// Add feature kits if present
+					if !feature.Kits.IsNull() && !feature.Kits.IsUnknown() {
+						kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+						if len(kitIDs) > 0 {
+							featureMeta["kits"] = kitIDs
+						}
+					}
+
+					featuresMetadata = append(featuresMetadata, featureMeta)
+				}
+
+				if len(featuresMetadata) > 0 {
+					projectContext["features"] = featuresMetadata
+					tflog.Debug(ctx, "[DEBUG-BUG-006] buildProjectContext: added features to project_context from ObjectValue", map[string]interface{}{
+						"feature_count": len(featuresMetadata),
+					})
+				}
+			} else {
+				// Neither Map nor ObjectValue - return without features
+				tflog.Warn(ctx, "[DEBUG-BUG-006] buildProjectContext: features is neither types.Map nor basetypes.ObjectValue", map[string]interface{}{
+					"actual_type": fmt.Sprintf("%T", underlyingVal),
+				})
 			}
 		}
 	}
