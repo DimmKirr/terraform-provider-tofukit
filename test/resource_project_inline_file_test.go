@@ -2643,45 +2643,9 @@ resource "tofukit_project" "drift_test" {
 func TestResourceProjectInlineFileCreateGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectInlineFileCreateGeneratePromptSuccess")
 
-	// Terraform config with dry_run enabled
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true   # Writes prompt JSON to .debug/
-  dry_run     = true   # Skips LLM execution
-}
-
-resource "tofukit_project" "hello_world" {
-  name        = "hello-world"
-  description = "A simple hello world project"
-  version     = "1.0.0"
-
-  files = {
-    "hello.txt" = {
-      content = "hello world\n"
-    }
-    "hello2.txt" = {
-      content = "hello world2\n"
-    }
-    "hello3.txt" = {
-      content = "hello world3\n"
-    }
-  }
-}
-`
-
-	// Write config file
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectInlineFileCreate), 0644)
 	require.NoError(t, err)
 
 	// Setup Terraform and run apply (with TF_LOG=INFO)
@@ -3115,37 +3079,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectInlineFileNestedCreateGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectInlineFileNestedCreateGeneratePromptSuccess")
 
-	// Config with nested file path
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "nested-test"
-  version = "1.0.0"
-
-  files = {
-    "demo/hello.txt" = {
-      content = "hello from demo\n"
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectInlineFileNestedCreate), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply
@@ -3574,42 +3510,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectInlineFileVerificationGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectInlineFileVerificationGeneratePromptSuccess")
 
-	// Config with file that has verification
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "verification-test"
-  version = "1.0.0"
-
-  files = {
-    "hello.txt" = {
-      content = "hello world"
-
-      verifications = [{
-        command = "cat hello.txt"
-        expect  = "hello world"
-      }]
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectInlineFileVerification), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply
@@ -3653,48 +3556,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectInlineFileVerificationRetryGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectInlineFileVerificationRetryGeneratePromptSuccess")
 
-	// Config with file that has verification (retry logic is execution-time, not prompt generation)
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-  max_retries = 3  # Retry setting doesn't affect prompt generation
-}
-
-resource "tofukit_project" "test" {
-  name    = "verification-retry-test"
-  version = "1.0.0"
-
-  files = {
-    "greeting.txt" = {
-      instructions = [{
-        prompt = "Create a text file containing 'hello world'"
-        constraints = [
-          "Content must be exactly: hello world",
-          "Keep it simple"
-        ]
-      }]
-      verifications = [{
-        command = "cat greeting.txt"
-        expect  = "hello world"
-      }]
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectInlineFileVerificationRetry), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply
@@ -3859,43 +3723,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectInlineFileOrderingConsistencyGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectInlineFileOrderingConsistencyGeneratePromptSuccess")
 
-	// Config with files in non-alphabetical order
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "file-ordering-test"
-  version = "1.0.0"
-
-  files = {
-    "hi2.txt" = {
-      content = "Hi from file 2\n"
-    }
-    "LICENSE.md" = {
-      content = "MIT License\n"
-    }
-    "README.md" = {
-      content = "Project README\n"
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectInlineFileOrdering), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply
@@ -3942,37 +3772,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectDriftDetection_StaticFileGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_StaticFileGeneratePromptSuccess")
 
-	// Simple config with static file
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "drift-test"
-  version = "1.0.0"
-
-  files = {
-    ".gitignore" = {
-      content = "*.log\n*.tmp\n"
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectDriftStaticFile), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply (in dry_run mode, no actual drift detection occurs)
@@ -4008,37 +3810,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectDriftDetection_DeletedFileGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_DeletedFileGeneratePromptSuccess")
 
-	// Config with file
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "drift-test"
-  version = "1.0.0"
-
-  files = {
-    "config.txt" = {
-      content = "config data\n"
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectDriftDeletedFile), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply
@@ -4073,43 +3847,9 @@ resource "tofukit_project" "test" {
 func TestResourceProjectDriftDetection_MultipleFilesGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceProjectDriftDetection_MultipleFilesGeneratePromptSuccess")
 
-	// Config with multiple files
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "drift-test"
-  version = "1.0.0"
-
-  files = {
-    ".gitignore" = {
-      content = "*.log\n"
-    }
-    "LICENSE" = {
-      content = "MIT License\n"
-    }
-    "README.md" = {
-      content = "# Project\n"
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigProjectDriftMultipleFiles), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply

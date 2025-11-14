@@ -48,6 +48,30 @@ var ConfigFeatureMultipleMergeDebug string
 //go:embed testdata/configs/feature-resource-create-dry-run.tofu
 var ConfigFeatureResourceCreateDryRun string
 
+//go:embed testdata/configs/project-inline-file-create.tofu
+var ConfigProjectInlineFileCreate string
+
+//go:embed testdata/configs/project-inline-file-nested-create.tofu
+var ConfigProjectInlineFileNestedCreate string
+
+//go:embed testdata/configs/project-inline-file-verification.tofu
+var ConfigProjectInlineFileVerification string
+
+//go:embed testdata/configs/project-inline-file-verification-retry.tofu
+var ConfigProjectInlineFileVerificationRetry string
+
+//go:embed testdata/configs/project-inline-file-ordering.tofu
+var ConfigProjectInlineFileOrdering string
+
+//go:embed testdata/configs/project-drift-static-file.tofu
+var ConfigProjectDriftStaticFile string
+
+//go:embed testdata/configs/project-drift-deleted-file.tofu
+var ConfigProjectDriftDeletedFile string
+
+//go:embed testdata/configs/project-drift-multiple-files.tofu
+var ConfigProjectDriftMultipleFiles string
+
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
 func generateTestTimestamp() string {
