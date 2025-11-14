@@ -26,6 +26,21 @@ locals {
 }
 
 # ========================================
+# MODULE DEPENDENCIES
+# ========================================
+module "openmeteo" {
+  source = "../../integrations/tofukit-integration-openmeteo"
+}
+
+module "flask_stack" {
+  source = "../../stacks/tofukit-stack-python-flask-app"
+
+  # Pass project metadata for health endpoint
+  project_name    = local.project_name
+  project_version = local.project_version
+}
+
+# ========================================
 # MAIN PROJECT RESOURCE
 # ========================================
 resource "tofukit_project" "flask_weather" {
@@ -35,6 +50,9 @@ resource "tofukit_project" "flask_weather" {
 
   model = "haiku"
 
+  # Use Flask stack for base setup
+  stack = module.flask_stack.stack.id
+
   # Use NYC weather feature (contains integration-specific logic)
   features = {
     "nyc_weather" = tofukit_feature.nyc_weather
@@ -43,35 +61,33 @@ resource "tofukit_project" "flask_weather" {
   # Additional Flask-specific requirements
   requirements = [
     {
-      name = "Flask Application Setup"
+      name = "NYC Weather Endpoint"
       instructions = [
         {
           prompt = <<-EOF
-          Create a Flask REST API application that provides NYC weather data.
+          Implement the NYC weather endpoint for the Flask application.
 
-          ARCHITECTURE:
-          - Flask web server on port 5000
-          - Single endpoint: GET /weather
-          - Returns JSON with temperature, humidity, weather code
-          - Uses the NYC Weather feature for data fetching
+          ENDPOINT: GET /weather
+          RETURNS: Current NYC weather data (temperature, humidity, weather code)
 
           IMPLEMENTATION:
-          - Use requests library for HTTP calls
-          - Handle API errors gracefully with proper HTTP status codes
-          - Add basic logging for requests and errors
-          - Include CORS support for frontend integration
-          - NO database persistence - direct API calls only
+          - Use the NYC Weather feature for data fetching
+          - Return JSON response
+          - Handle API errors with proper HTTP status codes
+          - The Flask app, health endpoint, and logging are already configured by the stack
 
-          The NYC weather capability is provided by the nyc_weather feature.
-          Reference its requirements for integration details.
+          NOTE: The tofukit-stack-python-flask-app provides:
+          - Flask application initialization
+          - /health endpoint
+          - Structured logging configuration
+          - Base files (.env.example, .gitignore)
           EOF
 
           constraints = [
-            "Use Flask 3.0+",
-            "Return JSON responses",
-            "Include proper error handling",
-            "Temperature in Fahrenheit",
-            "Add /health endpoint for monitoring"
+            "Only implement /weather endpoint logic",
+            "Health endpoint is provided by stack",
+            "Logging is configured by stack",
+            "Use app.logger for logging (configured by stack)"
           ]
         }
       ]
@@ -84,6 +100,10 @@ resource "tofukit_project" "flask_weather" {
         {
           command = "grep -q 'api.open-meteo.com' app.py && echo 'OK'"
           expect  = "OK"
+        },
+        {
+          command = "grep -q '/weather' app.py && echo 'OK'"
+          expect  = "OK"
         }
       ]
     },
@@ -93,31 +113,20 @@ resource "tofukit_project" "flask_weather" {
       instructions = [
         {
           prompt = <<-EOF
-          Create comprehensive README.md with:
+          Create README.md documenting the NYC weather API.
 
-          OVERVIEW:
-          - Flask API for NYC weather data
-          - Integration with Open-Meteo API
-          - Simple REST API endpoint
+          NOTE: The tofukit-stack-python-flask-app provides base Flask setup.
+          Document only weather-specific functionality.
 
-          SETUP:
-          - Python ${local.python_version} installation
-          - Dependencies: Flask, requests, python-dotenv, flask-cors
-          - Environment variables (if any)
-
-          API ENDPOINTS:
-          - GET /weather - Returns current NYC weather
-          - GET /health - Health check endpoint
-          - Example response format
-
-          EXTERNAL INTEGRATIONS:
-          - Open-Meteo Weather API (free, no auth required)
-          - API documentation link
-          - Rate limits
-
-          USAGE:
-          - How to run the application
-          - Example curl commands
+          INCLUDE:
+          - Project overview (Flask API for NYC weather)
+          - Stack: tofukit-stack-python-flask-app (provides Flask base setup, health check, logging)
+          - Integration: Open-Meteo API (via tofukit-integration-openmeteo module)
+          - API Endpoints:
+            - GET /weather - Returns current NYC weather
+            - GET /health - Health check (provided by stack)
+          - Example responses for both endpoints
+          - Setup instructions (Python ${local.python_version}, uv tool)
           EOF
         }
       ]
@@ -129,7 +138,7 @@ resource "tofukit_project" "flask_weather" {
     "app.py" = {
       instructions = [
         {
-          prompt = "Create Flask application with /weather and /health endpoints as specified in requirements"
+          prompt = "Implement /weather endpoint as specified. Flask app setup is handled by the stack."
         }
       ]
 
@@ -141,14 +150,6 @@ resource "tofukit_project" "flask_weather" {
       ]
     }
 
-    "requirements.txt" = {
-      instructions = [
-        {
-          prompt = "Create requirements.txt with Flask, requests, python-dotenv, flask-cors with specific versions"
-        }
-      ]
-    }
-
     "README.md" = {
       instructions = [
         {
@@ -156,49 +157,11 @@ resource "tofukit_project" "flask_weather" {
         }
       ]
     }
-
-    ".env.example" = {
-      instructions = [
-        {
-          prompt = "Create example environment file with PORT=5000, FLASK_ENV=development"
-        }
-      ]
-    }
-
-    ".gitignore" = {
-      content = <<-EOF
-      # Python
-      __pycache__/
-      *.py[cod]
-      *$py.class
-      *.so
-      .Python
-      venv/
-      ENV/
-
-      # Flask
-      instance/
-      .env
-
-      # IDE
-      .vscode/
-      .idea/
-      *.swp
-
-      # OS
-      .DS_Store
-      Thumbs.db
-
-      # TofuKit
-      .terraform/
-      *.tfstate
-      *.tfstate.backup
-      EOF
-    }
   }
 
   depends_on = [
-    tofukit_integration.open_meteo,
+    module.openmeteo,
+    module.flask_stack,
     tofukit_feature.nyc_weather
   ]
 }

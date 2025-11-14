@@ -5,6 +5,16 @@ This example demonstrates the **separation of concerns** pattern in TofuKit by u
 - **Feature resource** for product-specific requirements (NYC weather)
 - **Project resource** for application implementation (Flask API)
 
+## Module Composition
+
+This project demonstrates TofuKit's module composition:
+
+- **Integration Module**: `tofukit-integration-openmeteo` - Reusable Open-Meteo API integration
+- **Stack Module**: `tofukit-stack-python-flask-app` - Base Flask application setup
+- **Project**: NYC-specific weather endpoint implementation
+
+The project focuses only on business logic while leveraging reusable modules for infrastructure.
+
 ## Architecture
 
 ```
@@ -47,10 +57,13 @@ This example demonstrates the **separation of concerns** pattern in TofuKit by u
 
 ```
 examples/projects/flask-api-nyc-weather/
-├── integration.tofu    # Open-Meteo API (generic, reusable)
 ├── features.tofu       # NYC Weather feature (product-specific)
 ├── project.tofu        # Flask API project (implementation)
 └── README.md           # This file
+
+# Integration now in reusable module:
+examples/integrations/tofukit-integration-openmeteo/
+└── integration.tofu    # Open-Meteo API (generic, reusable)
 ```
 
 ## Why This Pattern?
@@ -58,7 +71,7 @@ examples/projects/flask-api-nyc-weather/
 ### ✅ Before Refactoring (Tightly Coupled)
 
 ```hcl
-# integration.tofu - Mixed concerns
+# Before: integration.tofu - Mixed concerns
 resource "tofukit_integration" "open_meteo" {
   metadata = {
     latitude  = "40.7834"  # ❌ NYC-specific data in integration!
@@ -66,7 +79,7 @@ resource "tofukit_integration" "open_meteo" {
   }
 }
 
-# project.tofu - Inline requirements
+# Before: project.tofu - Inline requirements
 resource "tofukit_project" "flask_weather" {
   requirements = [
     {
@@ -86,7 +99,8 @@ resource "tofukit_project" "flask_weather" {
 ### ✅ After Refactoring (Separated Concerns)
 
 ```hcl
-# integration.tofu - Pure API details
+# examples/integrations/tofukit-integration-openmeteo/integration.tofu
+# Pure API details in reusable module
 resource "tofukit_integration" "open_meteo" {
   name     = "open-meteo"
   base_url = "https://api.open-meteo.com/v1"
@@ -233,7 +247,7 @@ To use this pattern in your own projects:
 
 ## Related Examples
 
-- **Basic integration**: See `integration.tofu` for API-only resource
+- **Integration module**: See `../../integrations/tofukit-integration-openmeteo/` for reusable API resource
 - **Feature definition**: See `features.tofu` for requirement encapsulation
 - **Project composition**: See `project.tofu` for feature usage
 

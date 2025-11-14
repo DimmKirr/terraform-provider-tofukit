@@ -1,9 +1,3 @@
-# ========================================
-# INTEGRATION: Open-Meteo Weather API
-# ========================================
-# Generic Open-Meteo API integration (not location-specific)
-# Can be reused for any location worldwide
-
 resource "tofukit_integration" "open_meteo" {
   name        = "open-meteo"
   type        = "rest_api"
