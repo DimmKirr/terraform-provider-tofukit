@@ -4121,6 +4121,92 @@ func (r *ProjectResourceFinal) collectFeatureKitIDs(ctx context.Context, data Pr
 	return allKitIDs
 }
 
+// CollectKitVerifications extracts verification commands from kit requirements
+// Returns a list of file models containing verification information for enforcement
+// Note: This is exported for testing purposes
+func (r *ProjectResourceFinal) CollectKitVerifications(
+	ctx context.Context,
+	kits map[string]interface{},
+) []schemas.FileModelWithPath {
+	var verifications []schemas.FileModelWithPath
+
+	if kits == nil {
+		return verifications
+	}
+
+	for kitID, kitData := range kits {
+		kitMap, ok := kitData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Extract kit name for error messages
+		kitName := kitID
+		if name, ok := kitMap["name"].(string); ok {
+			kitName = name
+		}
+
+		// Get requirements array
+		requirements, ok := kitMap["requirements"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		// Iterate through requirements
+		for _, reqInterface := range requirements {
+			reqMap, ok := reqInterface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			reqName, _ := reqMap["name"].(string)
+
+			// Get verifications array
+			verificationsData, ok := reqMap["verifications"].([]interface{})
+			if !ok {
+				continue
+			}
+
+			// Convert each verification to FileModelWithPath for consistency
+			for idx, verifyInterface := range verificationsData {
+				verifyMap, ok := verifyInterface.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				command, _ := verifyMap["command"].(string)
+				expect, _ := verifyMap["expect"].(string)
+
+				if command == "" {
+					continue
+				}
+
+				// Create a pseudo-file entry to carry verification info
+				// Path format: "kit:{kitName}:{reqName}:{idx}"
+				pseudoPath := fmt.Sprintf("kit:%s:%s:%d", kitName, reqName, idx)
+
+				verification := schemas.FileModelWithPath{
+					Path: pseudoPath,
+					Verifications: []schemas.VerificationModel{
+						{
+							Command: types.StringValue(command),
+							Expect:  types.StringValue(expect),
+						},
+					},
+				}
+
+				verifications = append(verifications, verification)
+			}
+		}
+	}
+
+	tflog.Debug(ctx, "Collected kit verifications", map[string]interface{}{
+		"count": len(verifications),
+	})
+
+	return verifications
+}
+
 // collectStackKitsAndRequirements collects kits and their requirements from the referenced stack
 func (r *ProjectResourceFinal) collectStackKitsAndRequirements(ctx context.Context, data ProjectModelFinal, reg *registry.Registry) (map[string]interface{}, []schemas.RequirementModel) {
 	kitsMap := make(map[string]interface{})
