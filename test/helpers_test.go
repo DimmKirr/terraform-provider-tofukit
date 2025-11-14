@@ -30,6 +30,9 @@ var ConfigFeaturePrecedence string
 //go:embed testdata/configs/feature-multiple-merge.tofu
 var ConfigFeatureMultipleMerge string
 
+//go:embed testdata/configs/kit-verification-enforcement.tofu
+var ConfigKitVerificationEnforcement string
+
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
 func generateTestTimestamp() string {
