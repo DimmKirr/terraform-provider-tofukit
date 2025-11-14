@@ -5,6 +5,16 @@ This example demonstrates the **separation of concerns** pattern in TofuKit by u
 - **Feature resource** for product-specific requirements (NYC weather)
 - **Project resource** for application implementation (Flask API)
 
+## Module Composition
+
+This project demonstrates TofuKit's module composition:
+
+- **Integration Module**: `tofukit-integration-openmeteo` - Reusable Open-Meteo API integration
+- **Stack Module**: `tofukit-stack-python-flask-app` - Base Flask application setup
+- **Project**: NYC-specific weather endpoint implementation
+
+The project focuses only on business logic while leveraging reusable modules for infrastructure.
+
 ## Architecture
 
 ```
