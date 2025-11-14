@@ -26,6 +26,21 @@ locals {
 }
 
 # ========================================
+# MODULE DEPENDENCIES
+# ========================================
+module "openmeteo" {
+  source = "../../integrations/tofukit-integration-openmeteo"
+}
+
+module "flask_stack" {
+  source = "../../stacks/tofukit-stack-python-flask-app"
+
+  # Pass project metadata for health endpoint
+  project_name    = local.project_name
+  project_version = local.project_version
+}
+
+# ========================================
 # MAIN PROJECT RESOURCE
 # ========================================
 resource "tofukit_project" "flask_weather" {
@@ -34,6 +49,9 @@ resource "tofukit_project" "flask_weather" {
   version     = local.project_version
 
   model = "haiku"
+
+  # Use Flask stack for base setup
+  stack = module.flask_stack.stack.id
 
   # Use NYC weather feature (contains integration-specific logic)
   features = {
