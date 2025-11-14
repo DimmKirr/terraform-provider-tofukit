@@ -43,6 +43,22 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 		t.Logf("✓ Copied tools directory to: %s", toolsDestDir)
 	}
 
+	// Copy the stacks directory (required for diagram module reference)
+	stacksSourceDir := filepath.Join(projectRoot, "examples", "stacks")
+	stacksDestDir := filepath.Join(filepath.Dir(testDir), "stacks")
+
+	// Check if stacks directory exists and needs to be copied
+	if _, err := os.Stat(stacksSourceDir); err == nil {
+		// Remove existing stacks directory in test-output if it exists
+		os.RemoveAll(stacksDestDir)
+
+		// Copy stacks directory
+		if err := copyDir(stacksSourceDir, stacksDestDir); err != nil {
+			t.Fatalf("Failed to copy stacks directory: %v", err)
+		}
+		t.Logf("✓ Copied stacks directory to: %s", stacksDestDir)
+	}
+
 	// Copy the project.tofu
 	projectContent, err := os.ReadFile(filepath.Join(exampleDir, "project.tofu"))
 	if err != nil {
@@ -63,6 +79,13 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 	modifiedContent = strings.Replace(modifiedContent,
 		`source = "../../tools/tofukit-tool-opentofu"`,
 		`source = "../tools/tofukit-tool-opentofu"`, 1)
+
+	// Update module source path to point to the copied stacks directory
+	// Original: source = "../../stacks/tofukit-feature-diagram-drawio"
+	// New: source = "../stacks/tofukit-feature-diagram-drawio" (relative to test-output/<test-name>/)
+	modifiedContent = strings.Replace(modifiedContent,
+		`source = "../../stacks/tofukit-feature-diagram-drawio"`,
+		`source = "../stacks/tofukit-feature-diagram-drawio"`, 1)
 
 	projectPath := filepath.Join(testDir, "project.tofu")
 	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {
