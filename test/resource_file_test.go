@@ -355,40 +355,9 @@ resource "tofukit_file" "test" {
 func TestResourceFile_CreateGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFile_CreateGeneratePromptSuccess")
 
-	// Config with file resource
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_file" "hello" {
-  name    = "hello.txt"
-  content = "Hello World"
-}
-
-resource "tofukit_project" "test" {
-  name    = "file-test"
-  version = "1.0.0"
-
-  files = {
-    "hello.txt" = tofukit_file.hello
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFileResourceBasic), 0644)
 	require.NoError(t, err)
 
 	// Setup Terraform and run apply
@@ -436,40 +405,9 @@ resource "tofukit_project" "test" {
 func TestResourceFile_DriftDetectionGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFile_DriftDetectionGeneratePromptSuccess")
 
-	// Config with file resource
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source  = "registry.terraform.io/DimmKirr/tofukit"
-      version = "0.1.0"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_file" "hello" {
-  name    = "hello.txt"
-  content = "Hello World"
-}
-
-resource "tofukit_project" "test" {
-  name    = "file-drift-test"
-  version = "1.0.0"
-
-  files = {
-    "hello.txt" = tofukit_file.hello
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFileResourceDrift), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply (dry_run mode doesn't execute actual drift detection)

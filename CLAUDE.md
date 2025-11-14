@@ -310,6 +310,59 @@ This approach:
 - Fast and deterministic
 - Tests focus on the specific operation being tested
 
+**Pattern for test configurations (Go 1.16+ embed):**
+
+Tests use the `//go:embed` directive to load Terraform configurations from `testdata/configs/*.tofu` at compile time:
+
+```go
+// In test/helpers_test.go
+import _ "embed"
+
+//go:embed testdata/configs/file-resource-basic.tofu
+var ConfigFileResourceBasic string
+
+// In test files
+func TestResourceFile_CreateGeneratePromptSuccess(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_CreateGeneratePromptSuccess")
+
+	// Use embedded config from testdata
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(ConfigFileResourceBasic), 0644)
+	require.NoError(t, err)
+
+	// ... rest of test
+}
+```
+
+**Benefits:**
+- **Maintainability**: Configs in separate `.tofu` files instead of inline heredocs (40-70% shorter tests)
+- **Reusability**: Same config can be used across multiple tests
+- **Validation**: Configs can be validated independently with `terraform fmt` and `validate-configs.sh`
+- **Readability**: Test logic clearly separated from configuration data
+- **Compile-time loading**: No runtime file I/O overhead
+
+**Config file structure:**
+```
+test/
+├── testdata/
+│   ├── configs/
+│   │   ├── file-resource-basic.tofu          # Basic file resource test
+│   │   ├── file-resource-drift.tofu          # Drift detection test
+│   │   ├── feature-inline-basic.tofu         # Inline feature with files
+│   │   ├── feature-precedence.tofu           # Feature vs project precedence
+│   │   ├── feature-multiple-merge.tofu       # Multiple features merge
+│   │   └── ... (other configs)
+│   └── validate-configs.sh                   # Terraform validation script
+├── helpers_test.go                           # Embed declarations
+└── resource_*_test.go                        # Test implementations
+```
+
+**Validation script:**
+```bash
+# From test/testdata directory
+./validate-configs.sh  # Runs terraform fmt -check on all .tofu files
+```
+
 ### Resource Schemas
 
 **Project Resource** (`tofukit_project`)

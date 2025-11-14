@@ -1,6 +1,7 @@
 package test
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,66 @@ import (
 	"testing"
 	"time"
 )
+
+// Embedded Terraform test configurations
+// These are loaded at compile time from testdata/configs/
+
+//go:embed testdata/configs/file-resource-basic.tofu
+var ConfigFileResourceBasic string
+
+//go:embed testdata/configs/file-resource-drift.tofu
+var ConfigFileResourceDrift string
+
+//go:embed testdata/configs/feature-inline-basic.tofu
+var ConfigFeatureInlineBasic string
+
+//go:embed testdata/configs/feature-precedence.tofu
+var ConfigFeaturePrecedence string
+
+//go:embed testdata/configs/feature-multiple-merge.tofu
+var ConfigFeatureMultipleMerge string
+
+//go:embed testdata/configs/kit-verification-enforcement.tofu
+var ConfigKitVerificationEnforcement string
+
+//go:embed testdata/configs/feature-resource-create.tofu
+var ConfigFeatureResourceCreate string
+
+//go:embed testdata/configs/feature-inline-hello.tofu
+var ConfigFeatureInlineHello string
+
+//go:embed testdata/configs/feature-precedence-debug.tofu
+var ConfigFeaturePrecedenceDebug string
+
+//go:embed testdata/configs/feature-multiple-merge-debug.tofu
+var ConfigFeatureMultipleMergeDebug string
+
+//go:embed testdata/configs/feature-resource-create-dry-run.tofu
+var ConfigFeatureResourceCreateDryRun string
+
+//go:embed testdata/configs/project-inline-file-create.tofu
+var ConfigProjectInlineFileCreate string
+
+//go:embed testdata/configs/project-inline-file-nested-create.tofu
+var ConfigProjectInlineFileNestedCreate string
+
+//go:embed testdata/configs/project-inline-file-verification.tofu
+var ConfigProjectInlineFileVerification string
+
+//go:embed testdata/configs/project-inline-file-verification-retry.tofu
+var ConfigProjectInlineFileVerificationRetry string
+
+//go:embed testdata/configs/project-inline-file-ordering.tofu
+var ConfigProjectInlineFileOrdering string
+
+//go:embed testdata/configs/project-drift-static-file.tofu
+var ConfigProjectDriftStaticFile string
+
+//go:embed testdata/configs/project-drift-deleted-file.tofu
+var ConfigProjectDriftDeletedFile string
+
+//go:embed testdata/configs/project-drift-multiple-files.tofu
+var ConfigProjectDriftMultipleFiles string
 
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)

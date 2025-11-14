@@ -19,53 +19,9 @@ import (
 func TestResourceFeatureCreateSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureCreateSuccess")
 
-	// Create Terraform config with a feature resource
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-}
-
-resource "tofukit_feature" "hello_cmd" {
-  name        = "hello-command"
-  description = "A simple hello command"
-
-  requirements = [
-    {
-      name = "Hello Command"
-      instructions = [
-        {
-          prompt = "Implement a hello command that prints 'Hello from feature!'"
-        }
-      ]
-    }
-  ]
-
-  files = {
-    "hello.txt" = {
-      content = "Hello from feature!\n"
-    }
-  }
-
-  verifications = [
-    {
-      command = "cat hello.txt"
-      expect  = "Hello from feature!"
-    }
-  ]
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureResourceCreate), 0644)
 	require.NoError(t, err)
 
 	// Detect IaC tool
@@ -113,50 +69,9 @@ resource "tofukit_feature" "hello_cmd" {
 func TestResourceFeatureInlineSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureInlineSuccess")
 
-	// Create Terraform config with inline feature
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "inline-feature-test"
-  version = "0.1.0"
-
-  features = {
-    "hello" = {
-      requirements = [
-        {
-          name = "Hello File"
-          instructions = [
-            {
-              prompt = "Create a hello.txt file with greeting"
-            }
-          ]
-        }
-      ]
-      files = {
-        "hello.txt" = {
-          content = "Hello from inline feature.\n"
-        }
-      }
-    }
-  }
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureInlineHello), 0644)
 	require.NoError(t, err)
 
 	// Detect IaC tool
@@ -199,56 +114,9 @@ resource "tofukit_project" "test" {
 func TestProjectPrecedenceOverFeatureSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestProjectPrecedenceOverFeatureSuccess")
 
-	// Create Terraform config with feature and project override
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "precedence-test"
-  version = "0.1.0"
-
-  features = {
-    "base_config" = {
-      requirements = [
-        {
-          name = "Base Configuration"
-          instructions = [
-            {
-              prompt = "Provide base configuration"
-            }
-          ]
-        }
-      ]
-      files = {
-        "config.txt" = {
-          content = "Config from feature\n"
-        }
-      }
-    }
-  }
-
-  files = {
-    "config.txt" = {
-      content = "Config from project\n"
-    }
-  }
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeaturePrecedenceDebug), 0644)
 	require.NoError(t, err)
 
 	// Detect IaC tool
@@ -287,84 +155,9 @@ resource "tofukit_project" "test" {
 func TestResourceFeatureMergeMultipleFeaturesSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureMergeMultipleFeaturesSuccess")
 
-	// Create Terraform config with multiple features
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "multi-feature-test"
-  version = "0.1.0"
-
-  features = {
-    "logging" = {
-      requirements = [
-        {
-          name = "Logging Capability"
-          instructions = [
-            {
-              prompt = "Add logging capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "log.txt" = {
-          content = "Logging enabled\n"
-        }
-      }
-    }
-    "config" = {
-      requirements = [
-        {
-          name = "Configuration Capability"
-          instructions = [
-            {
-              prompt = "Add configuration capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "config.txt" = {
-          content = "Config loaded\n"
-        }
-      }
-    }
-    "metrics" = {
-      requirements = [
-        {
-          name = "Metrics Capability"
-          instructions = [
-            {
-              prompt = "Add metrics capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "metrics.txt" = {
-          content = "Metrics tracking\n"
-        }
-      }
-    }
-  }
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureMultipleMergeDebug), 0644)
 	require.NoError(t, err)
 
 	// Detect IaC tool
@@ -690,51 +483,9 @@ resource "tofukit_project" "test" {
 func TestResourceFeatureInlineGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureInlineGeneratePromptSuccess")
 
-	// Create Terraform config with inline feature
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-  dry_run = true  # Skip LLM execution, just generate prompt
-}
-
-resource "tofukit_project" "test" {
-  name    = "inline-feature-test"
-  version = "0.1.0"
-
-  features = {
-    "hello" = {
-      requirements = [
-        {
-          name = "Feature Implementation"
-          instructions = [
-            {
-              prompt = "Add hello greeting capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "hello.txt" = {
-          content = "Hello from inline feature.\n"
-        }
-      }
-    }
-  }
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureInlineBasic), 0644)
 	require.NoError(t, err)
 
 	// Setup Terraform and run apply
@@ -798,57 +549,9 @@ resource "tofukit_project" "test" {
 func TestProjectPrecedenceOverFeatureGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestProjectPrecedenceOverFeatureGeneratePromptSuccess")
 
-	// Create Terraform config with feature and project override
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-  dry_run = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "precedence-test"
-  version = "0.1.0"
-
-  features = {
-    "base_config" = {
-      requirements = [
-        {
-          name = "Base Configuration"
-          instructions = [
-            {
-              prompt = "Provide base configuration"
-            }
-          ]
-        }
-      ]
-      files = {
-        "config.txt" = {
-          content = "Config from feature\n"
-        }
-      }
-    }
-  }
-
-  files = {
-    "config.txt" = {
-      content = "Config from project\n"
-    }
-  }
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeaturePrecedence), 0644)
 	require.NoError(t, err)
 
 	// Setup Terraform and run apply
@@ -890,84 +593,9 @@ resource "tofukit_project" "test" {
 func TestResourceFeatureInlineMergeMultipleFeaturesGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureInlineMergeMultipleFeaturesGeneratePromptSuccess")
 
-	// Create Terraform config with multiple features
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug = true
-  dry_run = true
-}
-
-resource "tofukit_project" "test" {
-  name    = "multi-feature-test"
-  version = "0.1.0"
-
-  features = {
-    "logging" = {
-      requirements = [
-        {
-          name = "Logging Capability"
-          instructions = [
-            {
-              prompt = "Add logging capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "log.txt" = {
-          content = "Logging enabled\n"
-        }
-      }
-    }
-    "config" = {
-      requirements = [
-        {
-          name = "Configuration Capability"
-          instructions = [
-            {
-              prompt = "Add configuration capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "config.txt" = {
-          content = "Config loaded\n"
-        }
-      }
-    }
-    "metrics" = {
-      requirements = [
-        {
-          name = "Metrics Capability"
-          instructions = [
-            {
-              prompt = "Add metrics capability"
-            }
-          ]
-        }
-      ]
-      files = {
-        "metrics.txt" = {
-          content = "Metrics tracking\n"
-        }
-      }
-    }
-  }
-}
-`
-
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureMultipleMerge), 0644)
 	require.NoError(t, err)
 
 	// Setup Terraform and run apply
@@ -1174,55 +802,9 @@ resource "tofukit_project" "test" {
 func TestResourceFeatureCreateGeneratePromptSuccess(t *testing.T) {
 	testDir := createTestDirectory(t, "TestResourceFeatureCreateGeneratePromptSuccess")
 
-	// Create config with standalone feature resource
-	config := `
-terraform {
-  required_providers {
-    tofukit = {
-      source = "registry.terraform.io/DimmKirr/tofukit"
-    }
-  }
-}
-
-provider "tofukit" {
-  output_path = "output"
-  debug       = true
-  dry_run     = true
-}
-
-resource "tofukit_feature" "hello_cmd" {
-  name        = "hello-command"
-  description = "A simple hello command"
-
-  requirements = [
-    {
-      name = "Hello Command"
-      instructions = [
-        {
-          prompt = "Implement a hello command that prints 'Hello from feature!'"
-        }
-      ]
-    }
-  ]
-
-  files = {
-    "hello.txt" = {
-      content = "Hello from feature!\n"
-    }
-  }
-
-  verifications = [
-    {
-      command = "cat hello.txt"
-      expect  = "Hello from feature!"
-    }
-  ]
-}
-`
-
-	// Write config
+	// Use embedded config from testdata
 	configPath := filepath.Join(testDir, "project.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(ConfigFeatureResourceCreateDryRun), 0644)
 	require.NoError(t, err)
 
 	// Setup and apply (dry_run creates the feature resource in registry)
