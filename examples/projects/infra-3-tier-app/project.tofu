@@ -134,8 +134,6 @@ resource "tofukit_project" "three_tier_app" {
   # Define infrastructure features inline
   features = {
     "load_balancer" = {
-      prompt = "Configure load balancer infrastructure"
-
       requirements = [
         {
           name = "Load Balancer Setup"
@@ -159,8 +157,6 @@ resource "tofukit_project" "three_tier_app" {
     }
 
     "web_server" = {
-      prompt = "Setup web server tier"
-
       requirements = [
         {
           name = "Web Server Configuration"
@@ -184,8 +180,6 @@ resource "tofukit_project" "three_tier_app" {
     }
 
     "database" = {
-      prompt = "Configure database tier"
-
       requirements = [
         {
           name = "Database Setup"

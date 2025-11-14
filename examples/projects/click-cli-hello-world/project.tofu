@@ -56,12 +56,20 @@ resource "tofukit_project" "click_cli" {
   # Add a status command feature (merges with stack's version and readme features)
   features = {
     "status" = {
-      prompt      = "Add a status command that shows 'Status: OK'"
-      description = "Status check command for the CLI"
-      constraints = [
-        "Use click.echo() to output the status",
-        "Create a @cli.command() decorated function",
-        "Keep it simple - just output 'Status: OK'"
+      requirements = [
+        {
+          name = "Status Command Implementation"
+          instructions = [
+            {
+              prompt = "Add a status command that shows 'Status: OK'"
+              constraints = [
+                "Use click.echo() to output the status",
+                "Create a @cli.command() decorated function",
+                "Keep it simple - just output 'Status: OK'"
+              ]
+            }
+          ]
+        }
       ]
 
       files = {

@@ -220,7 +220,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "base_config" = {
-      prompt = "Provide base configuration"
+      requirements = [
+        {
+          name = "Base Configuration"
+          instructions = [
+            {
+              prompt = "Provide base configuration"
+            }
+          ]
+        }
+      ]
       files = {
         "config.txt" = {
           content = "Config from feature\n"
@@ -299,7 +308,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "logging" = {
-      prompt = "Add logging capability"
+      requirements = [
+        {
+          name = "Logging Capability"
+          instructions = [
+            {
+              prompt = "Add logging capability"
+            }
+          ]
+        }
+      ]
       files = {
         "log.txt" = {
           content = "Logging enabled\n"
@@ -307,7 +325,16 @@ resource "tofukit_project" "test" {
       }
     }
     "config" = {
-      prompt = "Add configuration capability"
+      requirements = [
+        {
+          name = "Configuration Capability"
+          instructions = [
+            {
+              prompt = "Add configuration capability"
+            }
+          ]
+        }
+      ]
       files = {
         "config.txt" = {
           content = "Config loaded\n"
@@ -315,7 +342,16 @@ resource "tofukit_project" "test" {
       }
     }
     "metrics" = {
-      prompt = "Add metrics capability"
+      requirements = [
+        {
+          name = "Metrics Capability"
+          instructions = [
+            {
+              prompt = "Add metrics capability"
+            }
+          ]
+        }
+      ]
       files = {
         "metrics.txt" = {
           content = "Metrics tracking\n"
@@ -784,7 +820,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "base_config" = {
-      prompt = "Provide base configuration"
+      requirements = [
+        {
+          name = "Base Configuration"
+          instructions = [
+            {
+              prompt = "Provide base configuration"
+            }
+          ]
+        }
+      ]
       files = {
         "config.txt" = {
           content = "Config from feature\n"
@@ -867,7 +912,16 @@ resource "tofukit_project" "test" {
 
   features = {
     "logging" = {
-      prompt = "Add logging capability"
+      requirements = [
+        {
+          name = "Logging Capability"
+          instructions = [
+            {
+              prompt = "Add logging capability"
+            }
+          ]
+        }
+      ]
       files = {
         "log.txt" = {
           content = "Logging enabled\n"
@@ -875,7 +929,16 @@ resource "tofukit_project" "test" {
       }
     }
     "config" = {
-      prompt = "Add configuration capability"
+      requirements = [
+        {
+          name = "Configuration Capability"
+          instructions = [
+            {
+              prompt = "Add configuration capability"
+            }
+          ]
+        }
+      ]
       files = {
         "config.txt" = {
           content = "Config loaded\n"
@@ -883,7 +946,16 @@ resource "tofukit_project" "test" {
       }
     }
     "metrics" = {
-      prompt = "Add metrics capability"
+      requirements = [
+        {
+          name = "Metrics Capability"
+          instructions = [
+            {
+              prompt = "Add metrics capability"
+            }
+          ]
+        }
+      ]
       files = {
         "metrics.txt" = {
           content = "Metrics tracking\n"
