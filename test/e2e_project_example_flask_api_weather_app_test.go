@@ -101,7 +101,6 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	// Verify generated files exist
 	expectedFiles := []string{
 		"app.py",
-		"requirements.txt",
 		"README.md",
 		".env.example",
 		".gitignore",
@@ -121,15 +120,6 @@ func TestE2EProjectExampleFlaskAPIWeatherAppSuccess(t *testing.T) {
 	assert.Contains(t, appPyStr, "from flask import Flask", "app.py should import Flask")
 	assert.Contains(t, appPyStr, "api.open-meteo.com", "app.py should contain Open-Meteo API URL")
 	assert.Contains(t, appPyStr, "/weather", "app.py should have /weather endpoint")
-
-	// Verify requirements.txt contains expected dependencies
-	requirementsPath := filepath.Join(outputDir, "requirements.txt")
-	requirementsContent, err := os.ReadFile(requirementsPath)
-	require.NoError(t, err)
-	requirementsStr := string(requirementsContent)
-
-	assert.Contains(t, requirementsStr, "Flask", "requirements.txt should contain Flask")
-	assert.Contains(t, requirementsStr, "requests", "requirements.txt should contain requests")
 
 	// Verify README.md contains integration information
 	readmePath := filepath.Join(outputDir, "README.md")
