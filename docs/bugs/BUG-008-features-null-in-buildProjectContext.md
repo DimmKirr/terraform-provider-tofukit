@@ -22,6 +22,65 @@ The `buildProjectContext()` function includes features in the output but does no
 - Lost feature context that should guide LLM generation
 - Incomplete feature introspection system
 
+## How to Reproduce
+
+Run the dedicated test that catches this bug:
+
+```bash
+go test -v -run "TestResourceFeatureInlineGeneratePromptSuccess" ./test/ -timeout 30s
+```
+
+**Expected:** Test should pass with feature `prompt` field present in `_project_context`
+
+**Actual:** Test fails with this error:
+```
+Error:      	Not equal:
+            	expected: string("Add hello greeting capability")
+            	actual  : <nil>(<nil>)
+Test:       	TestResourceFeatureInlineGeneratePromptSuccess
+Messages:   	Feature prompt should match
+```
+
+**What the test checks:** After running `tofu apply` with `dry_run=true`, the test reads the generated prompt JSON and verifies:
+```go
+// Line 742 in resource_feature_test.go
+assert.Equal(t, "Add hello greeting capability", feature0["prompt"], "Feature prompt should match")
+```
+
+**Actual JSON structure found:**
+```json
+{
+  "_project_context": {
+    "features": [
+      {
+        "files": ["hello.txt"],
+        "name": "hello"
+        // ❌ MISSING: "prompt" field
+      }
+    ]
+  }
+}
+```
+
+**Expected JSON structure:**
+```json
+{
+  "_project_context": {
+    "features": [
+      {
+        "name": "hello",
+        "prompt": "Add hello greeting capability",
+        "files": ["hello.txt"]
+      }
+    ]
+  }
+}
+```
+
+**Test runtime:** <0.2 seconds (uses `dry_run=true` to skip LLM execution)
+
+**Test location:** `/Users/dmitry/dev/dimmkirr/terraform-provider-tofukit/test/resource_feature_test.go:654`
+
 ## Root Cause
 
 **Immediate Cause:** Line 2882 in `buildProjectContext()`:
