@@ -45,8 +45,8 @@ resource "tofukit_tool" "fake_tool" {
 
       verifications = [
         {
-          command = "nonexistent-tool --version && echo 'OK'"
-          expect  = "OK"
+          command = "false"
+          expect  = ""
         }
       ]
     }
@@ -86,8 +86,8 @@ resource "tofukit_project" "test" {
 
 	// Expect FAILURE with verification error message
 	require.Error(t, err, "Apply should fail when kit verification fails")
-	require.Contains(t, string(applyOutput), "Verification failed",
+	require.Contains(t, string(applyOutput), "verification failed",
 		"Output should mention verification failure")
-	require.Contains(t, string(applyOutput), "nonexistent-tool",
-		"Output should mention the failed tool")
+	require.Contains(t, string(applyOutput), "Command 'false'",
+		"Output should mention the failed command")
 }

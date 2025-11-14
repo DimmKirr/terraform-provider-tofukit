@@ -2235,8 +2235,6 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 // If PlannedPromptJSON is available (from plan phase), it uses that exact prompt
 // Otherwise, it builds the prompt from outputData (legacy path)
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
-	fmt.Printf("[DEBUG] executeClaudeCode CALLED - outputData keys=%v, mergedFiles=%d\n", keysOfMap(outputData), len(mergedFiles))
-
 	// Check if debug mode and dry_run are enabled
 	debug := false
 	dangerouslySkipPermissions := false
@@ -2249,7 +2247,6 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		debug = provData.GetDebug()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 		dryRun = provData.GetDryRun()
-		fmt.Printf("[DEBUG] Provider settings: debug=%v, dangerouslySkipPermissions=%v, dryRun=%v\n", debug, dangerouslySkipPermissions, dryRun)
 	}
 
 	// Get system prompt from resource data
@@ -2337,25 +2334,26 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			}
 		}
 	} else {
-		// Collect ALL verifications: files + kits
+		// Collect ALL verifications for enforcement: file verifications + kit verifications
+		// This ensures both file-level and kit-level verifications are checked after Claude execution
 		allVerifications := append([]schemas.FileModelWithPath{}, mergedFiles...)
 
-		fmt.Printf("[DEBUG] Starting verification collection - mergedFiles=%d, outputData keys=%v\n", len(mergedFiles), keysOfMap(outputData))
-
-		// Extract kits from the spec
+		// Extract and collect kit verifications from the specification
+		// Kit verifications ensure declared dependencies (languages, frameworks, tools) are actually available
 		if kitsData, ok := outputData["kits"].(map[string]interface{}); ok {
-			fmt.Printf("[DEBUG] Found kits data in outputData - count=%d\n", len(kitsData))
 			kitVerifications := r.CollectKitVerifications(ctx, kitsData)
 			allVerifications = append(allVerifications, kitVerifications...)
 
-			fmt.Printf("[DEBUG] Collected verifications: files=%d, kits=%d, total=%d\n",
-				len(mergedFiles), len(kitVerifications), len(allVerifications))
-		} else {
-			fmt.Printf("[DEBUG] No kits data or wrong type - has_key=%v, type=%T, value=%v\n",
-				outputData["kits"] != nil, outputData["kits"], outputData["kits"])
+			tflog.Debug(ctx, "Collected verifications for enforcement", map[string]interface{}{
+				"file_verifications": len(mergedFiles),
+				"kit_verifications":  len(kitVerifications),
+				"total_verifications": len(allVerifications),
+			})
 		}
 
-		// Normal execution: run LLM with ALL verifications
+		// Execute Claude with ALL verifications enforced
+		// Failed verifications will trigger retries (up to maxRetries attempts)
+		// If all retries fail, an error is returned causing Terraform apply to fail
 		status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
 		if err != nil {
 			// Execution or verification failed
@@ -4142,8 +4140,24 @@ func (r *ProjectResourceFinal) collectFeatureKitIDs(ctx context.Context, data Pr
 	return allKitIDs
 }
 
-// CollectKitVerifications extracts verification commands from kit requirements
-// Returns a list of file models containing verification information for enforcement
+// CollectKitVerifications extracts verification commands from kit requirements for enforcement.
+//
+// This function enables kit verification enforcement by collecting all verification commands
+// from kit requirements and converting them into FileModelWithPath entries that can be
+// passed to the verification runner alongside file verifications.
+//
+// Key behaviors:
+//   - Iterates through all kits in the outputData map
+//   - Extracts requirements from each kit
+//   - Collects verification commands from each requirement
+//   - Returns verifications with pseudo-paths in format: "kit:{kitName}:{reqName}:{idx}"
+//   - Handles both "verification" (singular) and "verifications" (plural) field names
+//   - Supports both map[string]interface{} and map[string]string value types
+//
+// The returned verifications are merged with file verifications in executeClaudeCode()
+// and enforced by ExecuteWithPromptJSON(). Failed verifications cause provider errors
+// and Terraform apply failures.
+//
 // Note: This is exported for testing purposes
 func (r *ProjectResourceFinal) CollectKitVerifications(
 	ctx context.Context,
@@ -4182,10 +4196,11 @@ func (r *ProjectResourceFinal) CollectKitVerifications(
 
 			reqName, _ := reqMap["name"].(string)
 
-			// Get verifications array (try both "verifications" and "verification")
+			// Get verifications array (try both field names for compatibility)
+			// "verifications" (plural) - used by project kits from Terraform state
+			// "verification" (singular) - used by registry kits
 			verificationsData, ok := reqMap["verifications"].([]interface{})
 			if !ok {
-				// Fall back to singular form
 				verificationsData, ok = reqMap["verification"].([]interface{})
 				if !ok {
 					continue
@@ -4194,13 +4209,25 @@ func (r *ProjectResourceFinal) CollectKitVerifications(
 
 			// Convert each verification to FileModelWithPath for consistency
 			for idx, verifyInterface := range verificationsData {
-				verifyMap, ok := verifyInterface.(map[string]string)
-				if !ok {
+				// Extract command and expect from verification entry
+				// Handle two possible types from different serialization paths:
+				// 1. map[string]interface{} - from outputData/prompt JSON (most common)
+				// 2. map[string]string - from registry serialization (fallback)
+				var command, expect string
+				if verifyMap, ok := verifyInterface.(map[string]interface{}); ok {
+					if cmd, ok := verifyMap["command"].(string); ok {
+						command = cmd
+					}
+					if exp, ok := verifyMap["expect"].(string); ok {
+						expect = exp
+					}
+				} else if verifyMap, ok := verifyInterface.(map[string]string); ok {
+					command = verifyMap["command"]
+					expect = verifyMap["expect"]
+				} else {
+					// Unknown type - skip this verification
 					continue
 				}
-
-				command := verifyMap["command"]
-				expect := verifyMap["expect"]  // Empty expect is valid
 
 				if command == "" {
 					continue

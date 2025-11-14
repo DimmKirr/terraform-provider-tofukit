@@ -234,6 +234,19 @@ Main Terraform resource managing project lifecycle:
 - All feature-processing functions must first extract the underlying value: `data.Features.UnderlyingValue()`, then cast to `types.Map`
 - This pattern is critical for avoiding "Dynamic types inside collections" schema validation errors
 
+**Kit Verification Enforcement** (lines 4145-4246):
+- `CollectKitVerifications()` - Extracts verification commands from kit requirements for enforcement
+  - Iterates through all kits in outputData map
+  - Handles both `"verification"` (singular, from registry) and `"verifications"` (plural, from state)
+  - Supports both `map[string]interface{}` (from JSON) and `map[string]string` (from registry)
+  - Returns verifications with pseudo-paths: `kit:{kitName}:{reqName}:{idx}`
+- Integration in `executeClaudeCode()` (lines 2340-2360):
+  - Collects file verifications from merged files
+  - Collects kit verifications via `CollectKitVerifications()`
+  - Merges both into `allVerifications` array
+  - Passes to `ExecuteWithPromptJSON()` for enforcement
+  - Failed verifications trigger retries; after max retries, provider returns error
+
 #### `/internal/llm/claude/prompt_types.go`
 Structures the JSON prompt sent to Claude:
 
@@ -494,10 +507,20 @@ The provider implements granular per-file drift detection following the `hashico
 - Prevents ambiguous/unpredictable Claude execution
 - Validation occurs in both `Create()` and `Update()` at lines 291-318, 588-616
 
-**Verification Retry System**
+**Verification Enforcement System**
 - Configured via `max_retries` provider setting (default: 3)
-- If verification fails, Claude receives error output and retries
-- Continues until verification passes or max retries reached
+- **Two types of verifications**:
+  - **File verifications**: Commands defined in `file { verifications = [...] }` blocks
+  - **Kit verifications**: Commands defined in `tofukit_tool { requirements { verifications = [...] } }` blocks
+- **Enforcement flow**:
+  1. Provider collects file verifications from merged files
+  2. Provider collects kit verifications from all kits in project (via `CollectKitVerifications()`)
+  3. All verifications merged and passed to `ExecuteWithPromptJSON()`
+  4. After Claude execution, provider runs ALL verification commands
+  5. If verifications fail, Claude receives error output and retries (up to `max_retries`)
+  6. After max retries exhausted, provider returns error causing Terraform apply to fail
+- **Kit verifications ensure declared dependencies** (languages, tools, frameworks) are actually available before allowing project creation
+- **Error message format**: `❌ File 'kit:{kitName}:{reqName}:{idx}': Command '{command}' failed with error: {error}`
 
 **File Hash Tracking**
 - `file_hash` - Hash of file specifications (detects config changes)
