@@ -10,6 +10,8 @@ import (
 )
 
 // TestKitVerificationEnforcement validates that kit verifications are actually run and enforced
+// This is an end-to-end test that runs 'tofu init' and 'tofu apply' to verify the provider
+// enforces kit verification failures and returns appropriate error messages.
 func TestKitVerificationEnforcement(t *testing.T) {
 	testDir := createTestDirectory(t, "TestKitVerificationEnforcement")
 

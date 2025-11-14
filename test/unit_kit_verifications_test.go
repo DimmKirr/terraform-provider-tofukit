@@ -9,6 +9,8 @@ import (
 )
 
 // TestCollectKitVerifications validates that kit verifications are properly extracted
+// NOTE: This is a pure unit test but must reside in test/ directory instead of internal/resources/
+// due to an import cycle: internal/resources/project_test.go imports testutil, which imports resources.
 func TestCollectKitVerifications(t *testing.T) {
 	ctx := context.Background()
 
