@@ -18,6 +18,18 @@ import (
 //go:embed testdata/configs/file-resource-basic.tofu
 var ConfigFileResourceBasic string
 
+//go:embed testdata/configs/file-resource-drift.tofu
+var ConfigFileResourceDrift string
+
+//go:embed testdata/configs/feature-inline-basic.tofu
+var ConfigFeatureInlineBasic string
+
+//go:embed testdata/configs/feature-precedence.tofu
+var ConfigFeaturePrecedence string
+
+//go:embed testdata/configs/feature-multiple-merge.tofu
+var ConfigFeatureMultipleMerge string
+
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
 func generateTestTimestamp() string {
