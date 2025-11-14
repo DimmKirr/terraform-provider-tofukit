@@ -2235,6 +2235,8 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 // If PlannedPromptJSON is available (from plan phase), it uses that exact prompt
 // Otherwise, it builds the prompt from outputData (legacy path)
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
+	fmt.Printf("[DEBUG] executeClaudeCode CALLED - outputData keys=%v, mergedFiles=%d\n", keysOfMap(outputData), len(mergedFiles))
+
 	// Check if debug mode and dry_run are enabled
 	debug := false
 	dangerouslySkipPermissions := false
@@ -2247,6 +2249,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		debug = provData.GetDebug()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 		dryRun = provData.GetDryRun()
+		fmt.Printf("[DEBUG] Provider settings: debug=%v, dangerouslySkipPermissions=%v, dryRun=%v\n", debug, dangerouslySkipPermissions, dryRun)
 	}
 
 	// Get system prompt from resource data
@@ -2334,8 +2337,26 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			}
 		}
 	} else {
-		// Normal execution: run LLM
-		status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, mergedFiles, maxRetries)
+		// Collect ALL verifications: files + kits
+		allVerifications := append([]schemas.FileModelWithPath{}, mergedFiles...)
+
+		fmt.Printf("[DEBUG] Starting verification collection - mergedFiles=%d, outputData keys=%v\n", len(mergedFiles), keysOfMap(outputData))
+
+		// Extract kits from the spec
+		if kitsData, ok := outputData["kits"].(map[string]interface{}); ok {
+			fmt.Printf("[DEBUG] Found kits data in outputData - count=%d\n", len(kitsData))
+			kitVerifications := r.CollectKitVerifications(ctx, kitsData)
+			allVerifications = append(allVerifications, kitVerifications...)
+
+			fmt.Printf("[DEBUG] Collected verifications: files=%d, kits=%d, total=%d\n",
+				len(mergedFiles), len(kitVerifications), len(allVerifications))
+		} else {
+			fmt.Printf("[DEBUG] No kits data or wrong type - has_key=%v, type=%T, value=%v\n",
+				outputData["kits"] != nil, outputData["kits"], outputData["kits"])
+		}
+
+		// Normal execution: run LLM with ALL verifications
+		status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
 		if err != nil {
 			// Execution or verification failed
 			data.ExecutionStatus = types.StringValue("failed")
@@ -4161,10 +4182,14 @@ func (r *ProjectResourceFinal) CollectKitVerifications(
 
 			reqName, _ := reqMap["name"].(string)
 
-			// Get verifications array
-			verificationsData, ok := reqMap["verification"].([]interface{})
+			// Get verifications array (try both "verifications" and "verification")
+			verificationsData, ok := reqMap["verifications"].([]interface{})
 			if !ok {
-				continue
+				// Fall back to singular form
+				verificationsData, ok = reqMap["verification"].([]interface{})
+				if !ok {
+					continue
+				}
 			}
 
 			// Convert each verification to FileModelWithPath for consistency
@@ -5010,4 +5035,13 @@ func (r *ProjectResourceFinal) addDriftInstructions(
 	})
 
 	return files
+}
+
+// keysOfMap returns the keys of a map[string]interface{} as a slice
+func keysOfMap(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
