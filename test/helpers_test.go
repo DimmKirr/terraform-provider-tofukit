@@ -1,6 +1,7 @@
 package test
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,12 @@ import (
 	"testing"
 	"time"
 )
+
+// Embedded Terraform test configurations
+// These are loaded at compile time from testdata/configs/
+
+//go:embed testdata/configs/file-resource-basic.tofu
+var ConfigFileResourceBasic string
 
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
