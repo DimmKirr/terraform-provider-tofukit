@@ -72,6 +72,9 @@ var ConfigProjectDriftDeletedFile string
 //go:embed testdata/configs/project-drift-multiple-files.tofu
 var ConfigProjectDriftMultipleFiles string
 
+//go:embed testdata/configs/kit-dependency-test.tofu
+var ConfigKitDependencyTest string
+
 // generateTestTimestamp creates an ISO-8601 formatted timestamp for test directories
 // Format: YYYYMMDDTHHMMSS (e.g., 20251029T204540)
 func generateTestTimestamp() string {

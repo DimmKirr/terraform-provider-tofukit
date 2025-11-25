@@ -1888,10 +1888,115 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 			outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
 		}
 
+		// NEW: Collect requirements from kits referenced by features
+		// This handles kits like gotask that are referenced by features (e.g., taskfile feature)
+		// but not directly in the stack's kits list
+		var featureKitIDs []string
+		seen := make(map[string]bool)
+
+		// First, mark all kits from stackKits map as already processed to avoid duplicates
+		for kitID := range stackKits {
+			seen[kitID] = true
+		}
+
+		// 1. Collect kit IDs from project features (excluding already-processed stack kits)
+		projectFeatureKitIDs := r.collectFeatureKitIDs(ctx, data)
+		for _, kitID := range projectFeatureKitIDs {
+			if !seen[kitID] {
+				featureKitIDs = append(featureKitIDs, kitID)
+				seen[kitID] = true
+			}
+		}
+
+		// 2. Collect kit IDs from stack features
+		if !data.Stack.IsNull() && !data.Stack.IsUnknown() {
+			stackID := extractIDFromDynamic(ctx, data.Stack)
+			if stackData, exists := reg.GetStack(stackID); exists {
+				if stack, ok := stackData.(StackResourceModel); ok {
+					// Get feature IDs from stack
+					stackFeatureIDs := extractIDsFromDynamicList(ctx, stack.Features)
+
+					// For each stack feature, collect its kit IDs
+					for _, featureID := range stackFeatureIDs {
+						if featureData, exists := reg.GetFeature(featureID); exists {
+							if feature, ok := featureData.(FeatureResourceModel); ok {
+								if !feature.Kits.IsNull() && !feature.Kits.IsUnknown() {
+									kitIDs := extractIDsFromDynamicList(ctx, feature.Kits)
+									for _, kitID := range kitIDs {
+										if !seen[kitID] {
+											featureKitIDs = append(featureKitIDs, kitID)
+											seen[kitID] = true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		tflog.Info(ctx, "Collected kit IDs from features", map[string]interface{}{
+			"total_feature_kit_count": len(featureKitIDs),
+			"kit_ids":                 featureKitIDs,
+		})
+
+		// 3. Get requirements from feature-referenced kits
+		featureKitRequirements := r.getKitRequirementsFromRegistry(ctx, featureKitIDs, reg)
+
+		// 4. Convert and add feature kit requirements to outputData
+		for _, req := range featureKitRequirements {
+			reqData := map[string]interface{}{
+				"name": req.Name.ValueString(),
+			}
+
+			// Add instructions
+			instructions := []map[string]interface{}{}
+			for _, inst := range req.Instructions {
+				instData := map[string]interface{}{
+					"prompt": inst.Prompt.ValueString(),
+				}
+
+				// Add constraints if present
+				if inst.Constraints != nil && len(inst.Constraints) > 0 {
+					constraints := []string{}
+					for _, c := range inst.Constraints {
+						if !c.IsNull() && !c.IsUnknown() {
+							constraints = append(constraints, c.ValueString())
+						}
+					}
+					if len(constraints) > 0 {
+						instData["constraints"] = constraints
+					}
+				}
+
+				instructions = append(instructions, instData)
+			}
+			reqData["instructions"] = instructions
+
+			// Add verifications if present
+			if len(req.Verifications) > 0 {
+				verifications := []map[string]string{}
+				for _, v := range req.Verifications {
+					verif := map[string]string{
+						"command": v.Command.ValueString(),
+					}
+					if !v.Expect.IsNull() && !v.Expect.IsUnknown() {
+						verif["expect"] = v.Expect.ValueString()
+					}
+					verifications = append(verifications, verif)
+				}
+				reqData["verification"] = verifications
+			}
+
+			outputData["requirements"] = append(outputData["requirements"].([]map[string]interface{}), reqData)
+		}
+
 		tflog.Info(ctx, "Added stack requirements to output", map[string]interface{}{
 			"stack_kit_requirements":     len(stackKitRequirements),
 			"stack_feature_requirements": len(stackFeatureRequirements),
-			"total_stack_requirements":   len(stackKitRequirements) + len(stackFeatureRequirements),
+			"feature_kit_requirements":   len(featureKitRequirements),
+			"total_stack_requirements":   len(stackKitRequirements) + len(stackFeatureRequirements) + len(featureKitRequirements),
 		})
 	}
 
@@ -2345,8 +2450,8 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			allVerifications = append(allVerifications, kitVerifications...)
 
 			tflog.Debug(ctx, "Collected verifications for enforcement", map[string]interface{}{
-				"file_verifications": len(mergedFiles),
-				"kit_verifications":  len(kitVerifications),
+				"file_verifications":  len(mergedFiles),
+				"kit_verifications":   len(kitVerifications),
 				"total_verifications": len(allVerifications),
 			})
 		}
@@ -2862,6 +2967,44 @@ func (r *ProjectResourceFinal) getKitFilesFromRegistry(ctx context.Context, kitI
 	})
 
 	return allFiles
+}
+
+// getKitRequirementsFromRegistry extracts requirements from kits stored in the registry
+func (r *ProjectResourceFinal) getKitRequirementsFromRegistry(ctx context.Context, kitIDs []string, reg *registry.Registry) []schemas.RequirementModel {
+	var allRequirements []schemas.RequirementModel
+
+	if reg == nil || len(kitIDs) == 0 {
+		return allRequirements
+	}
+
+	for _, kitID := range kitIDs {
+		if kitData, exists := reg.GetComponent(kitID); exists {
+			if kit, ok := kitData.(ComponentResourceModel); ok {
+				tflog.Info(ctx, "Extracting requirements from kit", map[string]interface{}{
+					"kit_id":            kitID,
+					"kit_name":          kit.Name.ValueString(),
+					"requirement_count": len(kit.Requirements),
+				})
+				allRequirements = append(allRequirements, kit.Requirements...)
+			} else {
+				tflog.Warn(ctx, "Kit data is not ComponentResourceModel", map[string]interface{}{
+					"kit_id":      kitID,
+					"actual_type": fmt.Sprintf("%T", kitData),
+				})
+			}
+		} else {
+			tflog.Warn(ctx, "Kit not found in registry", map[string]interface{}{
+				"kit_id": kitID,
+			})
+		}
+	}
+
+	tflog.Info(ctx, "Collected requirements from kits", map[string]interface{}{
+		"kit_count":          len(kitIDs),
+		"total_requirements": len(allRequirements),
+	})
+
+	return allRequirements
 }
 
 // convertListToStringSlice converts a types.List to []types.String

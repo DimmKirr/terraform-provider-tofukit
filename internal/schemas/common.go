@@ -43,9 +43,9 @@ type FileModel struct {
 	Verifications []VerificationModel `tfsdk:"verifications"`
 
 	// Computed drift detection fields
-	ContentHash   types.String `tfsdk:"content_hash"`
-	FileHash      types.String `tfsdk:"file_hash"`
-	FileModTime   types.String `tfsdk:"file_modtime"`
+	ContentHash types.String `tfsdk:"content_hash"`
+	FileHash    types.String `tfsdk:"file_hash"`
+	FileModTime types.String `tfsdk:"file_modtime"`
 
 	// Optional resource metadata fields (present when referencing tofukit_file)
 	ID          types.String `tfsdk:"id"`
@@ -80,7 +80,7 @@ func getRequirementsListAttributeInternal(required bool) schema.ListNestedAttrib
 				},
 				"instructions": schema.ListNestedAttribute{
 					MarkdownDescription: "Instruction steps for implementing this requirement (executed sequentially)",
-					Optional:            true,
+					Required:            true,
 					NestedObject: schema.NestedAttributeObject{
 						Attributes: map[string]schema.Attribute{
 							"prompt": schema.StringAttribute{
