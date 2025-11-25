@@ -72,7 +72,7 @@ resource "tofukit_feature" "viper_config" {
 
   kits = [tofukit_framework.viper]
 
-  depends_on = [tofukit_file.viper_config_internal]
+  # Note: depends_on removed - dependency is implicit through file reference above (line 70)
 }
 
 resource "tofukit_feature" "pterm_logger" {

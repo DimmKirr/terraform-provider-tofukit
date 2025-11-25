@@ -17,15 +17,33 @@ resource "tofukit_feature" "hello_command" {
 
   # Feature-level requirement: integration with root command
   requirements = [{
-    name = "Hello Command Integration"
+    name = "Hello Command"
 
     instructions = [{
-      prompt = "Implement a hello command that greets users by name, with 'World' as the default if no name is provided. Integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework."
+      prompt = <<-EOF
+      Implement a "hello" command that greets users.
+
+      BUSINESS REQUIREMENTS:
+      - Command: hello [name]
+      - Behavior: Greet the user by name, default to "World" if no name provided
+      - Output: "Hello, <name>!" message
+      - Integration: Must integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework
+
+      IMPLEMENTATION LOCATION:
+      This feature must be implemented in ${tofukit_file.cmd_hello.link}
+
+      COMMAND SPECIFICATION:
+      - Use: "go-viper-hello-world [name]"
+      - Short description: "Say hello to someone"
+      - Long description: "Greet someone by name, or the world if no name is provided"
+      - Arguments: Accept optional name (max 1 argument)
+      - Output: Use structured logging to display "Hello, <name>!"
+      EOF
 
       constraints = [
         "Must integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework",
         "Use structured logging for output",
-        "Handle optional name argument gracefully",
+        "Handle optional name argument gracefully (default to 'World')",
         "Follow Go community conventions for CLI commands"
       ]
     }]
@@ -52,16 +70,45 @@ resource "tofukit_feature" "ip_command" {
 
   # Link to implementation files
   files = {
-    "cmd/ip.go"                  = tofukit_file.cmd_ip
+    "cmd/ip.go"                 = tofukit_file.cmd_ip
     "internal/ipinfo/client.go" = tofukit_file.internal_ipinfo_client
   }
 
   # Feature-level requirement: integration with root command
   requirements = [{
-    name = "IP Address Retrieval"
+    name = "Public IP Address Display"
 
     instructions = [{
-      prompt = "Implement an ip command that retrieves the user's public IP address from ipinfo.io/ip and displays it using ${module.go_viper_cobra_pterm.kits.framework.pterm.link} styled output. Integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework."
+      prompt = <<-EOF
+      Implement an "ip" command that displays the user's public IP address.
+
+      BUSINESS REQUIREMENTS:
+      - Command: ip
+      - Behavior: Fetch and display user's public IP address
+      - Data Source: ipinfo.io/ip API endpoint
+      - Output: Display IP address with styled output using ${module.go_viper_cobra_pterm.kits.framework.pterm.link}
+      - Integration: Must integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework
+
+      IMPLEMENTATION LOCATION:
+      - CLI command implementation: ${tofukit_file.cmd_ip.link}
+      - API client logic: ${tofukit_file.internal_ipinfo_client.link}
+
+      COMMAND SPECIFICATION:
+      - Use: "ip"
+      - Short description: "Display your public IP address"
+      - Long description: "Fetches and displays your public IP address from ipinfo.io"
+      - Arguments: None (cobra.NoArgs)
+      - API Endpoint: https://ipinfo.io/ip
+      - Output format: "Your public IP: <ip_address>"
+      - Timeout: 10 seconds for HTTP request
+
+      API CLIENT REQUIREMENTS (${tofukit_file.internal_ipinfo_client.link}):
+      - Function: GetPublicIP() (string, error)
+      - HTTP GET request to ipinfo.io/ip
+      - Timeout: 10 seconds
+      - Error handling: Request creation, execution, body reading
+      - Response: Trimmed string (no whitespace)
+      EOF
 
       constraints = [
         "Must integrate with ${module.go_viper_cobra_pterm.kits.framework.cobra.link} CLI framework",

@@ -9,9 +9,13 @@ resource "tofukit_tool" "uv" {
   description = "Fast Python package installer and resolver written in Rust"
   version     = var.uv_version
 
-  depends_on = [tofukit_language.python]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This tool requires ${tofukit_language.python.link} to be configured as the project's language runtime"
+      }]
+    },
     {
       name = "uv Installation"
 

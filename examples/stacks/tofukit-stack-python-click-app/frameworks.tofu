@@ -9,7 +9,7 @@ resource "tofukit_framework" "click" {
   description = "Composable command line interface toolkit"
   version     = var.click_version
 
-  depends_on = [tofukit_tool.uv]
+  # Note: depends_on removed - dependency is implicit through .link reference in instructions (line 20)
 
   requirements = [
     {

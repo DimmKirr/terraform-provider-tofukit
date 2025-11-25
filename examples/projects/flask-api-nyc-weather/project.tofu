@@ -53,14 +53,20 @@ resource "tofukit_project" "flask_weather" {
   # Use Flask stack for base setup
   stack = module.flask_stack.stack.id
 
-  # Use NYC weather feature (contains integration-specific logic + files)
+  # Features: Integration layer + API endpoints + Documentation + Diagram
+  # Order matters: Dependencies flow from bottom to top
+  # 1. Integration provides weather data fetching capability
+  # 2. API endpoints use the integration to expose HTTP endpoints
+  # 3. Documentation describes both the integration and endpoints
+  # 4. Diagram auto-discovers and visualizes all features
   features = {
-    "nyc_weather" = tofukit_feature.nyc_weather
+    "openmeteo"            = tofukit_feature.integration_openmeteo
+    "weather_api"          = tofukit_feature.api_endpoint_weather
+    "documentation"        = module.documentation.feature
+    "architecture_diagram" = module.architecture_diagram.feature
   }
 
-  depends_on = [
-    module.openmeteo,
-    module.flask_stack,
-    tofukit_feature.nyc_weather
-  ]
+  # Note: depends_on removed - all dependencies are implicit through attribute references:
+  # - stack = module.flask_stack.stack.id
+  # - features reference module outputs and feature resources directly
 }

@@ -21,7 +21,7 @@ provider "tofukit" {
 # DIAGRAM MODULE
 # ========================================
 module "architecture_diagram" {
-  source = "../../stacks/tofukit-feature-diagram-drawio"
+  source = "../../features/tofukit-feature-diagram-drawio"
 
   file_path = "architecture"
   style     = "AWS"

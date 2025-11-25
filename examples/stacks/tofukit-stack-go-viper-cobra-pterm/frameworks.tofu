@@ -9,9 +9,13 @@ resource "tofukit_framework" "cobra" {
   description = "CLI framework for creating powerful command-line applications"
   version     = var.cobra_version
 
-  depends_on = [tofukit_tool.go_mod]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This framework requires ${tofukit_tool.go_mod.link} to be initialized before installing Go packages"
+      }]
+    },
     {
       name = "Cobra Installation"
 
@@ -63,9 +67,13 @@ resource "tofukit_framework" "viper" {
   description = "Configuration management library for Go applications"
   version     = var.viper_version
 
-  depends_on = [tofukit_tool.go_mod]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This framework requires ${tofukit_tool.go_mod.link} to be initialized before installing Go packages"
+      }]
+    },
     {
       name = "Viper Installation"
 
@@ -111,9 +119,13 @@ resource "tofukit_framework" "pterm" {
   description = "Modern terminal UI library for beautiful CLI output"
   version     = var.pterm_version
 
-  depends_on = [tofukit_tool.go_mod]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This framework requires ${tofukit_tool.go_mod.link} to be initialized before installing Go packages"
+      }]
+    },
     {
       name = "pterm Installation"
 

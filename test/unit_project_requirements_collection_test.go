@@ -11,7 +11,7 @@ import (
 
 // TestProjectRequirementsCollection_Level1_ProjectWithFeature validates requirement collection
 // from a project with an inline feature
-func TestProjectRequirementsCollection_Level1_ProjectWithFeature(t *testing.T) {
+func TestUnitProjectRequirementsCollection_Level1_ProjectWithFeature(t *testing.T) {
 	// Create a project with an inline feature
 	projectData := map[string]interface{}{
 		"name":    "test-project",
@@ -87,7 +87,7 @@ func TestProjectRequirementsCollection_Level1_ProjectWithFeature(t *testing.T) {
 
 // TestProjectRequirementsCollection_Level2_ProjectWithKit validates requirement collection
 // from a project with a kit attached
-func TestProjectRequirementsCollection_Level2_ProjectWithKit(t *testing.T) {
+func TestUnitProjectRequirementsCollection_Level2_ProjectWithKit(t *testing.T) {
 	// Mock kit data (simulates what would come from registry)
 	kitsData := map[string]interface{}{
 		"kit:language:go": map[string]interface{}{
@@ -176,7 +176,7 @@ func TestProjectRequirementsCollection_Level2_ProjectWithKit(t *testing.T) {
 
 // TestProjectRequirementsCollection_Level3_ProjectWithStack validates requirement collection
 // from a project with a full stack (simulating go-viper-cobra-pterm stack)
-func TestProjectRequirementsCollection_Level3_ProjectWithStack(t *testing.T) {
+func TestUnitProjectRequirementsCollection_Level3_ProjectWithStack(t *testing.T) {
 	// Mock stack data (simulates go-viper-cobra-pterm stack structure)
 	stackData := map[string]interface{}{
 		// Language kit
@@ -458,7 +458,7 @@ func TestProjectRequirementsCollection_Level3_ProjectWithStack(t *testing.T) {
 }
 
 // TestProjectRequirementsCollection_EmptyCases validates handling of edge cases
-func TestProjectRequirementsCollection_EmptyCases(t *testing.T) {
+func TestUnitProjectRequirementsCollection_EmptyCases(t *testing.T) {
 	t.Run("NoRequirements", func(t *testing.T) {
 		// Kit with no requirements
 		kitData := map[string]interface{}{
@@ -518,7 +518,7 @@ func TestProjectRequirementsCollection_EmptyCases(t *testing.T) {
 
 // TestProjectRequirementsCollection_BugRepro_FeatureKitDependencies reproduces the actual bug
 // where kits referenced by features are not collected
-func TestProjectRequirementsCollection_BugRepro_FeatureKitDependencies(t *testing.T) {
+func TestUnitProjectRequirementsCollection_BugRepro_FeatureKitDependencies(t *testing.T) {
 	// This test reproduces the bug where:
 	// - Stack has kit A (go_mod) in its direct kits list
 	// - Stack has a feature (taskfile) that references kit B (gotask) via feature.kits
@@ -656,7 +656,7 @@ func TestProjectRequirementsCollection_BugRepro_FeatureKitDependencies(t *testin
 
 // TestProjectRequirementsCollection_FeatureMultipleKits validates that
 // a feature with multiple kit dependencies collects requirements from all kits
-func TestProjectRequirementsCollection_FeatureMultipleKits(t *testing.T) {
+func TestUnitProjectRequirementsCollection_FeatureMultipleKits(t *testing.T) {
 	// Mock feature with multiple kits (simulating version_command feature)
 	// Feature references both cobra AND pterm kits
 

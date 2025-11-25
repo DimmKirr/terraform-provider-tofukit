@@ -9,7 +9,7 @@ resource "tofukit_framework" "flask" {
   description = "Lightweight WSGI web application framework"
   version     = var.flask_version
 
-  depends_on = [tofukit_tool.uv]
+  # Note: depends_on removed - dependency is implicit through .link reference in instructions (line 20)
 
   requirements = [
     {
@@ -52,6 +52,12 @@ resource "tofukit_framework" "flask" {
           - Use jsonify() for JSON responses
           - Implement proper error handling
 
+          ENTRY POINT (CRITICAL):
+          - app.py MUST be the sole entry point - include if __name__ == '__main__': app.run() block
+          - DO NOT create main.py or any other entry point file
+          - Run directly with: python app.py or flask run
+          - This is the conventional Flask pattern for single-file applications
+
           CONFIGURATION:
           - Load config from environment variables
           - Use python-dotenv for local development
@@ -77,7 +83,9 @@ resource "tofukit_framework" "flask" {
             "Return JSON responses with jsonify()",
             "Include proper HTTP status codes",
             "Handle exceptions gracefully",
-            "Use environment variables for configuration"
+            "Use environment variables for configuration",
+            "app.py is the ONLY entry point - DO NOT create main.py",
+            "Include if __name__ == '__main__': app.run() in app.py"
           ]
         }
       ]

@@ -43,20 +43,20 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 		t.Logf("✓ Copied tools directory to: %s", toolsDestDir)
 	}
 
-	// Copy the stacks directory (required for diagram module reference)
-	stacksSourceDir := filepath.Join(projectRoot, "examples", "stacks")
-	stacksDestDir := filepath.Join(filepath.Dir(testDir), "stacks")
+	// Copy the features directory (required for diagram module reference)
+	featuresSourceDir := filepath.Join(projectRoot, "examples", "features")
+	featuresDestDir := filepath.Join(filepath.Dir(testDir), "features")
 
-	// Check if stacks directory exists and needs to be copied
-	if _, err := os.Stat(stacksSourceDir); err == nil {
-		// Remove existing stacks directory in test-output if it exists
-		os.RemoveAll(stacksDestDir)
+	// Check if features directory exists and needs to be copied
+	if _, err := os.Stat(featuresSourceDir); err == nil {
+		// Remove existing features directory in test-output if it exists
+		os.RemoveAll(featuresDestDir)
 
-		// Copy stacks directory
-		if err := copyDir(stacksSourceDir, stacksDestDir); err != nil {
-			t.Fatalf("Failed to copy stacks directory: %v", err)
+		// Copy features directory
+		if err := copyDir(featuresSourceDir, featuresDestDir); err != nil {
+			t.Fatalf("Failed to copy features directory: %v", err)
 		}
-		t.Logf("✓ Copied stacks directory to: %s", stacksDestDir)
+		t.Logf("✓ Copied features directory to: %s", featuresDestDir)
 	}
 
 	// Copy the project.tofu
@@ -80,12 +80,12 @@ func TestE2EProjectExampleInfra3TierAppSuccess(t *testing.T) {
 		`source = "../../tools/tofukit-tool-opentofu"`,
 		`source = "../tools/tofukit-tool-opentofu"`, 1)
 
-	// Update module source path to point to the copied stacks directory
-	// Original: source = "../../stacks/tofukit-feature-diagram-drawio"
-	// New: source = "../stacks/tofukit-feature-diagram-drawio" (relative to test-output/<test-name>/)
+	// Update module source path to point to the copied features directory
+	// Original: source = "../../features/tofukit-feature-diagram-drawio"
+	// New: source = "../features/tofukit-feature-diagram-drawio" (relative to test-output/<test-name>/)
 	modifiedContent = strings.Replace(modifiedContent,
-		`source = "../../stacks/tofukit-feature-diagram-drawio"`,
-		`source = "../stacks/tofukit-feature-diagram-drawio"`, 1)
+		`source = "../../features/tofukit-feature-diagram-drawio"`,
+		`source = "../features/tofukit-feature-diagram-drawio"`, 1)
 
 	projectPath := filepath.Join(testDir, "project.tofu")
 	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {

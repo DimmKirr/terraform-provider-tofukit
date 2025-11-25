@@ -13,15 +13,35 @@ resource "tofukit_feature" "status_command" {
 
   # Feature-level requirement
   requirements = [{
-    name = "Status Command Implementation"
+    name = "Status Command"
 
     instructions = [{
-      prompt = "Add a status command that shows 'Status: OK' using ${module.click_app.kits.framework.click.link} framework"
+      prompt = <<-EOF
+      Implement a "status" command that displays system status.
+
+      BUSINESS REQUIREMENTS:
+      - Command: status
+      - Behavior: Show current system status
+      - Output: "Status: OK" message
+      - Integration: Must integrate with ${module.click_app.kits.framework.click.link} CLI framework
+
+      IMPLEMENTATION LOCATION:
+      This feature must be implemented in ${tofukit_file.src_cli_py.link}
+
+      COMMAND SPECIFICATION:
+      - Function name: status
+      - Decorator: @cli.command()
+      - Docstring: "Show the current status."
+      - Type hint: -> None
+      - Output: "Status: OK" (using click.echo)
+      - Placement: After the version command provided by ${module.click_app.stack.link}
+      EOF
 
       constraints = [
         "Use ${module.click_app.kits.framework.click.link} click.echo() to output the status",
         "Create a @cli.command() decorated function",
-        "Keep it simple - just output 'Status: OK'"
+        "Keep it simple - just output 'Status: OK'",
+        "Do NOT remove existing commands from ${module.click_app.stack.link}"
       ]
     }]
   }]

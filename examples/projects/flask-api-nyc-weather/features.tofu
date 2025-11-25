@@ -1,7 +1,7 @@
 # ========================================
-# FEATURE: NYC Weather Data
+# FEATURE: Weather API Endpoints
 # ========================================
-# Product-specific feature for fetching NYC weather using Open-Meteo API
+# Product feature providing weather API endpoints
 
 locals {
   # NYC-specific coordinates
@@ -11,73 +11,82 @@ locals {
   temp_unit     = "fahrenheit"
 }
 
-resource "tofukit_feature" "nyc_weather" {
-  name        = "nyc-weather-data"
-  description = "NYC weather data fetching capability using Open-Meteo API"
+resource "tofukit_feature" "api_endpoint_weather" {
+  name        = "api-endpoint-weather"
+  description = "Weather API endpoints for NYC weather data"
+
+  # Link to implementation file
+  files = {
+    "app.py" = tofukit_file.app_py
+  }
+
+  # Note: depends_on removed - dependency is implicit through .link references in instructions
+  # (line 43, 49, 70 use tofukit_feature.integration_openmeteo.link)
 
   requirements = [
+    # Requirement 1: Weather Endpoint
     {
-      name = "NYC Weather Integration"
+      name = "/weather"
       instructions = [
         {
           prompt = <<-EOF
-          Implement NYC weather data fetching using the Open-Meteo Weather API integration.
+          Implement a weather API endpoint that provides current NYC weather data.
 
-          INTEGRATION DETAILS:
-          - Service: ${module.openmeteo.integration.description}
-          - API Base: ${module.openmeteo.integration.environments["production"]}
-          - Documentation: ${module.openmeteo.integration.docs["main"]}
-          - API Details: ${module.openmeteo.integration.docs["api"]}
-          - Parameters: ${module.openmeteo.integration.docs["parameters"]}
+          BUSINESS REQUIREMENTS:
+          - Endpoint: GET /weather
+          - Returns: Current NYC weather (temperature, humidity, weather code)
+          - Location: New York City (${local.nyc_latitude}°N, ${local.nyc_longitude}°W)
+          - Temperature Unit: ${local.temp_unit}
+          - Response Format: JSON with weather data and location metadata
+          - Data Source: Use ${tofukit_feature.integration_openmeteo.link} to fetch weather data
 
-          LOCATION: New York City
-          - Latitude: ${local.nyc_latitude}
-          - Longitude: ${local.nyc_longitude}
-          - Timezone: ${local.nyc_timezone}
+          IMPLEMENTATION LOCATION:
+          This endpoint must be implemented in ${tofukit_file.app_py.link}
 
-          API ENDPOINT:
-          ${module.openmeteo.integration.environments["production"]}/forecast
+          IMPLEMENTATION APPROACH:
+          - Call the weather fetching function from ${tofukit_feature.integration_openmeteo.link}
+          - Pass NYC coordinates: latitude=${local.nyc_latitude}, longitude=${local.nyc_longitude}
+          - Use temperature unit: ${local.temp_unit}
+          - Return JSON response with location metadata and current weather data
 
-          PARAMETERS TO FETCH:
-          - Current weather: temperature_2m, relative_humidity_2m, weather_code
-          - Temperature unit: ${local.temp_unit}
-          - Coordinates: latitude=${local.nyc_latitude}, longitude=${local.nyc_longitude}
-
-          IMPLEMENTATION:
-          - Use requests library for HTTP calls
-          - Parse JSON response
-          - Return structured weather data
-          - Handle API errors gracefully
-
-          See ${module.openmeteo.integration.examples["current-weather"].url} for example usage
+          EXPECTED RESPONSE STRUCTURE:
+          {
+            "location": {
+              "latitude": ${local.nyc_latitude},
+              "longitude": ${local.nyc_longitude},
+              "timezone": "${local.nyc_timezone}"
+            },
+            "current": {
+              "temperature": <value in ${local.temp_unit}>,
+              "humidity": <value in %>,
+              "weather_code": <code>
+            }
+          }
           EOF
 
           constraints = [
-            "Use ${module.openmeteo.integration.link} as the data source",
-            "NO authentication required (free API)",
-            "Include proper error handling for network failures",
+            "Use ${tofukit_feature.integration_openmeteo.link} for weather data fetching",
+            "Return JSON response",
+            "Include location metadata (NYC coordinates)",
             "Return temperature in ${local.temp_unit}",
-            "Include location metadata in response (NYC coordinates)",
+            "Handle errors with proper HTTP status codes"
           ]
         }
       ]
 
       verifications = [
         {
-          command = "grep -q 'api.open-meteo.com' app.py"
+          command = "grep -q '/weather' app.py && echo 'OK'"
+          expect  = "OK"
         },
         {
-          command = "grep -q '${local.nyc_latitude}' app.py"
+          command = "grep -q '${local.nyc_latitude}' app.py && echo 'OK'"
+          expect  = "OK"
         }
       ]
-    }
-  ]
+    },
 
-  # Link to implementation files
-  files = {
-    "app.py"     = tofukit_file.app_py
-    "README.md" = tofukit_file.readme_md
-  }
+  ]
 
   verifications = [{
     command = "test -f app.py"

@@ -7,21 +7,22 @@ resource "tofukit_file" "src_cli_py" {
 
   instructions = [{
     prompt = <<-EOT
-    Add a status command to the existing ${module.click_app.stack.link} CLI:
+    Implement ${module.click_app.kits.framework.click.link} command following Python CLI best practices.
 
-    @cli.command()
-    def status() -> None:
-        """Show the current status."""
-        click.echo("Status: OK")
-
-    This should be added after the version command.
+    TECHNICAL CONSTRAINTS:
+    - Use ${module.click_app.kits.framework.click.link} @cli.command() decorator
+    - Use click.echo() for output (not print())
+    - Include type hints (-> None)
+    - Do NOT remove existing commands from ${module.click_app.stack.link}
+    - Follow Python community conventions for CLI command structure
+    - Place new command after existing commands
     EOT
 
     constraints = [
       "Do NOT remove existing commands",
-      "Add the status command function after the version command",
       "Use ${module.click_app.kits.framework.click.link} click.echo() for output",
-      "Include type hint (-> None)"
+      "Include type hint (-> None)",
+      "Follow Python CLI community conventions"
     ]
   }]
 

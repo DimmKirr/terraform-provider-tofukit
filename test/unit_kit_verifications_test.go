@@ -4,15 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tofukit/opentofu-provider-tofukit/internal/resources"
 	"github.com/stretchr/testify/require"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/resources"
 )
 
-// TestCollectKitVerifications validates that kit verifications are properly extracted
+// TestUnitCollectKitVerifications validates that kit verifications are properly extracted
 // NOTE: This unit test cannot be placed in internal/resources/ because Go compiles ALL *_test.go
 // files in a directory together. Since project_test.go imports testutil (which imports resources),
 // adding any test file to internal/resources/ triggers an import cycle.
-func TestCollectKitVerifications(t *testing.T) {
+func TestUnitCollectKitVerifications(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a ProjectResourceFinal instance (needed for method receiver)
@@ -108,8 +108,8 @@ func TestCollectKitVerifications(t *testing.T) {
 	require.True(t, foundPip, "Should find pip verification")
 }
 
-// TestCollectKitVerificationsEmpty validates handling of empty kits
-func TestCollectKitVerificationsEmpty(t *testing.T) {
+// TestUnitCollectKitVerificationsEmpty validates handling of empty kits
+func TestUnitCollectKitVerificationsEmpty(t *testing.T) {
 	ctx := context.Background()
 	r := &resources.ProjectResourceFinal{}
 
@@ -151,8 +151,8 @@ func TestCollectKitVerificationsEmpty(t *testing.T) {
 	require.Empty(t, verifications, "Should return empty for kit with no verifications")
 }
 
-// TestCollectKitVerificationsPseudoPathFormat validates the pseudo-path format
-func TestCollectKitVerificationsPseudoPathFormat(t *testing.T) {
+// TestUnitCollectKitVerificationsPseudoPathFormat validates the pseudo-path format
+func TestUnitCollectKitVerificationsPseudoPathFormat(t *testing.T) {
 	ctx := context.Background()
 	r := &resources.ProjectResourceFinal{}
 

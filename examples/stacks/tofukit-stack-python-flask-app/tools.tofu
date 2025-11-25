@@ -9,9 +9,13 @@ resource "tofukit_tool" "uv" {
   description = "Fast Python package installer and resolver written in Rust"
   version     = var.uv_version
 
-  depends_on = [tofukit_language.python]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This tool requires ${tofukit_language.python.link} to be configured as the project's language runtime"
+      }]
+    },
     {
       name = "uv Installation"
 
@@ -52,11 +56,12 @@ resource "tofukit_tool" "uv" {
 
       instructions = [
         {
-          prompt = "Initialize Python project with uv: uv init --no-readme --python ${var.python_version}"
+          prompt = "Initialize Python project with uv: uv init --bare --python ${var.python_version}. The --bare flag creates only pyproject.toml without any sample files (no main.py, no README). We use app.py as the entry point for Flask apps."
           constraints = [
-            "Do NOT create README (will be provided by feature or project)",
+            "Use --bare flag to create minimal project (only pyproject.toml)",
             "Use specified Python version",
-            "Initialize in current directory"
+            "Initialize in current directory",
+            "Do NOT create sample files - Flask apps use app.py as the entry point"
           ]
         }
       ]

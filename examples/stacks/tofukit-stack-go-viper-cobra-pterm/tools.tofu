@@ -9,9 +9,13 @@ resource "tofukit_tool" "go_mod" {
   description = "Go modules dependency management"
   version     = var.go_version
 
-  depends_on = [tofukit_language.go]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This tool requires ${tofukit_language.go.link} to be configured as the project's language runtime"
+      }]
+    },
     {
       name = "Go Modules Initialization"
 
@@ -36,9 +40,13 @@ resource "tofukit_tool" "gotask" {
   description = "Task runner for build automation and task orchestration"
   version     = var.task_version
 
-  depends_on = [tofukit_language.go]
-
   requirements = [
+    {
+      name = "Prerequisites"
+      instructions = [{
+        prompt = "This tool requires ${tofukit_language.go.link} to be configured as the project's language runtime"
+      }]
+    },
     {
       name = "Task Runner Installation"
 

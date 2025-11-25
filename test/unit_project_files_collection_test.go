@@ -9,7 +9,7 @@ import (
 
 // TestProjectFilesCollection_Level1_ProjectWithFeature validates file collection
 // from a project with an inline feature
-func TestProjectFilesCollection_Level1_ProjectWithFeature(t *testing.T) {
+func TestUnitProjectFilesCollection_Level1_ProjectWithFeature(t *testing.T) {
 	// Create a project with an inline feature that has files
 	projectData := map[string]interface{}{
 		"name":    "test-project",
@@ -65,7 +65,7 @@ func TestProjectFilesCollection_Level1_ProjectWithFeature(t *testing.T) {
 
 // TestProjectFilesCollection_Level2_ProjectWithKit validates file collection
 // from a project with kits attached
-func TestProjectFilesCollection_Level2_ProjectWithKit(t *testing.T) {
+func TestUnitProjectFilesCollection_Level2_ProjectWithKit(t *testing.T) {
 	// Mock kit data (simulates what would come from registry)
 	kitsData := map[string]interface{}{
 		"kit:language:go": map[string]interface{}{
@@ -115,7 +115,7 @@ func TestProjectFilesCollection_Level2_ProjectWithKit(t *testing.T) {
 
 // TestProjectFilesCollection_Level3_ProjectWithStack validates file collection
 // from a project with a full stack (simulating go-viper-cobra-pterm stack)
-func TestProjectFilesCollection_Level3_ProjectWithStack(t *testing.T) {
+func TestUnitProjectFilesCollection_Level3_ProjectWithStack(t *testing.T) {
 	// Mock stack structure with files at different levels
 	stackData := map[string]interface{}{
 		// Stack's own files (lowest precedence)
@@ -223,7 +223,7 @@ func TestProjectFilesCollection_Level3_ProjectWithStack(t *testing.T) {
 
 // TestProjectFilesCollection_Precedence validates that project files override
 // stack/kit/feature files with the same path
-func TestProjectFilesCollection_Precedence(t *testing.T) {
+func TestUnitProjectFilesCollection_Precedence(t *testing.T) {
 	// Mock file sources with overlapping paths
 	stackFiles := map[string]string{
 		"config.txt": "stack content",
@@ -308,7 +308,7 @@ func TestProjectFilesCollection_Precedence(t *testing.T) {
 }
 
 // TestProjectFilesCollection_EmptyCases validates handling of edge cases
-func TestProjectFilesCollection_EmptyCases(t *testing.T) {
+func TestUnitProjectFilesCollection_EmptyCases(t *testing.T) {
 	t.Run("NoFiles", func(t *testing.T) {
 		// Kit with no files
 		kitData := map[string]interface{}{
@@ -355,7 +355,7 @@ func TestProjectFilesCollection_EmptyCases(t *testing.T) {
 
 // TestProjectFilesCollection_BugRepro_FeatureKitFiles reproduces scenarios
 // where files from kits referenced by features should be collected
-func TestProjectFilesCollection_BugRepro_FeatureKitFiles(t *testing.T) {
+func TestUnitProjectFilesCollection_BugRepro_FeatureKitFiles(t *testing.T) {
 	// This test ensures that when a feature references a kit,
 	// the kit's files are properly collected
 
@@ -445,7 +445,7 @@ func TestProjectFilesCollection_BugRepro_FeatureKitFiles(t *testing.T) {
 
 // TestProjectFilesCollection_FieldPreservation validates that file fields
 // (instructions.prompt, instructions.constraints, verifications) are preserved through merging
-func TestProjectFilesCollection_FieldPreservation(t *testing.T) {
+func TestUnitProjectFilesCollection_FieldPreservation(t *testing.T) {
 	// Mock files with full field definitions from different sources
 
 	// Kit file with instructions and verifications
@@ -556,7 +556,7 @@ func TestProjectFilesCollection_FieldPreservation(t *testing.T) {
 
 // TestProjectFilesCollection_FileVerifications validates that file-level
 // verifications are preserved through merging
-func TestProjectFilesCollection_FileVerifications(t *testing.T) {
+func TestUnitProjectFilesCollection_FileVerifications(t *testing.T) {
 	// Mock files with verifications from different sources
 
 	// Kit file with verifications
