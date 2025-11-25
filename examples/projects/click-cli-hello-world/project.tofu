@@ -50,56 +50,9 @@ resource "tofukit_project" "click_cli" {
   # The stack provides a complete Python Click CLI application template
   stack = module.click_app.stack
 
-  # Note: Stack includes features, so no separate features attribute needed
-  # Project can add additional features here if needed (merged with stack features)
-
   # Add a status command feature (merges with stack's version and readme features)
   features = {
-    "status" = {
-      requirements = [
-        {
-          name = "Status Command Implementation"
-          instructions = [
-            {
-              prompt = "Add a status command that shows 'Status: OK'"
-              constraints = [
-                "Use click.echo() to output the status",
-                "Create a @cli.command() decorated function",
-                "Keep it simple - just output 'Status: OK'"
-              ]
-            }
-          ]
-        }
-      ]
-
-      files = {
-        "src/cli.py" = {
-          instructions = [{
-            prompt = <<-EOT
-              Add a status command to the existing CLI:
-
-              @cli.command()
-              def status() -> None:
-                  """Show the current status."""
-                  click.echo("Status: OK")
-
-              This should be added after the version command.
-            EOT
-            constraints = [
-              "Do NOT remove existing commands",
-              "Add the status command function after the version command",
-              "Use click.echo() for output",
-              "Include type hint (-> None)"
-            ]
-          }]
-
-          verifications = [{
-            command = "python3 src/cli.py status | grep -q 'Status: OK' && echo 'ok'"
-            expect  = "ok"
-          }]
-        }
-      }
-    }
+    "status" = tofukit_feature.status_command
   }
 }
 

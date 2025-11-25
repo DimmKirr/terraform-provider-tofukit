@@ -73,12 +73,13 @@ resource "tofukit_feature" "nyc_weather" {
     }
   ]
 
-  # Optional: Feature could define files, but in this case project defines them
-  # This feature is purely about the capability/requirement
+  # Link to implementation files
+  files = {
+    "app.py"     = tofukit_file.app_py
+    "README.md" = tofukit_file.readme_md
+  }
 
-  verifications = [
-    {
-      command = "test -f app.py"
-    }
-  ]
+  verifications = [{
+    command = "test -f app.py"
+  }]
 }
