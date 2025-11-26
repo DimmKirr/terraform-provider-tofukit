@@ -596,6 +596,15 @@ func (e *Executor) saveExecutionMetadata(ctx context.Context, status *ExecutionS
 		"metadata_path": metadataPath,
 	})
 
+	// Extract and save turn-by-turn breakdown if debug is enabled
+	if e.debug {
+		if err := e.SaveTurnBreakdown(ctx, outputDir); err != nil {
+			tflog.Warn(ctx, "Failed to save turn breakdown", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+
 	return nil
 }
 
@@ -883,4 +892,271 @@ func (e *Executor) RetryExecution(ctx context.Context, projectSpec map[string]in
 	})
 
 	return lastStatus, fmt.Errorf("execution failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// Turn represents a single conversation turn
+type Turn struct {
+	TurnNumber int                      `json:"turn_number"`
+	User       []map[string]interface{} `json:"user_messages"`
+	Assistant  []map[string]interface{} `json:"assistant_messages"`
+	Timestamp  string                   `json:"timestamp"`
+}
+
+// SaveTurnBreakdown extracts turns from Claude session and saves them individually
+func (e *Executor) SaveTurnBreakdown(ctx context.Context, outputDir string) error {
+	// Find Claude session directory
+	sessionDir, err := e.findClaudeSessionDir(outputDir)
+	if err != nil {
+		return fmt.Errorf("failed to find Claude session directory: %w", err)
+	}
+
+	// Find the conversation JSONL file (largest .jsonl file)
+	jsonlPath, err := e.findConversationFile(sessionDir)
+	if err != nil {
+		return fmt.Errorf("failed to find conversation file: %w", err)
+	}
+
+	tflog.Debug(ctx, "Found Claude conversation file", map[string]interface{}{
+		"jsonl_path": jsonlPath,
+	})
+
+	// Parse turns from JSONL
+	turns, err := e.parseTurns(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse turns: %w", err)
+	}
+
+	tflog.Info(ctx, "Extracted conversation turns", map[string]interface{}{
+		"turn_count": len(turns),
+	})
+
+	// Save each turn
+	debugDir := filepath.Join(outputDir, ".debug")
+	for i, turn := range turns {
+		timestamp := time.Now().Unix()
+		if err := e.saveTurn(turn, debugDir, timestamp); err != nil {
+			tflog.Warn(ctx, "Failed to save turn", map[string]interface{}{
+				"turn_number": i + 1,
+				"error":       err.Error(),
+			})
+		}
+	}
+
+	return nil
+}
+
+// findClaudeSessionDir finds the Claude session directory for this project
+func (e *Executor) findClaudeSessionDir(outputDir string) (string, error) {
+	claudeHome := e.client.claudeHomeDir
+	if claudeHome == "" {
+		claudeHome = filepath.Join(os.Getenv("HOME"), ".claude")
+	}
+
+	projectsDir := filepath.Join(claudeHome, "projects")
+
+	// Escape the output directory path to match Claude's naming convention
+	// Claude replaces / with - and removes other special characters
+	escapedPath := strings.ReplaceAll(outputDir, "/", "-")
+
+	// Find directories that match the escaped path
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read projects directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && strings.Contains(entry.Name(), escapedPath) {
+			return filepath.Join(projectsDir, entry.Name()), nil
+		}
+	}
+
+	return "", fmt.Errorf("no session directory found for output path: %s", outputDir)
+}
+
+// findConversationFile finds the main conversation JSONL file (largest file)
+func (e *Executor) findConversationFile(sessionDir string) (string, error) {
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read session directory: %w", err)
+	}
+
+	var largestFile string
+	var largestSize int64
+
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".jsonl" {
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+
+			if info.Size() > largestSize {
+				largestSize = info.Size()
+				largestFile = filepath.Join(sessionDir, entry.Name())
+			}
+		}
+	}
+
+	if largestFile == "" {
+		return "", fmt.Errorf("no conversation JSONL file found")
+	}
+
+	return largestFile, nil
+}
+
+// parseTurns parses the conversation JSONL into turns
+func (e *Executor) parseTurns(jsonlPath string) ([]Turn, error) {
+	data, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JSONL file: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var turns []Turn
+	var currentUserMsgs []map[string]interface{}
+	var currentAssistantMsgs []map[string]interface{}
+	turnNumber := 0
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		var msg map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+
+		msgType, ok := msg["type"].(string)
+		if !ok {
+			continue
+		}
+
+		switch msgType {
+		case "user":
+			// If we have assistant messages from previous turn, save the turn
+			if len(currentAssistantMsgs) > 0 {
+				turnNumber++
+				turn := Turn{
+					TurnNumber: turnNumber,
+					User:       currentUserMsgs,
+					Assistant:  currentAssistantMsgs,
+					Timestamp:  e.extractTimestamp(currentUserMsgs),
+				}
+				turns = append(turns, turn)
+
+				// Reset for next turn
+				currentUserMsgs = nil
+				currentAssistantMsgs = nil
+			}
+
+			// Add user message to current turn
+			currentUserMsgs = append(currentUserMsgs, msg)
+
+		case "assistant":
+			// Add assistant message to current turn
+			currentAssistantMsgs = append(currentAssistantMsgs, msg)
+		}
+	}
+
+	// Save last turn if exists
+	if len(currentUserMsgs) > 0 || len(currentAssistantMsgs) > 0 {
+		turnNumber++
+		turn := Turn{
+			TurnNumber: turnNumber,
+			User:       currentUserMsgs,
+			Assistant:  currentAssistantMsgs,
+			Timestamp:  e.extractTimestamp(currentUserMsgs),
+		}
+		turns = append(turns, turn)
+	}
+
+	return turns, nil
+}
+
+// extractTimestamp extracts timestamp from first message
+func (e *Executor) extractTimestamp(msgs []map[string]interface{}) string {
+	if len(msgs) > 0 {
+		if ts, ok := msgs[0]["timestamp"].(string); ok {
+			return ts
+		}
+	}
+	return time.Now().Format(time.RFC3339)
+}
+
+// saveTurn saves a single turn to JSON and MD files
+func (e *Executor) saveTurn(turn Turn, debugDir string, timestamp int64) error {
+	// Save JSON
+	jsonPath := filepath.Join(debugDir, fmt.Sprintf("claude-turn-%d-%d.json", turn.TurnNumber, timestamp))
+	jsonData, err := json.MarshalIndent(turn, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal turn JSON: %w", err)
+	}
+
+	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to write turn JSON: %w", err)
+	}
+
+	// Save Markdown
+	mdPath := filepath.Join(debugDir, fmt.Sprintf("claude-turn-%d-%d.md", turn.TurnNumber, timestamp))
+	mdContent := e.generateTurnMarkdown(turn)
+
+	if err := os.WriteFile(mdPath, []byte(mdContent), 0644); err != nil {
+		return fmt.Errorf("failed to write turn MD: %w", err)
+	}
+
+	return nil
+}
+
+// generateTurnMarkdown creates a human-readable markdown version of a turn
+func (e *Executor) generateTurnMarkdown(turn Turn) string {
+	var content strings.Builder
+
+	content.WriteString(fmt.Sprintf("# Turn %d\n\n", turn.TurnNumber))
+	content.WriteString(fmt.Sprintf("**Timestamp**: %s\n\n", turn.Timestamp))
+
+	// User messages
+	content.WriteString("## User Messages\n\n")
+	if len(turn.User) == 0 {
+		content.WriteString("*No user messages in this turn*\n\n")
+	} else {
+		for i, msg := range turn.User {
+			content.WriteString(fmt.Sprintf("### User Message %d\n\n", i+1))
+
+			if ts, ok := msg["timestamp"].(string); ok {
+				content.WriteString(fmt.Sprintf("**Time**: %s\n\n", ts))
+			}
+
+			if contentData, ok := msg["content"]; ok {
+				content.WriteString("```\n")
+				content.WriteString(fmt.Sprintf("%v", contentData))
+				content.WriteString("\n```\n\n")
+			}
+		}
+	}
+
+	// Assistant messages
+	content.WriteString("## Assistant Messages\n\n")
+	if len(turn.Assistant) == 0 {
+		content.WriteString("*No assistant messages in this turn*\n\n")
+	} else {
+		for i, msg := range turn.Assistant {
+			content.WriteString(fmt.Sprintf("### Assistant Message %d\n\n", i+1))
+
+			if ts, ok := msg["timestamp"].(string); ok {
+				content.WriteString(fmt.Sprintf("**Time**: %s\n\n", ts))
+			}
+
+			if contentData, ok := msg["content"]; ok {
+				content.WriteString("```\n")
+				content.WriteString(fmt.Sprintf("%v", contentData))
+				content.WriteString("\n```\n\n")
+			}
+		}
+	}
+
+	content.WriteString("---\n\n")
+	content.WriteString(fmt.Sprintf("*Turn %d extracted from Claude session logs*\n", turn.TurnNumber))
+
+	return content.String()
 }
