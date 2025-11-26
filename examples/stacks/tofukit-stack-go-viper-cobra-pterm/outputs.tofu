@@ -94,3 +94,15 @@ output "files" {
     main_go               = tofukit_file.main_go
   }
 }
+
+# Use when you need to reference common Go CLI patterns in prompts/constraints
+output "patterns" {
+  description = "Common patterns for Go CLI applications using this stack"
+  value = {
+    http_client       = local.http_client_pattern
+    error_handling    = local.error_handling_pattern
+    cobra_arguments   = local.cobra_argument_pattern
+    iso8601_timestamp = local.iso8601_timestamp_pattern
+    pterm_output      = local.pterm_output_pattern
+  }
+}

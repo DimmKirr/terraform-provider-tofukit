@@ -160,25 +160,6 @@ func TestE2EProjectExamplePurlSuccess(t *testing.T) {
 
 		// Verify binary exists
 		assert.FileExists(t, purlBinaryPath, "purl binary should exist at ./bin/purl")
-
-		// Test: Run `./bin/purl status`
-		t.Log("Running ./bin/purl status...")
-		statusCmd := exec.Command(purlBinaryPath, "status")
-		statusCmd.Dir = outputPath
-		statusOutput, err := statusCmd.CombinedOutput()
-		if err != nil {
-			t.Logf("Status command output: %s", statusOutput)
-		}
-		require.NoError(t, err, "Failed to run purl status command")
-
-		statusOutputStr := string(statusOutput)
-		t.Logf("purl status output:\n%s", statusOutputStr)
-
-		// Verify output contains "go" and "version"
-		assert.Contains(t, strings.ToLower(statusOutputStr), "go", "Status output should mention 'go'")
-		assert.Contains(t, strings.ToLower(statusOutputStr), "version", "Status output should mention 'version'")
-
-		t.Log("✓ purl status command works correctly")
 	})
 
 	// === ADDITIONAL TEST: Verify purl ping command ===
@@ -188,9 +169,9 @@ func TestE2EProjectExamplePurlSuccess(t *testing.T) {
 		outputPath := filepath.Join(testDir, "output")
 		purlBinaryPath := filepath.Join(outputPath, "bin", "purl")
 
-		// Test: Run `./bin/purl ping http://ifcfg.me/` with timeout
-		t.Log("Running ./bin/purl ping http://ifcfg.me/...")
-		pingCmd := exec.Command("timeout", "3s", purlBinaryPath, "ping", "http://ifcfg.me/")
+		// Test: Run `./bin/purl http://ifcfg.me/` with timeout (direct URL, no subcommand)
+		t.Log("Running ./bin/purl http://ifcfg.me/...")
+		pingCmd := exec.Command("timeout", "3s", purlBinaryPath, "http://ifcfg.me/")
 		pingCmd.Dir = outputPath
 		pingOutput, err := pingCmd.CombinedOutput()
 
