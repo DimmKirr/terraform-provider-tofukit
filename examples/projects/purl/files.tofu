@@ -28,11 +28,7 @@ resource "tofukit_file" "pinger_interface" {
       - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
       EOF
 
-      constraints = [
-        "Use Go interface pattern (minimal, focused contract)",
-        "All methods accept context.Context for cancellation",
-        "Factory returns interface implementation with error handling"
-      ]
+      constraints = []
     }
   ]
 
@@ -79,9 +75,7 @@ resource "tofukit_file" "protocol_detector" {
 
       constraints = [
         "Stop at first successful probe (don't over-probe)",
-        "Probe timeout per business requirements",
-        "Priority: HTTP > DNS > ICMP (hard-coded, not configurable)",
-        "Return descriptive error only if all probes fail"
+        "Priority: HTTP > DNS > ICMP (hard-coded, not configurable)"
       ]
     }
   ]
@@ -126,8 +120,7 @@ resource "tofukit_file" "pinger_http" {
       EOF
 
       constraints = [
-        "Use http.Client with 10-second timeout (per business requirements)",
-        "Follow ${module.stack_go_viper_cobra_pterm.patterns.http_client}"
+        "10-second timeout per business requirements"
       ]
     }
   ]
@@ -170,8 +163,6 @@ resource "tofukit_file" "pinger_icmp" {
       EOF
 
       constraints = [
-        "Use golang.org/x/net/icmp package (standard for Go ICMP)",
-        "Implement all Pinger interface methods",
         "StatusCode: 1 for success, 0 for timeout (per business requirements)"
       ]
     }
@@ -221,8 +212,6 @@ resource "tofukit_file" "pinger_dns" {
       EOF
 
       constraints = [
-        "Use net package (standard library) for DNS operations",
-        "Implement all Pinger interface methods",
         "StatusCode = number of IP addresses returned (per business requirements)"
       ]
     }
@@ -265,11 +254,7 @@ resource "tofukit_file" "cmd_root" {
       NO CHANGES to standard stack structure.
       EOF
 
-      constraints = [
-        "Preserve all stack initialization logic from ${module.stack_go_viper_cobra_pterm.files.cobra_root_cmd.link}",
-        "Keep standard flags defined in stack",
-        "Add ${local.project_name}-specific protocol flags only"
-      ]
+      constraints = []
     },
 
     # INSTRUCTION 2: Protocol Flags
@@ -290,9 +275,7 @@ resource "tofukit_file" "cmd_root" {
       EOF
 
       constraints = [
-        "Use ${module.stack_go_viper_cobra_pterm.kits.framework.cobra.link} flag patterns",
-        "Flags are mutually exclusive (validate per Cobra best practices)",
-        "Default: auto-detection enabled"
+        "Flags are mutually exclusive (validate per Cobra best practices)"
       ]
     },
 
@@ -316,9 +299,7 @@ resource "tofukit_file" "cmd_root" {
       EOF
 
       constraints = [
-        "Use pinger abstraction (no protocol-specific code in cmd/root.go)",
-        "Ping interval and loop behavior per business requirements",
-        "All output formatting via stack patterns"
+        "Use pinger abstraction (no protocol-specific code in cmd/root.go)"
       ]
     }
   ]
