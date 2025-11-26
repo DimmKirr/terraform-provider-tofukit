@@ -327,8 +327,8 @@ resource "tofukit_file" "cmd_root" {
       EOF
 
       constraints = [
-        "Use Cobra's flag binding (cmd.Flags().BoolVar or similar)",
-        "Validate mutual exclusivity in PreRunE or RunE",
+        "Use ${module.stack_go_viper_cobra_pterm.kits.framework.cobra.link} flag patterns",
+        "Flags are mutually exclusive (validate per Cobra best practices)",
         "Default: auto-detection enabled"
       ]
     },
@@ -336,27 +336,26 @@ resource "tofukit_file" "cmd_root" {
     # INSTRUCTION 3: Multi-Protocol Ping Logic
     {
       prompt = <<-EOF
-      Integrate multi-protocol pinger abstraction.
+      Integrate multi-protocol pinger abstraction with protocol selection.
 
-      IMPLEMENTATION:
-      1. Parse target from args[0]
-      2. Determine protocol:
-         - If explicit flag (--http, --icmp, --dns): use that protocol
-         - If --auto (default): call DetectProtocol from ${tofukit_file.protocol_detector.link}
-      3. Create pinger via NewPinger(protocol) from ${tofukit_file.pinger_interface.link}
-      4. Execute continuous ping loop (1-second intervals)
-      5. Format output using ${module.stack_go_viper_cobra_pterm.patterns.pterm_output}
+      ARCHITECTURE:
+      - Use ${tofukit_file.protocol_detector.link} for protocol selection (when --auto)
+      - Use ${tofukit_file.pinger_interface.link} factory for pinger creation
+      - Implement continuous ping loop following Go patterns
+
+      OUTPUT FORMATTING:
+      - ${module.stack_go_viper_cobra_pterm.patterns.pterm_output} for colored output
+      - ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp} for timestamps
+      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling} for error messages
 
       REFERENCE:
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling} for errors
-      - ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp} for timestamps
+      Follow ${module.stack_go_viper_cobra_pterm.kits.framework.cobra.link} patterns for command execution.
       EOF
 
       constraints = [
         "Use pinger abstraction (no protocol-specific code in cmd/root.go)",
-        "1 second interval between pings",
-        "Continuous loop until Ctrl+C",
-        "Follow stack patterns for output formatting"
+        "Ping interval and loop behavior per business requirements",
+        "All output formatting via stack patterns"
       ]
     }
   ]
