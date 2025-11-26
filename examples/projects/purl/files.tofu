@@ -15,10 +15,9 @@ resource "tofukit_file" "pinger_interface" {
       Define Go interface for protocol-agnostic ping operations.
 
       ARCHITECTURE:
-      - Interface name: Pinger
-      - Methods for: executing ping, checking compatibility, probing ports
-      - Result structure: PingResult with timestamp, protocol, target, status, duration
-      - Factory function: NewPinger(protocol string) creates appropriate implementation
+      - Protocol-agnostic interface for ping operations
+      - Result structure with timing and status information
+      - Factory function for creating protocol-specific implementations
 
       DESIGN PATTERN:
       Follow Go interface patterns from standard library (io.Reader, http.Handler examples).
@@ -32,8 +31,7 @@ resource "tofukit_file" "pinger_interface" {
       constraints = [
         "Use Go interface pattern (minimal, focused contract)",
         "All methods accept context.Context for cancellation",
-        "PingResult is concrete struct, not interface",
-        "Factory returns (Pinger, error) - error for unknown protocols"
+        "Factory returns interface implementation with error handling"
       ]
     }
   ]
@@ -69,44 +67,21 @@ resource "tofukit_file" "protocol_detector" {
       Implement protocol auto-detection following the priority sequence from business requirements.
 
       ARCHITECTURE:
-      - Function: DetectProtocol(target string, timeout time.Duration) returns (protocol, port, error)
-      - Parse target using net/url.Parse() for URL analysis
+      - Function: DetectProtocol(target, timeout) returns protocol selection
       - Probe in priority order: HTTP → DNS → ICMP (stop at first success)
-      - Use CanHandle and ProbePort methods from each pinger
+      - Use pinger implementations from ${tofukit_file.pinger_interface.link}
 
-      REFERENCE PATTERNS:
-      - net/url.Parse() for URL parsing (Go standard library)
+      REFERENCE:
+      - Go net/url package for URL parsing
+      - Go net package for connectivity checks
       - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
-      - Port detection: Use net.Dial or similar for connectivity checks
       EOF
 
       constraints = [
         "Stop at first successful probe (don't over-probe)",
-        "Use timeout for each probe attempt",
+        "Probe timeout per business requirements",
         "Priority: HTTP > DNS > ICMP (hard-coded, not configurable)",
         "Return descriptive error only if all probes fail"
-      ]
-    },
-
-    # INSTRUCTION 2: Target Parsing Helpers
-    {
-      prompt = <<-EOF
-      Create helper functions for target analysis.
-
-      HELPERS:
-      - ParseTarget(target string) extracts scheme, host, port
-      - GetDefaultPort(protocol string) returns standard port numbers
-      - IsPortOpen(host, port, timeout) checks basic connectivity
-
-      REFERENCE:
-      Use Go's net and net/url packages following standard library patterns.
-      EOF
-
-      constraints = [
-        "Use net/url.Parse() for URL parsing",
-        "Handle missing scheme gracefully (common case)",
-        "Validate port is numeric if present",
-        "Follow ${module.stack_go_viper_cobra_pterm.patterns.error_handling}"
       ]
     }
   ]
@@ -152,8 +127,6 @@ resource "tofukit_file" "pinger_http" {
 
       constraints = [
         "Use http.Client with 10-second timeout (per business requirements)",
-        "Always close response bodies (defer resp.Body.Close())",
-        "Use context for cancellation",
         "Follow ${module.stack_go_viper_cobra_pterm.patterns.http_client}"
       ]
     }
@@ -250,9 +223,7 @@ resource "tofukit_file" "pinger_dns" {
       constraints = [
         "Use net package (standard library) for DNS operations",
         "Implement all Pinger interface methods",
-        "Support context for cancellation",
-        "StatusCode = number of IP addresses returned (per business requirements)",
-        "Handle NXDOMAIN as expected response, not error"
+        "StatusCode = number of IP addresses returned (per business requirements)"
       ]
     }
   ]
