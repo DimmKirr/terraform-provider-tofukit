@@ -189,25 +189,17 @@ resource "tofukit_file" "pinger_icmp" {
       ARCHITECTURE:
       - Type: ICMPPinger (implements ${tofukit_file.pinger_interface.link})
       - Use golang.org/x/net/icmp package for ICMP operations
-      - Handle privilege requirements for raw sockets
 
       REFERENCE:
       - golang.org/x/net/icmp package documentation
       - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
       - ICMP RFC 792 for protocol details
-
-      PRIVILEGE HANDLING:
-      - Detect permission errors (EPERM on Linux, similar on other OS)
-      - Provide clear error messages about privilege requirements
-      - Document: Linux needs CAP_NET_RAW or root, macOS needs root
       EOF
 
       constraints = [
         "Use golang.org/x/net/icmp package (standard for Go ICMP)",
         "Implement all Pinger interface methods",
-        "Handle DNS resolution before ICMP",
-        "StatusCode: 1 for success, 0 for timeout (per business requirements)",
-        "Follow ${module.stack_go_viper_cobra_pterm.patterns.error_handling} for privilege errors"
+        "StatusCode: 1 for success, 0 for timeout (per business requirements)"
       ]
     }
   ]
