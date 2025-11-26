@@ -58,6 +58,7 @@ resource "tofukit_project" "this" {
     # Core protocol abstraction and detection
     "protocol_abstraction" = tofukit_feature.protocol_abstraction
     "protocol_detection"   = tofukit_feature.protocol_detection
+    "user_config"          = tofukit_feature.user_config
 
     # Protocol implementations
     "http_ping" = tofukit_feature.http_ping

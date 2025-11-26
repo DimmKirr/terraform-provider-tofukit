@@ -67,6 +67,12 @@ output "features" {
     taskfile        = tofukit_feature.taskfile
     gitignore       = tofukit_feature.gitignore
     readme          = tofukit_feature.readme
+    # Pattern features (design guidance)
+    http_client_pattern       = tofukit_feature.http_client_pattern
+    error_handling_pattern    = tofukit_feature.error_handling_pattern
+    cobra_argument_pattern    = tofukit_feature.cobra_argument_pattern
+    iso8601_timestamp_pattern = tofukit_feature.iso8601_timestamp_pattern
+    pterm_output_pattern      = tofukit_feature.pterm_output_pattern
   }
 }
 
@@ -92,17 +98,5 @@ output "files" {
     readme_md             = tofukit_file.readme_md
     cobra_root_cmd        = tofukit_file.cobra_root_cmd
     main_go               = tofukit_file.main_go
-  }
-}
-
-# Use when you need to reference common Go CLI patterns in prompts/constraints
-output "patterns" {
-  description = "Common patterns for Go CLI applications using this stack"
-  value = {
-    http_client       = local.http_client_pattern
-    error_handling    = local.error_handling_pattern
-    cobra_arguments   = local.cobra_argument_pattern
-    iso8601_timestamp = local.iso8601_timestamp_pattern
-    pterm_output      = local.pterm_output_pattern
   }
 }

@@ -25,7 +25,7 @@ resource "tofukit_file" "pinger_interface" {
 
       REFERENCE:
       - Go Effective Go documentation on interfaces
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link}
       EOF
 
       constraints = []
@@ -70,7 +70,7 @@ resource "tofukit_file" "protocol_detector" {
       REFERENCE:
       - Go net/url package for URL parsing
       - Go net package for connectivity checks
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link}
       EOF
 
       constraints = [
@@ -110,8 +110,8 @@ resource "tofukit_file" "pinger_http" {
       - Implement all Pinger interface methods
 
       REFERENCE PATTERNS:
-      - ${module.stack_go_viper_cobra_pterm.patterns.http_client}
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
+      - ${module.stack_go_viper_cobra_pterm.features.http_client_pattern.link}
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link}
       - Go net/http documentation for client usage
 
       INTEGRATION:
@@ -120,7 +120,7 @@ resource "tofukit_file" "pinger_http" {
       EOF
 
       constraints = [
-        "10-second timeout per business requirements"
+        "Timeout configured via ${tofukit_feature.user_config.link}"
       ]
     }
   ]
@@ -158,7 +158,7 @@ resource "tofukit_file" "pinger_icmp" {
 
       REFERENCE:
       - golang.org/x/net/icmp package documentation
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link}
       - ICMP RFC 792 for protocol details
       EOF
 
@@ -202,7 +202,7 @@ resource "tofukit_file" "pinger_dns" {
 
       REFERENCE:
       - Go net package documentation for DNS operations
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling}
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link}
       - net.Resolver for custom DNS server configuration
 
       CUSTOM DNS SERVER:
@@ -290,9 +290,9 @@ resource "tofukit_file" "cmd_root" {
       - Implement continuous ping loop following Go patterns
 
       OUTPUT FORMATTING:
-      - ${module.stack_go_viper_cobra_pterm.patterns.pterm_output} for colored output
-      - ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp} for timestamps
-      - ${module.stack_go_viper_cobra_pterm.patterns.error_handling} for error messages
+      - ${module.stack_go_viper_cobra_pterm.features.pterm_output_pattern.link} for colored output
+      - ${module.stack_go_viper_cobra_pterm.features.iso8601_timestamp_pattern.link} for timestamps
+      - ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link} for error messages
 
       REFERENCE:
       Follow ${module.stack_go_viper_cobra_pterm.kits.framework.cobra.link} patterns for command execution.

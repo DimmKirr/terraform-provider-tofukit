@@ -90,6 +90,56 @@ resource "tofukit_feature" "protocol_abstraction" {
   verifications = []
 }
 
+# User configuration feature
+resource "tofukit_feature" "user_config" {
+  name        = "user-config"
+  description = "Command-line configuration parameters for ping operations"
+
+  requirements = [
+    # REQUIREMENT 1: Configurable Parameters
+    {
+      name = "Configurable Parameters"
+
+      instructions = [{
+        prompt = <<-EOF
+        Provide user-configurable parameters for ping operations using ${module.stack_go_viper_cobra_pterm.kits.framework.cobra.link} and ${module.stack_go_viper_cobra_pterm.kits.framework.viper.link}.
+
+        USER CAPABILITY:
+        - User can customize ping behavior via command-line flags
+        - User can set timeout for individual ping attempts
+        - User can control interval between pings
+        - Configuration applies to all protocols (HTTP, ICMP, DNS)
+
+        PARAMETERS:
+        - --timeout: Maximum time to wait for response (default: 10s)
+        - --interval: Time between ping attempts (default: 1s)
+
+        INTEGRATION:
+        - Use Cobra for flag definition
+        - Use Viper for configuration management
+        - All protocol implementations should read these values
+        EOF
+
+        constraints = [
+          "Use Cobra flags with Viper binding",
+          "Default timeout: 10 seconds",
+          "Default interval: 1 second",
+          "Parse duration strings (10s, 1m, etc.)"
+        ]
+      }]
+
+      verifications = []
+    }
+  ]
+
+  kits = [
+    module.stack_go_viper_cobra_pterm.kits.framework.cobra,
+    module.stack_go_viper_cobra_pterm.kits.framework.viper
+  ]
+
+  verifications = []
+}
+
 # Protocol detection feature
 resource "tofukit_feature" "protocol_detection" {
   name        = "protocol-detection"
@@ -237,11 +287,10 @@ resource "tofukit_feature" "http_ping" {
           EOF
 
           constraints = [
-            "1 second interval between requests",
-            "10 second timeout per request",
+            "Timeout and interval configured via ${tofukit_feature.user_config.link}",
             "Continue operation on failures",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp}",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.pterm_output}"
+            "Use ${module.stack_go_viper_cobra_pterm.features.iso8601_timestamp_pattern.link}",
+            "Use ${module.stack_go_viper_cobra_pterm.features.pterm_output_pattern.link}"
           ]
         }
       ]
@@ -339,13 +388,12 @@ resource "tofukit_feature" "icmp_ping" {
           EOF
 
           constraints = [
-            "1 second interval between pings",
-            "5 second timeout per ping",
+            "Timeout and interval configured via ${tofukit_feature.user_config.link}",
             "StatusCode: 1 for reply received, 0 for timeout",
             "Continue operation on failures",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp}",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.pterm_output}",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.error_handling} for privilege errors"
+            "Use ${module.stack_go_viper_cobra_pterm.features.iso8601_timestamp_pattern.link}",
+            "Use ${module.stack_go_viper_cobra_pterm.features.pterm_output_pattern.link}",
+            "Use ${module.stack_go_viper_cobra_pterm.features.error_handling_pattern.link} for privilege errors"
           ]
         }
       ]
@@ -400,6 +448,7 @@ resource "tofukit_feature" "icmp_ping" {
   verifications = []
 }
 
+
 # DNS ping feature
 resource "tofukit_feature" "dns_ping" {
   name        = "dns-ping"
@@ -446,13 +495,12 @@ resource "tofukit_feature" "dns_ping" {
           EOF
 
           constraints = [
-            "1 second interval between queries",
-            "5 second timeout per query",
+            "Timeout and interval configured via ${tofukit_feature.user_config.link}",
             "StatusCode = number of IP addresses returned",
             "NXDOMAIN is expected response, not application error",
             "Continue operation on failures",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.iso8601_timestamp}",
-            "Use ${module.stack_go_viper_cobra_pterm.patterns.pterm_output}"
+            "Use ${module.stack_go_viper_cobra_pterm.features.iso8601_timestamp_pattern.link}",
+            "Use ${module.stack_go_viper_cobra_pterm.features.pterm_output_pattern.link}"
           ]
         }
       ]

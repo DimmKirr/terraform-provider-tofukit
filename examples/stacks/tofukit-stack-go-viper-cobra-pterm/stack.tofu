@@ -26,6 +26,12 @@ resource "tofukit_stack" "go_cli_app" {
     tofukit_feature.taskfile.id,
     tofukit_feature.gitignore.id,
     tofukit_feature.readme.id,
+    # Pattern features (design guidance)
+    tofukit_feature.http_client_pattern.id,
+    tofukit_feature.error_handling_pattern.id,
+    tofukit_feature.cobra_argument_pattern.id,
+    tofukit_feature.iso8601_timestamp_pattern.id,
+    tofukit_feature.pterm_output_pattern.id,
   ]
 
   # Stack provides only the minimal entry point (main.go)
