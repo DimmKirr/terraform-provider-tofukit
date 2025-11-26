@@ -51,6 +51,58 @@ resource "tofukit_project" "this" {
   # Reference the go_viper_cobra_pterm stack
   stack = module.stack_go_viper_cobra_pterm.stack
 
+  requirements = [
+    {
+      name = "Feature Integration"
+
+      instructions = [{
+        prompt = <<-EOF
+        Ensure all features are properly integrated into a working application.
+
+        INTEGRATION CHECKLIST:
+        - ${tofukit_feature.protocol_abstraction.link} provides the pinger interface
+        - ${tofukit_feature.protocol_detection.link} uses that interface for detection
+        - ${tofukit_feature.http_ping.link}, ${tofukit_feature.icmp_ping.link}, ${tofukit_feature.dns_ping.link} implement the interface
+        - ${tofukit_feature.user_config.link} provides timeout/interval configuration
+        - cmd/root.go imports internal/pinger package and uses all components
+
+        INTEGRATION POINTS:
+        - cmd/root.go must accept target as Args[0] using cobra.ExactArgs(1)
+        - cmd/root.go must read protocol flags (--http, --icmp, --dns, --auto)
+        - cmd/root.go must call pinger.DetectProtocol() when --auto is set
+        - cmd/root.go must create pinger using pinger.NewPinger()
+        - cmd/root.go must implement continuous ping loop with configured interval
+        - cmd/root.go must use pterm for colored output and time.RFC3339 for timestamps
+
+        VERIFICATION:
+        - Application must build successfully
+        - Application must accept target argument
+        - Protocol flags must appear in --help output
+        EOF
+
+        constraints = [
+          "All feature files must be imported where needed",
+          "cmd/root.go MUST import ${local.project_module_path}/internal/pinger",
+          "Application must be runnable as: ${local.project_name} <target>",
+          "Use cobra.ExactArgs(1) for target argument validation"
+        ]
+      }]
+
+      verifications = [
+        {
+          command = "grep -q 'internal/pinger' cmd/root.go"
+        },
+        {
+          command = "grep -q 'cobra\\.ExactArgs(1)' cmd/root.go"
+        },
+        {
+          command = "grep -q 'Args.*\\[0\\]' cmd/root.go"
+        }
+      ]
+    }
+  ]
+
+
   # Project-specific features
   # Note: Stack features (version_command, viper_config, pterm_logger, taskfile, gitignore, readme)
   # are already included via the stack reference above
