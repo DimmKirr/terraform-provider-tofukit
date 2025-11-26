@@ -51,10 +51,17 @@ resource "tofukit_project" "this" {
   # Reference the go_viper_cobra_pterm stack
   stack = module.stack_go_viper_cobra_pterm.stack
 
-  # Project-specific features
+  # Project-specific features - Multi-Protocol Support
   # Note: Stack features (version_command, viper_config, pterm_logger, taskfile, gitignore, readme)
   # are already included via the stack reference above
   features = {
-    "http_ping" = tofukit_feature.http_ping
+    # Core protocol abstraction and detection
+    "protocol_abstraction" = tofukit_feature.protocol_abstraction
+    "protocol_detection"   = tofukit_feature.protocol_detection
+
+    # Protocol implementations
+    "http_ping" = tofukit_feature.http_ping_multiprotocol
+    "icmp_ping" = tofukit_feature.icmp_ping
+    "dns_ping"  = tofukit_feature.dns_ping
   }
 }
