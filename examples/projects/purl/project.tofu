@@ -22,7 +22,7 @@ provider "tofukit" {
 locals {
   project_name        = "purl"
   project_version     = "0.1.0"
-  project_description = "A tool that combines multi-protocol ping utils."
+  project_description = "Universal ping utility supporting HTTP, ICMP, and DNS protocols."
   project_module_path = "github.com/DimmKirr/purl"
 }
 
@@ -51,7 +51,7 @@ resource "tofukit_project" "this" {
   # Reference the go_viper_cobra_pterm stack
   stack = module.stack_go_viper_cobra_pterm.stack
 
-  # Project-specific features - Multi-Protocol Support
+  # Project-specific features
   # Note: Stack features (version_command, viper_config, pterm_logger, taskfile, gitignore, readme)
   # are already included via the stack reference above
   features = {
@@ -60,7 +60,7 @@ resource "tofukit_project" "this" {
     "protocol_detection"   = tofukit_feature.protocol_detection
 
     # Protocol implementations
-    "http_ping" = tofukit_feature.http_ping_multiprotocol
+    "http_ping" = tofukit_feature.http_ping
     "icmp_ping" = tofukit_feature.icmp_ping
     "dns_ping"  = tofukit_feature.dns_ping
   }
