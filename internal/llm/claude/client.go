@@ -20,6 +20,7 @@ type Client struct {
 	claudeHomeDir              string
 	systemPrompt               string
 	dangerouslySkipPermissions bool
+	maxTurns                   int
 }
 
 // min returns the minimum of two integers
@@ -31,7 +32,7 @@ func min(a, b int) int {
 }
 
 // NewClient creates a new Claude Code client
-func NewClient(claudeHomeDir string, dangerouslySkipPermissions bool) *Client {
+func NewClient(claudeHomeDir string, dangerouslySkipPermissions bool, maxTurns int) *Client {
 	// Expand home directory
 	if strings.HasPrefix(claudeHomeDir, "~/") {
 		home, _ := os.UserHomeDir()
@@ -41,6 +42,7 @@ func NewClient(claudeHomeDir string, dangerouslySkipPermissions bool) *Client {
 	return &Client{
 		claudeHomeDir:              claudeHomeDir,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
+		maxTurns:                   maxTurns,
 	}
 }
 
@@ -213,7 +215,7 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 	fmt.Printf("🔧 DEBUG: Claude execution configuration:\n")
 	fmt.Printf("🔧 DEBUG:   - Working dir: %s\n", absOutputPath)
 	fmt.Printf("🔧 DEBUG:   - System prompt length: %d chars\n", len(systemPrompt))
-	fmt.Printf("🔧 DEBUG:   - MaxTurns: 30\n")
+	fmt.Printf("🔧 DEBUG:   - MaxTurns: %d\n", c.maxTurns)
 	fmt.Printf("🔧 DEBUG:   - Access restriction: --add-dir %s\n", absOutputPath)
 	if c.dangerouslySkipPermissions {
 		fmt.Printf("🔧 DEBUG:   - Permissions: --dangerously-skip-permissions (enabled)\n")
@@ -246,7 +248,7 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		"-p",
 		actualPrompt,               // Pass prompt as argument
 		"--add-dir", absOutputPath, // Restrict access to output directory
-		"--max-turns", "30",
+		"--max-turns", fmt.Sprintf("%d", c.maxTurns),
 		"--system-prompt", systemPrompt,
 		"--model", model,
 	}
@@ -256,7 +258,17 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		commandArgs = append(commandArgs, "--dangerously-skip-permissions")
 	}
 
-	fmt.Printf("🔧 DEBUG: Command: unbuffer claude -p <prompt> ...\n")
+	// Build full command string for debug output (mask long prompt)
+	debugCommandArgs := make([]string, len(commandArgs))
+	copy(debugCommandArgs, commandArgs)
+	for i, arg := range debugCommandArgs {
+		if i == 2 { // Prompt is at index 2
+			if len(arg) > 100 {
+				debugCommandArgs[i] = fmt.Sprintf("<prompt:%d chars>", len(arg))
+			}
+		}
+	}
+	fmt.Printf("🔧 DEBUG: Command: unbuffer %s\n", strings.Join(debugCommandArgs, " "))
 	fmt.Printf("🔧 DEBUG: Prompt length: %d characters (original: %d)\n", len(actualPrompt), len(prompt))
 
 	// Create a timeout context if one isn't already set
@@ -280,27 +292,40 @@ func (c *Client) ExecuteProject(ctx context.Context, projectSpec map[string]inte
 		fmt.Printf("🔧 DEBUG: Claude execution failed: %v\n", cmdErr)
 		fmt.Printf("🔧 DEBUG: Output: %s\n", string(output))
 
-		// Check if files were created despite error (e.g., max turns reached)
-		// This is common when Claude creates files but hits turn limit
+		// Max turns is a user-defined limitation and should be treated as a failure
+		errorMsg := fmt.Sprintf("Claude execution failed: %v\nOutput: %s", cmdErr, string(output))
 		if strings.Contains(string(output), "max turns") {
-			fmt.Printf("🔧 DEBUG: Max turns reached but continuing (files may have been created)\n")
-			// Don't return error if it's just max turns
-		} else {
-			tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
-				"error":  cmdErr.Error(),
-				"output": string(output),
-			})
-			return &ExecutionResult{
-				Success: false,
-				Error:   fmt.Sprintf("Claude execution failed: %v\nOutput: %s", cmdErr, string(output)),
-			}, cmdErr
+			fmt.Printf("🔧 DEBUG: Max turns limit reached (user-defined constraint)\n")
+			errorMsg = fmt.Sprintf("Claude reached the max_turns limit. Consider increasing claude_max_turns in provider configuration.\nOriginal error: %v\nOutput: %s", cmdErr, string(output))
 		}
+
+		tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
+			"error":  cmdErr.Error(),
+			"output": string(output),
+		})
+		return &ExecutionResult{
+			Success: false,
+			Error:   errorMsg,
+		}, cmdErr
 	}
 
 	fmt.Printf("🔧 DEBUG: Claude execution completed successfully\n")
 	fmt.Printf("🔧 DEBUG: Output length: %d chars\n", len(output))
 	if len(output) > 0 {
 		fmt.Printf("🔧 DEBUG: Output preview (first 500 chars): %s\n", string(output[:min(len(output), 500)]))
+	}
+
+	// Check for max turns error even when command exits successfully (Claude CLI returns exit code 0)
+	if strings.Contains(string(output), "max turns") || strings.Contains(string(output), "Reached max turns") {
+		fmt.Printf("🔧 DEBUG: Max turns limit reached (detected in output)\n")
+		errorMsg := fmt.Sprintf("Claude reached the max_turns limit. Consider increasing claude_max_turns in provider configuration.\nOutput: %s", string(output))
+		tflog.Error(ctx, "Claude execution hit max turns limit", map[string]interface{}{
+			"output": string(output),
+		})
+		return &ExecutionResult{
+			Success: false,
+			Error:   errorMsg,
+		}, fmt.Errorf("max turns limit reached")
 	}
 
 	// Log Claude's response to the debug log file if in debug mode
@@ -419,7 +444,7 @@ func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string
 		"-p",
 		actualPrompt,
 		"--add-dir", absOutputPath, // Restrict access to output directory
-		"--max-turns", "30",
+		"--max-turns", fmt.Sprintf("%d", c.maxTurns),
 		"--system-prompt", systemPrompt,
 		"--model", model,
 	}
@@ -446,22 +471,37 @@ func (c *Client) ExecuteProjectWithPrompt(ctx context.Context, promptJSON string
 	output, cmdErr := cmd.CombinedOutput()
 
 	if cmdErr != nil {
-		// Check if it's just max turns
+		// Max turns is a user-defined limitation and should be treated as a failure
+		errorMsg := fmt.Sprintf("Claude execution failed: %v\nOutput: %s", cmdErr, string(output))
 		if strings.Contains(string(output), "max turns") {
-			fmt.Printf("🔧 DEBUG: Max turns reached but continuing\n")
-		} else {
-			tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
-				"error":  cmdErr.Error(),
-				"output": string(output),
-			})
-			return &ExecutionResult{
-				Success: false,
-				Error:   fmt.Sprintf("Claude execution failed: %v\nOutput: %s", cmdErr, string(output)),
-			}, cmdErr
+			fmt.Printf("🔧 DEBUG: Max turns limit reached (user-defined constraint)\n")
+			errorMsg = fmt.Sprintf("Claude reached the max_turns limit. Consider increasing claude_max_turns in provider configuration.\nOriginal error: %v\nOutput: %s", cmdErr, string(output))
 		}
+
+		tflog.Error(ctx, "Claude execution failed", map[string]interface{}{
+			"error":  cmdErr.Error(),
+			"output": string(output),
+		})
+		return &ExecutionResult{
+			Success: false,
+			Error:   errorMsg,
+		}, cmdErr
 	}
 
 	fmt.Printf("🔧 DEBUG: Claude execution completed successfully\n")
+
+	// Check for max turns error even when command exits successfully (Claude CLI returns exit code 0)
+	if strings.Contains(string(output), "max turns") || strings.Contains(string(output), "Reached max turns") {
+		fmt.Printf("🔧 DEBUG: Max turns limit reached (detected in output)\n")
+		errorMsg := fmt.Sprintf("Claude reached the max_turns limit. Consider increasing claude_max_turns in provider configuration.\nOutput: %s", string(output))
+		tflog.Error(ctx, "Claude execution hit max turns limit", map[string]interface{}{
+			"output": string(output),
+		})
+		return &ExecutionResult{
+			Success: false,
+			Error:   errorMsg,
+		}, fmt.Errorf("max turns limit reached")
+	}
 
 	tflog.Info(ctx, "Claude Code execution completed with pre-built prompt", map[string]interface{}{
 		"project_path":  absOutputPath,

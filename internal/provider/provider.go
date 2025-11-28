@@ -37,6 +37,7 @@ type TofukitProviderModel struct {
 	ClaudeHomeDirectory        types.String `tfsdk:"claude_home_directory"`
 	Debug                      types.Bool   `tfsdk:"debug"`
 	MaxRetries                 types.Int64  `tfsdk:"max_retries"`
+	ClaudeMaxTurns             types.Int64  `tfsdk:"claude_max_turns"`
 	DangerouslySkipPermissions types.Bool   `tfsdk:"dangerously_skip_permissions"`
 	DryRun                     types.Bool   `tfsdk:"dry_run"`
 }
@@ -76,6 +77,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 			},
 			"max_retries": schema.Int64Attribute{
 				MarkdownDescription: "Maximum number of verification retry attempts (default: 3). If verification fails, Claude will receive the errors and retry until success or max retries.",
+				Optional:            true,
+			},
+			"claude_max_turns": schema.Int64Attribute{
+				MarkdownDescription: "Maximum turns for Claude CLI execution (default: 100). Only applies when llm=claude. Higher values allow more complex projects but take longer. A 'turn' is one user message + Claude's response(s).",
 				Optional:            true,
 			},
 			"dangerously_skip_permissions": schema.BoolAttribute{
@@ -141,6 +146,14 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		}
 	}
 
+	claudeMaxTurns := 100 // Default to 100 turns
+	if !data.ClaudeMaxTurns.IsNull() {
+		claudeMaxTurns = int(data.ClaudeMaxTurns.ValueInt64())
+		if claudeMaxTurns < 1 {
+			claudeMaxTurns = 1 // Minimum 1 turn
+		}
+	}
+
 	if !data.DangerouslySkipPermissions.IsNull() {
 		dangerouslySkipPermissions = data.DangerouslySkipPermissions.ValueBool()
 	}
@@ -161,7 +174,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 			)
 			return
 		}
-		llmExecutor = newClaudeAdapter(claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions))
+		llmExecutor = newClaudeAdapter(claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns))
 	case "openai":
 		if apiKey == "" {
 			resp.Diagnostics.AddError(
@@ -200,6 +213,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		ClaudeHomeDirectory:        claudeHomeDir,
 		Debug:                      debug,
 		MaxRetries:                 maxRetries,
+		ClaudeMaxTurns:             claudeMaxTurns,
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
 		DryRun:                     dryRun,
 		Registry:                   registry.New(),
@@ -249,6 +263,7 @@ type ProviderData struct {
 	ClaudeHomeDirectory        string
 	Debug                      bool
 	MaxRetries                 int
+	ClaudeMaxTurns             int
 	DangerouslySkipPermissions bool
 	DryRun                     bool
 	Registry                   *registry.Registry
@@ -288,6 +303,11 @@ func (p *ProviderData) GetDebug() bool {
 // GetMaxRetries returns the maximum number of verification retry attempts
 func (p *ProviderData) GetMaxRetries() int {
 	return p.MaxRetries
+}
+
+// GetClaudeMaxTurns returns the maximum turns for Claude CLI execution
+func (p *ProviderData) GetClaudeMaxTurns() int {
+	return p.ClaudeMaxTurns
 }
 
 // GetDangerouslySkipPermissions returns whether to skip Claude CLI permission prompts

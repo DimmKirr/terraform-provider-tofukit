@@ -53,4 +53,5 @@ resource "tofukit_stack" "go_cli_app" {
     # Note: README.md is now provided via the readme feature
     # See features.tofu for the readme feature definition
   }
+
 }

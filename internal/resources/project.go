@@ -830,14 +830,17 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	dangerouslySkipPermissions := false
+	claudeMaxTurns := 100
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 		GetDangerouslySkipPermissions() bool
+		GetClaudeMaxTurns() int
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
+		claudeMaxTurns = provData.GetClaudeMaxTurns()
 	}
 
 	// Always update output files with current configuration (including files from stacks)
@@ -1076,7 +1079,7 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 	if !data.ProjectPath.IsNull() && !data.ProjectPath.IsUnknown() {
 		projectPath := data.ProjectPath.ValueString()
 		if projectPath != "" {
-			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns)
 			if !executor.IsProjectGenerated(ctx, projectPath) {
 				// Project no longer exists, update the state
 				tflog.Warn(ctx, "Generated project no longer exists", map[string]interface{}{
@@ -1574,14 +1577,17 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
 	dangerouslySkipPermissions := false
+	claudeMaxTurns := 100
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
 		GetDangerouslySkipPermissions() bool
+		GetClaudeMaxTurns() int
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
+		claudeMaxTurns = provData.GetClaudeMaxTurns()
 	}
 
 	// Clean up files and project directory
@@ -1600,7 +1606,7 @@ func (r *ProjectResourceFinal) Delete(ctx context.Context, req resource.DeleteRe
 			}
 
 			// Clean up any generated project
-			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns)
 			if err := executor.CleanupProject(ctx, projectPath); err != nil {
 				tflog.Warn(ctx, "Failed to cleanup generated project", map[string]interface{}{
 					"project_id":   data.ID.ValueString(),
@@ -2344,14 +2350,17 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 	debug := false
 	dangerouslySkipPermissions := false
 	dryRun := false
+	claudeMaxTurns := 100
 	if provData, ok := r.ProviderData.(interface {
 		GetDebug() bool
 		GetDangerouslySkipPermissions() bool
 		GetDryRun() bool
+		GetClaudeMaxTurns() int
 	}); ok {
 		debug = provData.GetDebug()
 		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 		dryRun = provData.GetDryRun()
+		claudeMaxTurns = provData.GetClaudeMaxTurns()
 	}
 
 	// Get system prompt from resource data
@@ -2366,7 +2375,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		model = data.Model.ValueString()
 	}
 
-	executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
+	executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns)
 	executor.SetDebug(debug)
 	executor.SetOutputPath(outputPath)
 	executor.SetSystemPrompt(systemPrompt)
@@ -2547,11 +2556,13 @@ func (r *ProjectResourceFinal) ValidateConfig(ctx context.Context, req resource.
 		if provData, ok := r.ProviderData.(interface {
 			GetClaudeHomeDirectory() string
 			GetDangerouslySkipPermissions() bool
+			GetClaudeMaxTurns() int
 		}); ok {
 			// Validate Claude Code availability
 			claudeHomeDir := provData.GetClaudeHomeDirectory()
 			dangerouslySkipPermissions := provData.GetDangerouslySkipPermissions()
-			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions)
+			claudeMaxTurns := provData.GetClaudeMaxTurns()
+			executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns)
 			if err := executor.Validate(ctx); err != nil {
 				resp.Diagnostics.AddWarning(
 					"Claude Code Validation",
@@ -2630,7 +2641,7 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 	}
 
 	// Build the actual JSON prompt that will be sent to Claude
-	claudeClient := claude.NewClient("", false) // temp client just for building prompt
+	claudeClient := claude.NewClient("", false, 100) // temp client just for building prompt
 	jsonPrompt, _ := claudeClient.BuildPrompt(projectSpec)
 
 	// Write claude-prompt-{timestamp}.json - the actual JSON prompt

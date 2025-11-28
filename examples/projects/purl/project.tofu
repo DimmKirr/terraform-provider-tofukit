@@ -74,17 +74,28 @@ resource "tofukit_project" "this" {
         - cmd/root.go must implement continuous ping loop with configured interval
         - cmd/root.go must use pterm for colored output and time.RFC3339 for timestamps
 
+        CRITICAL IMPLEMENTATION REQUIREMENTS:
+        - MUST implement actual ping loop - NO PLACEHOLDERS like "coming soon" or "TODO"
+        - Loop must continuously ping target until interrupted (Ctrl+C)
+        - Use time.Sleep() or time.NewTicker() for interval between pings
+        - Each ping must call pinger.Ping() method and display results
+        - Results must include timestamp, status, and duration
+        - Output must use pterm for colored formatting (green for success, red for errors)
+
         VERIFICATION:
         - Application must build successfully
         - Application must accept target argument
         - Protocol flags must appear in --help output
+        - Running the application must continuously ping, not just print placeholder messages
         EOF
 
         constraints = [
           "All feature files must be imported where needed",
           "cmd/root.go MUST import ${local.project_module_path}/internal/pinger",
           "Application must be runnable as: ${local.project_name} <target>",
-          "Use cobra.ExactArgs(1) for target argument validation"
+          "Use cobra.ExactArgs(1) for target argument validation",
+          "CRITICAL: NO PLACEHOLDERS - Implement complete ping loop with actual pinger.Ping() calls",
+          "CRITICAL: NO 'coming soon' or 'TODO' messages - Full implementation required"
         ]
       }]
 
@@ -97,6 +108,24 @@ resource "tofukit_project" "this" {
         },
         {
           command = "grep -q 'Args.*\\[0\\]' cmd/root.go"
+        },
+        {
+          command = "grep -q 'pinger\\.NewPinger\\|NewPinger' cmd/root.go"
+        },
+        {
+          command = "grep -q 'DetectProtocol' cmd/root.go"
+        },
+        {
+          command = "grep -q 'for.*{' cmd/root.go"
+        },
+        {
+          command = "grep -q 'time\\.Sleep\\|time\\.NewTicker\\|ticker' cmd/root.go"
+        },
+        {
+          command = "grep -q 'pterm\\.' cmd/root.go"
+        },
+        {
+          command = "! grep -qi 'coming soon\\|placeholder\\|TODO\\|FIXME' cmd/root.go"
         }
       ]
     }

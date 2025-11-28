@@ -59,7 +59,8 @@ func TestE2EProjectExamplePurlSuccess(t *testing.T) {
 			modifiedContent = strings.Replace(modifiedContent,
 				`output_format         = "json"`,
 				`output_format         = "json"
-  output_path           = "../output"`, 1)
+  output_path           = "../output"
+  claude_max_turns      = 500`, 1)
 			// Update module source from ../../stacks to ../stacks (one level up from project/)
 			modifiedContent = strings.Replace(modifiedContent,
 				`source = "../../stacks/tofukit-stack-go-viper-cobra-pterm"`,

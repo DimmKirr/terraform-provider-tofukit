@@ -21,14 +21,16 @@ type Executor struct {
 	debug      bool
 	outputPath string
 	model      string
+	maxTurns   int
 }
 
 // NewExecutor creates a new Claude Code executor
-func NewExecutor(claudeHomeDir string, dangerouslySkipPermissions bool) *Executor {
+func NewExecutor(claudeHomeDir string, dangerouslySkipPermissions bool, maxTurns int) *Executor {
 	return &Executor{
-		client:     NewClient(claudeHomeDir, dangerouslySkipPermissions),
+		client:     NewClient(claudeHomeDir, dangerouslySkipPermissions, maxTurns),
 		debug:      false,
 		outputPath: "",
+		maxTurns:   maxTurns,
 	}
 }
 
