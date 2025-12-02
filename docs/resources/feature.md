@@ -18,13 +18,13 @@ Feature resource for tofukit - enables reusable feature definitions (capabilitie
 ### Required
 
 - `name` (String) Unique name for this feature resource (used for registry lookup)
+- `requirements` (Attributes List) Requirements for this component (ordered list) (see [below for nested schema](#nestedatt--requirements))
 
 ### Optional
 
 - `description` (String) Description of what this feature does
 - `files` (Attributes Map) Files to generate and manage, keyed by file path. Accepts either inline file definitions or tofukit_file resource references. (see [below for nested schema](#nestedatt--files))
 - `kits` (Dynamic) Kit dependencies for this feature
-- `requirements` (Attributes List) Requirements for this component (ordered list) (see [below for nested schema](#nestedatt--requirements))
 - `verifications` (Attributes List) Verification commands for this feature (see [below for nested schema](#nestedatt--verifications))
 
 ### Read-Only
@@ -32,13 +32,53 @@ Feature resource for tofukit - enables reusable feature definitions (capabilitie
 - `id` (String) Resource identifier (format: feature.<name>)
 - `link` (String) URI link to this resource for cross-referencing (e.g., tofukit://feature/name)
 
+<a id="nestedatt--requirements"></a>
+### Nested Schema for `requirements`
+
+Required:
+
+- `instructions` (Attributes List) Instruction steps for implementing this requirement (executed sequentially) (see [below for nested schema](#nestedatt--requirements--instructions))
+- `name` (String) Display name of the requirement
+
+Optional:
+
+- `verifications` (Attributes List) Verification commands for this requirement (see [below for nested schema](#nestedatt--requirements--verifications))
+
+<a id="nestedatt--requirements--instructions"></a>
+### Nested Schema for `requirements.instructions`
+
+Required:
+
+- `prompt` (String) LLM-facing instruction describing what to do
+
+Optional:
+
+- `constraints` (List of String) Constraints that must be respected (what NOT to do)
+
+
+<a id="nestedatt--requirements--verifications"></a>
+### Nested Schema for `requirements.verifications`
+
+Required:
+
+- `command` (String) Command to run for verification
+
+Optional:
+
+- `expect` (String) Expected output or pattern
+
+
+
 <a id="nestedatt--files"></a>
 ### Nested Schema for `files`
 
 Optional:
 
 - `content` (String) Static content of the file (mutually exclusive with instructions)
+- `content_hash` (String) SHA256 hash of the file specification (content or instructions JSON) for drift detection
 - `description` (String) File description (present when referencing tofukit_file resource)
+- `file_hash` (String) SHA256 hash of the actual file on disk for drift detection
+- `file_modtime` (String) File modification time in RFC3339 format (optimization for drift detection)
 - `id` (String) Resource identifier (present when referencing tofukit_file resource)
 - `instructions` (Attributes List) Instructions for generating the file content (mutually exclusive with content) (see [below for nested schema](#nestedatt--files--instructions))
 - `link` (String) URI link to the file resource (present when referencing tofukit_file resource)
@@ -63,43 +103,6 @@ Optional:
 Required:
 
 - `command` (String) Command to run for verification (e.g., 'python src/cli.py --version')
-
-Optional:
-
-- `expect` (String) Expected output or pattern
-
-
-
-<a id="nestedatt--requirements"></a>
-### Nested Schema for `requirements`
-
-Required:
-
-- `name` (String) Display name of the requirement
-
-Optional:
-
-- `instructions` (Attributes List) Instruction steps for implementing this requirement (executed sequentially) (see [below for nested schema](#nestedatt--requirements--instructions))
-- `verifications` (Attributes List) Verification commands for this requirement (see [below for nested schema](#nestedatt--requirements--verifications))
-
-<a id="nestedatt--requirements--instructions"></a>
-### Nested Schema for `requirements.instructions`
-
-Required:
-
-- `prompt` (String) LLM-facing instruction describing what to do
-
-Optional:
-
-- `constraints` (List of String) Constraints that must be respected (what NOT to do)
-
-
-<a id="nestedatt--requirements--verifications"></a>
-### Nested Schema for `requirements.verifications`
-
-Required:
-
-- `command` (String) Command to run for verification
 
 Optional:
 

@@ -35,11 +35,11 @@ Language component for tofukit
 
 Required:
 
+- `instructions` (Attributes List) Instruction steps for implementing this requirement (executed sequentially) (see [below for nested schema](#nestedatt--requirements--instructions))
 - `name` (String) Display name of the requirement
 
 Optional:
 
-- `instructions` (Attributes List) Instruction steps for implementing this requirement (executed sequentially) (see [below for nested schema](#nestedatt--requirements--instructions))
 - `verifications` (Attributes List) Verification commands for this requirement (see [below for nested schema](#nestedatt--requirements--verifications))
 
 <a id="nestedatt--requirements--instructions"></a>

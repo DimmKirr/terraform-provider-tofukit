@@ -18,8 +18,10 @@ description: |-
 
 - `api_key` (String, Sensitive) API key for LLM provider (required for openai and gemini, not used for claude)
 - `claude_home_directory` (String) Claude home directory for authentication and configuration (default: ~/.claude, only used when llm=claude)
+- `claude_max_turns` (Number) Maximum turns for Claude CLI execution (default: 100). Only applies when llm=claude. Higher values allow more complex projects but take longer. A 'turn' is one user message + Claude's response(s).
 - `dangerously_skip_permissions` (Boolean) Skip Claude CLI permission prompts (default: true). When enabled, Claude can create/modify files without prompting. When combined with --add-dir, Claude's access is still restricted to the output directory.
 - `debug` (Boolean) Enable debug mode to output LLM debug information
+- `dry_run` (Boolean) Generate prompt JSON and write debug files but skip LLM execution (default: false). Useful for testing prompt generation without waiting for LLM responses.
 - `llm` (String) LLM provider to use (claude, openai, gemini). Default: claude
 - `max_retries` (Number) Maximum number of verification retry attempts (default: 3). If verification fails, Claude will receive the errors and retry until success or max retries.
 - `output_format` (String) Output format for generated contexts (json, yaml, markdown)

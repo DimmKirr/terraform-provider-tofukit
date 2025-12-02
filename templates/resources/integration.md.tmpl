@@ -1,0 +1,110 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+Integration resource for representing external API/service dependencies. Use this to document external services your project depends on (REST APIs, GraphQL APIs, SaaS platforms, etc.) with structured documentation references, environment URLs, SDK information, and example code.
+
+## Example Usage
+
+```hcl
+# Basic REST API integration
+resource "tofukit_integration" "open_meteo" {
+  name        = "open-meteo"
+  type        = "rest_api"
+  description = "Open-Meteo Weather API"
+  version     = "v1"
+
+  docs = {
+    main        = "https://open-meteo.com/en/docs"
+    rate_limits = "https://open-meteo.com/en/features#rate-limits"
+  }
+
+  environments = {
+    production = "https://api.open-meteo.com/v1"
+  }
+}
+
+# GraphQL API with SDK info
+resource "tofukit_integration" "github" {
+  name = "github-graphql"
+  type = "graphql_api"
+
+  sdk = {
+    python = {
+      package  = "gql"
+      version  = "3.4.0"
+      docs_url = "https://gql.readthedocs.io/"
+    }
+  }
+}
+```
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Integration Types
+
+- **`rest_api`** - RESTful HTTP APIs
+- **`graphql_api`** - GraphQL APIs
+- **`grpc_api`** - gRPC services
+- **`webhook`** - Webhook integrations
+- **`websocket`** - WebSocket connections
+- **`saas`** - SaaS platform APIs (Stripe, Twilio, etc.)
+- **`cloud_service`** - Cloud provider services
+
+## Common Patterns
+
+### Documentation URLs (`docs`)
+```hcl
+docs = {
+  main           = "https://api.example.com/docs"
+  authentication = "https://api.example.com/auth"
+  rate_limits    = "https://api.example.com/limits"
+}
+```
+
+### Environment URLs (`environments`)
+```hcl
+environments = {
+  production = "https://api.example.com"
+  sandbox    = "https://sandbox-api.example.com"
+}
+```
+
+### SDK Information (`sdk`)
+```hcl
+sdk = {
+  python = {
+    package  = "example-sdk"
+    version  = "1.0.0"
+    docs_url = "https://example-sdk.readthedocs.io"
+  }
+}
+```
+
+## Cross-Referencing
+
+```hcl
+resource "tofukit_project" "app" {
+  requirements = [{
+    name = "Integration"
+    instructions = [{
+      prompt = "Use ${tofukit_integration.stripe.link} for payments"
+    }]
+  }]
+}
+```
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
