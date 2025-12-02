@@ -25,31 +25,56 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	projectRoot, err := filepath.Abs("..")
 	require.NoError(t, err)
 
-	// Step 1: Copy the example configuration files
+	// Step 1: Create directory structure for test
+	// testDir/
+	//   project/   <- project.tofu, features.tofu, files.tofu go here
+	//   stacks/    <- stacks copied here
+	//   output/    <- provider output (created by provider)
+
 	exampleDir := filepath.Join(projectRoot, "examples", "projects", "click-cli-hello-world")
 
-	// Copy the unified project.tofu (contains terraform, provider, module, project, data, outputs)
-	projectContent, err := os.ReadFile(filepath.Join(exampleDir, "project.tofu"))
+	// Create project subdirectory
+	projectSubDir := filepath.Join(testDir, "project")
+	if err := os.MkdirAll(projectSubDir, 0755); err != nil {
+		t.Fatalf("Failed to create project subdirectory: %v", err)
+	}
+
+	// Copy all .tofu files from the example directory
+	tofuFiles, err := filepath.Glob(filepath.Join(exampleDir, "*.tofu"))
 	if err != nil {
-		t.Fatalf("Failed to read project.tofu: %v", err)
+		t.Fatalf("Failed to glob .tofu files: %v", err)
 	}
 
-	// Modify the provider config to use test output directory and module path
-	modifiedContent := string(projectContent)
-	// Add output_path = "output" after the output_format line
-	modifiedContent = strings.Replace(modifiedContent,
-		`output_format         = "json"`,
-		`output_format         = "json"
-  output_path           = "output"`, 1)
-	// Replace module source path from ../stacks to ./stacks
-	modifiedContent = strings.Replace(modifiedContent, `  source = "../stacks/tofukit-stack-python-click-app"`, `  source = "./stacks/tofukit-stack-python-click-app"`, 1)
+	for _, srcFile := range tofuFiles {
+		fileName := filepath.Base(srcFile)
+		content, err := os.ReadFile(srcFile)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", fileName, err)
+		}
 
-	projectPath := filepath.Join(testDir, "project.tofu")
-	if err := os.WriteFile(projectPath, []byte(modifiedContent), 0644); err != nil {
-		t.Fatalf("Failed to write project.tofu: %v", err)
+		modifiedContent := string(content)
+
+		// Only modify project.tofu
+		if fileName == "project.tofu" {
+			// Change output_path to go up to test root then into output
+			modifiedContent = strings.Replace(modifiedContent,
+				`output_format         = "json"`,
+				`output_format         = "json"
+  output_path           = "../output"`, 1)
+			// Update module source from ../stacks to ../stacks (one level up from project/)
+			modifiedContent = strings.Replace(modifiedContent,
+				`source = "../stacks/tofukit-stack-python-click-app"`,
+				`source = "../stacks/tofukit-stack-python-click-app"`, 1)
+		}
+
+		destPath := filepath.Join(projectSubDir, fileName)
+		if err := os.WriteFile(destPath, []byte(modifiedContent), 0644); err != nil {
+			t.Fatalf("Failed to write %s: %v", fileName, err)
+		}
+		t.Logf("Copied %s to test directory", fileName)
 	}
 
-	// Copy the stacks directory
+	// Copy the stacks directory to testDir/stacks
 	stacksDir := filepath.Join(projectRoot, "examples", "stacks")
 	testStacksDir := filepath.Join(testDir, "stacks")
 	copyDirCmd := exec.Command("cp", "-r", stacksDir, testStacksDir)
@@ -79,7 +104,7 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	// Step 3: Run init to set up the provider
 	t.Log("Running tofu init...")
 	initCmd := exec.Command(iacTool, "init", "-no-color")
-	initCmd.Dir = testDir
+	initCmd.Dir = projectSubDir
 	initOutput, err := initCmd.CombinedOutput()
 	if err != nil {
 		t.Logf("Init output: %s", initOutput)
@@ -90,7 +115,7 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	// Step 4: Run plan
 	t.Log("Running tofu plan...")
 	planCmd := exec.Command(iacTool, "plan", "-no-color")
-	planCmd.Dir = testDir
+	planCmd.Dir = projectSubDir
 	planOutput, err := planCmd.CombinedOutput()
 	require.NoError(t, err, "Failed to run plan: %s", planOutput)
 	t.Logf("Plan output:\n%s", planOutput)
@@ -99,7 +124,7 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	// Step 5: Run apply
 	t.Log("Running tofu apply --auto-approve...")
 	applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
-	applyCmd.Dir = testDir
+	applyCmd.Dir = projectSubDir
 	applyOutput, err := applyCmd.CombinedOutput()
 	require.NoError(t, err, "Failed to run apply: %s", applyOutput)
 	t.Log("✓ Apply completed successfully")
@@ -107,7 +132,7 @@ func TestE2EProjectExampleClickCliSuccess(t *testing.T) {
 	// Helper function to run apply
 	runApply := func(t *testing.T) {
 		applyCmd := exec.Command(iacTool, "apply", "-auto-approve", "-no-color", "-parallelism=1")
-		applyCmd.Dir = testDir
+		applyCmd.Dir = projectSubDir
 		applyOutput, err := applyCmd.CombinedOutput()
 		require.NoError(t, err, "Failed to run apply: %s", applyOutput)
 	}
