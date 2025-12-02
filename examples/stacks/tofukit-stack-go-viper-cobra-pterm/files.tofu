@@ -139,10 +139,10 @@ resource "tofukit_file" "pterm_logger_internal" {
   instructions = [
     {
       prompt = <<-EOF
-      Create structured logging abstraction using pterm slog handler with quiet mode support.
+      Create structured logging abstraction using Go's log/slog with pterm styling support and quiet mode.
 
       REQUIRED API (for config integration):
-      - Initialize(logLevel string, logPlainText bool) - Setup logger with pterm handler
+      - Initialize(logLevel string, logPlainText bool) - Setup logger with slog handler
         - logLevel: string like "debug", "info", "warn", "error" - parse to slog.Level
         - logPlainText: if true, disable pterm styling
       - SetQuietMode(bool) - Enable/disable quiet mode
@@ -150,13 +150,14 @@ resource "tofukit_file" "pterm_logger_internal" {
 
       REQUIRED BEHAVIOR:
       - Quiet mode: suppress Info/Debug/Warn output, NEVER suppress Error/Fatal
-      - Use pterm.NewSlogHandler for structured logging with visual enhancement
+      - Use Go's log/slog for structured logging
+      - Support pterm styling integration (can be disabled with logPlainText flag)
       - Fatal() should log and os.Exit(1), never use panic()
-      - Use Unicode symbols for log levels (ℹ ⚠ ✔ ⨯ ⚙) with appropriate colors
 
       IMPLEMENTATION HINTS:
       - Parse log level: use slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError
-      - pterm handler creation: pterm.NewSlogHandler(&pterm.SlogOptions{...})
+      - Use slog.NewTextHandler or slog.NewJSONHandler for the logger handler
+      - If logPlainText is true, call pterm.DisableStyling() to disable colors
       - Quiet mode check: skip output for Info/Debug/Warn when enabled
       EOF
 
@@ -179,7 +180,12 @@ resource "tofukit_file" "pterm_logger_internal" {
       command = "grep -q 'func Info\\|func Debug\\|func Warn\\|func Error\\|func Fatal' internal/logger/logger.go"
     },
     {
-      command = "grep -q 'pterm\\.NewSlogHandler\\|pterm\\.SlogHandler' internal/logger/logger.go"
+      # Verify slog is used for structured logging
+      command = "grep -q 'log/slog' internal/logger/logger.go"
+    },
+    {
+      # Verify pterm package is imported (for styling support)
+      command = "grep -q 'github.com/pterm/pterm' internal/logger/logger.go"
     },
     {
       command = "grep -q 'os\\.Exit' internal/logger/logger.go"
