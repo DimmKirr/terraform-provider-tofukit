@@ -4,7 +4,7 @@
 # ========================================
 # FRAMEWORK KITS
 # ========================================
-resource "tofukit_framework" "cobra" {
+resource "tofukit_library" "cobra" {
   name        = "cobra"
   description = "CLI framework for creating powerful command-line applications"
   version     = var.cobra_version
@@ -62,7 +62,7 @@ resource "tofukit_framework" "cobra" {
   }
 }
 
-resource "tofukit_framework" "viper" {
+resource "tofukit_library" "viper" {
   name        = "viper"
   description = "Configuration management library for Go applications"
   version     = var.viper_version
@@ -114,7 +114,7 @@ resource "tofukit_framework" "viper" {
   ]
 }
 
-resource "tofukit_framework" "pterm" {
+resource "tofukit_library" "pterm" {
   name        = "pterm"
   description = "Modern terminal UI library for beautiful CLI output"
   version     = var.pterm_version

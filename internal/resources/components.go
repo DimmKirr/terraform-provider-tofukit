@@ -38,8 +38,27 @@ func (r *ComponentResource) Schema(ctx context.Context, req resource.SchemaReque
 	attributes["files"] = schemas.GetFilesMapAttribute()
 	attributes["requirements"] = schemas.GetRequirementsListAttribute()
 
+	// Generate kind-specific descriptions with examples
+	var description string
+	switch r.Kind {
+	case "library":
+		description = `Library resource for representing code dependencies and packages.
+
+**Examples:** pytest (Python testing), requests (HTTP client), gorm (Go ORM), cobra (Go CLI), viper (Go config), React (JavaScript UI), lodash (JavaScript utils)`
+	case "tool":
+		description = `Tool resource for representing development tools and CLI utilities.
+
+**Examples:** uv (Python package manager), npm (Node package manager), Docker, kubectl, terraform, git, make, gcc, protoc`
+	case "language":
+		description = `Language resource for representing programming languages and runtimes.
+
+**Examples:** Python 3.12, Go 1.23, Node.js 20, Java 21, Rust 1.75, Ruby 3.3`
+	default:
+		description = fmt.Sprintf("%s component for tofukit", r.Kind)
+	}
+
 	resp.Schema = schema.Schema{
-		MarkdownDescription: fmt.Sprintf("%s component for tofukit", r.Kind),
+		MarkdownDescription: description,
 		Attributes:          attributes,
 	}
 }
@@ -115,33 +134,15 @@ func (r *ComponentResource) ImportState(ctx context.Context, req resource.Import
 
 // Now create specific resources for each kind
 
-func NewFrameworkResource() resource.Resource {
+func NewLibraryResource() resource.Resource {
 	return &ComponentResource{
-		BaseComponent: BaseComponent{Kind: "framework"},
+		BaseComponent: BaseComponent{Kind: "library"},
 	}
 }
 
 func NewToolResource() resource.Resource {
 	return &ComponentResource{
 		BaseComponent: BaseComponent{Kind: "tool"},
-	}
-}
-
-func NewMethodologyResource() resource.Resource {
-	return &ComponentResource{
-		BaseComponent: BaseComponent{Kind: "methodology"},
-	}
-}
-
-func NewStyleResource() resource.Resource {
-	return &ComponentResource{
-		BaseComponent: BaseComponent{Kind: "style"},
-	}
-}
-
-func NewInfrastructureResource() resource.Resource {
-	return &ComponentResource{
-		BaseComponent: BaseComponent{Kind: "infrastructure"},
 	}
 }
 

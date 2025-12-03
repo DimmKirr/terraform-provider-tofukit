@@ -43,7 +43,7 @@ output "kits" {
       uv = tofukit_tool.uv
     }
     framework = {
-      click = tofukit_framework.click
+      click = tofukit_library.click
     }
   }
 }

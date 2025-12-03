@@ -380,7 +380,7 @@ func GetBaseComponentAttributes() map[string]schema.Attribute {
 		},
 		"link": schema.StringAttribute{
 			Computed:            true,
-			MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://kit/language/name or tofukit://kit/framework/name)",
+			MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://kit/language/name or tofukit://kit/library/name)",
 		},
 		"description": schema.StringAttribute{
 			MarkdownDescription: "Description of the component",

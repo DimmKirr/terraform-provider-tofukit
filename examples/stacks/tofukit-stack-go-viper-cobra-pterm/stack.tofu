@@ -12,9 +12,9 @@ resource "tofukit_stack" "go_cli_app" {
   kits = [
     tofukit_language.go,
     tofukit_tool.go_mod,
-    tofukit_framework.cobra,
-    tofukit_framework.viper,
-    tofukit_framework.pterm,
+    tofukit_library.cobra,
+    tofukit_library.viper,
+    tofukit_library.pterm,
   ]
 
   # Stack references features that provide additional capabilities
@@ -40,7 +40,7 @@ resource "tofukit_stack" "go_cli_app" {
   files = {
     "main.go" = tofukit_file.main_go
 
-    # Note: cmd/root.go is provided by the Cobra framework (tofukit_framework.cobra)
+    # Note: cmd/root.go is provided by the Cobra framework (tofukit_library.cobra)
     # Note: Config, Version, Logger, Taskfile, .gitignore are provided via features
     # See features.tofu for: viper_config, version_command, pterm_logger, taskfile, gitignore features
 

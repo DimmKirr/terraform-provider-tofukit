@@ -135,13 +135,13 @@ func TestBuildRegistry_KitFrameworkURI(t *testing.T) {
 	reg := setupTestRegistry()
 	builder := NewRegistryBuilder(reg)
 
-	result, err := builder.BuildRegistry([]string{"tofukit://kit/framework/click"})
+	result, err := builder.BuildRegistry([]string{"tofukit://kit/library/click"})
 
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
-	assert.Contains(t, result, "tofukit://kit/framework/click")
+	assert.Contains(t, result, "tofukit://kit/library/click")
 
-	metadata, ok := result["tofukit://kit/framework/click"].(*KitMetadata)
+	metadata, ok := result["tofukit://kit/library/click"].(*KitMetadata)
 	require.True(t, ok, "metadata should be *KitMetadata")
 	assert.Equal(t, "kit", metadata.Type)
 	assert.Equal(t, "framework", metadata.Subtype)

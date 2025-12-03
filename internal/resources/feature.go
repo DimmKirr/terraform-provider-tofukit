@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
@@ -28,6 +30,7 @@ type FeatureResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
+	Type          types.String                `tfsdk:"type"`
 	Description   types.String                `tfsdk:"description"`
 	Requirements  []schemas.RequirementModel  `tfsdk:"requirements"` // Now uses common type!
 	Files         types.Map                   `tfsdk:"files"`
@@ -60,6 +63,26 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"link": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://feature/name)",
+			},
+			"type": schema.StringAttribute{
+				MarkdownDescription: `Feature type classification:
+
+- **product**: End-user capabilities that deliver direct value - features customers actively use and would pay for
+  - *SaaS/Web Apps:* Login, search, dark mode, checkout, in-app help, public API docs, user dashboard
+  - *Open Source/CLI:* Installation, CLI commands, usage examples (developers are the users)
+  - *Documentation:* In-app help, public API docs, website user guides (customer-facing)
+
+- **platform**: Developer-facing infrastructure and architectural patterns that enable product features
+  - *Infrastructure:* CI/CD, Docker, logging, monitoring, 12 Factor architecture
+  - *Design Systems:* Design tokens, component libraries, style guides (e.g., button styles, color systems)
+  - *Developer Tools:* Code formatters (Black, Prettier), linters, pre-commit hooks
+  - *Documentation:* README.md for SaaS repos, architecture diagrams, CONTRIBUTING.md, setup guides (for developers working on codebase)
+
+- **methodology**: Development process approaches and practices (TDD, BDD, Agile, Scrum, pair programming, trunk-based development)`,
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("product", "platform", "methodology"),
+				},
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of what this feature does",

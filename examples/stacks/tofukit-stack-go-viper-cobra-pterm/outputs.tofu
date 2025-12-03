@@ -41,9 +41,9 @@ output "kits" {
     language = tofukit_language.go
     tool     = tofukit_tool.go_mod
     framework = {
-      cobra = tofukit_framework.cobra
-      viper = tofukit_framework.viper
-      pterm = tofukit_framework.pterm
+      cobra = tofukit_library.cobra
+      viper = tofukit_library.viper
+      pterm = tofukit_library.pterm
     }
   }
 }

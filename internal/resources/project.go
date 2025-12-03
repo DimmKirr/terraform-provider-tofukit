@@ -84,7 +84,9 @@ func (r *ProjectResourceFinal) Configure(ctx context.Context, req resource.Confi
 
 func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Project resource that aggregates all component kits",
+		MarkdownDescription: `Project resource that orchestrates LLM-generated code by composing stacks, features, kits, and files into a complete application.
+
+**Examples:** Flask NYC weather API, Go CLI tool, React dashboard, Django REST service`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -113,7 +115,7 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:            true,
 			},
 			"kits": schema.DynamicAttribute{
-				MarkdownDescription: "List of kit references to include in the project (e.g., [tofukit_language.python, tofukit_framework.click])",
+				MarkdownDescription: "List of kit references to include in the project (e.g., [tofukit_language.python, tofukit_library.click])",
 				Optional:            true,
 			},
 			"execution_status": schema.StringAttribute{

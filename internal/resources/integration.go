@@ -18,16 +18,16 @@ import (
 
 // IntegrationResourceModel represents the integration resource model
 type IntegrationResourceModel struct {
-	ID           types.String          `tfsdk:"id"`
-	Name         types.String          `tfsdk:"name"`
-	Link         types.String          `tfsdk:"link"`
-	Type         types.String          `tfsdk:"type"`
-	Description  types.String          `tfsdk:"description"`
-	Version      types.String          `tfsdk:"version"`
-	Docs         types.Map             `tfsdk:"docs"`          // Map of documentation URLs
-	Environments types.Map             `tfsdk:"environments"`  // Optional: map of environment URLs
-	SDK          types.Map             `tfsdk:"sdk"`           // Optional: nested SDK info by language
-	Examples     types.Map             `tfsdk:"examples"`      // Optional: example code references
+	ID           types.String               `tfsdk:"id"`
+	Name         types.String               `tfsdk:"name"`
+	Link         types.String               `tfsdk:"link"`
+	Type         types.String               `tfsdk:"type"`
+	Description  types.String               `tfsdk:"description"`
+	Version      types.String               `tfsdk:"version"`
+	Docs         types.Map                  `tfsdk:"docs"`         // Map of documentation URLs
+	Environments types.Map                  `tfsdk:"environments"` // Optional: map of environment URLs
+	SDK          types.Map                  `tfsdk:"sdk"`          // Optional: nested SDK info by language
+	Examples     types.Map                  `tfsdk:"examples"`     // Optional: example code references
 	Requirements []schemas.RequirementModel `tfsdk:"requirements"` // Implementation requirements
 }
 
@@ -57,7 +57,9 @@ func (r *IntegrationResource) Configure(ctx context.Context, req resource.Config
 
 func (r *IntegrationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Integration resource for representing external API/service dependencies",
+		MarkdownDescription: `Integration resource for representing external API/service dependencies.
+
+**Examples:** OpenMeteo API, Stripe payments, Twilio SMS, SendGrid email, Auth0, GitHub API, AWS services, Google Cloud, Slack webhooks`,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

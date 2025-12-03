@@ -109,7 +109,7 @@ resource "tofukit_feature" "version_command" {
     }
   }
 
-  kits = [tofukit_framework.click]
+  kits = [tofukit_library.click]
 }
 
 # ========================================

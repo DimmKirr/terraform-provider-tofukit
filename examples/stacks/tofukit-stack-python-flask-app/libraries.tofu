@@ -4,7 +4,7 @@
 # ========================================
 # FRAMEWORK KITS
 # ========================================
-resource "tofukit_framework" "flask" {
+resource "tofukit_library" "flask" {
   name        = "flask"
   description = "Lightweight WSGI web application framework"
   version     = var.flask_version

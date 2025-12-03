@@ -45,8 +45,10 @@ func (r *LanguageResource) Schema(ctx context.Context, req resource.SchemaReques
 	attrs["requirements"] = schemas.GetRequirementsListAttribute()
 
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Language component for tofukit",
-		Attributes:          attrs,
+		MarkdownDescription: `Language resource for representing programming languages and runtimes.
+
+**Examples:** Python 3.12, Go 1.23, Node.js 20, Java 21, Rust 1.75, Ruby 3.3`,
+		Attributes: attrs,
 	}
 }
 

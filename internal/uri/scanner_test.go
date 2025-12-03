@@ -80,12 +80,12 @@ func TestExtractURIs_SingleKitLanguageURI(t *testing.T) {
 func TestExtractURIs_SingleKitFrameworkURI(t *testing.T) {
 	scanner := NewScanner()
 	fields := map[string]string{
-		"prompt": "Setup tofukit://kit/framework/click for CLI",
+		"prompt": "Setup tofukit://kit/library/click for CLI",
 	}
 
 	uris := scanner.ExtractURIs(fields)
 
-	assert.Equal(t, []string{"tofukit://kit/framework/click"}, uris)
+	assert.Equal(t, []string{"tofukit://kit/library/click"}, uris)
 }
 
 func TestExtractURIs_MultipleURIsInOneField(t *testing.T) {
@@ -132,14 +132,14 @@ func TestExtractURIs_DeduplicatesDuplicates(t *testing.T) {
 func TestExtractURIs_HandlesHyphensAndUnderscores(t *testing.T) {
 	scanner := NewScanner()
 	fields := map[string]string{
-		"prompt": "Use tofukit://feature/my-feature_v2 and tofukit://kit/framework/some_framework-v1",
+		"prompt": "Use tofukit://feature/my-feature_v2 and tofukit://kit/library/some_framework-v1",
 	}
 
 	uris := scanner.ExtractURIs(fields)
 
 	assert.ElementsMatch(t, []string{
 		"tofukit://feature/my-feature_v2",
-		"tofukit://kit/framework/some_framework-v1",
+		"tofukit://kit/library/some_framework-v1",
 	}, uris)
 }
 
@@ -229,10 +229,10 @@ func TestParseURI_KitLanguageURI(t *testing.T) {
 func TestParseURI_KitFrameworkURI(t *testing.T) {
 	scanner := NewScanner()
 
-	components, err := scanner.ParseURI("tofukit://kit/framework/click")
+	components, err := scanner.ParseURI("tofukit://kit/library/click")
 
 	assert.NoError(t, err)
-	assert.Equal(t, "kit/framework", components.Type)
+	assert.Equal(t, "kit/library", components.Type)
 	assert.Equal(t, "click", components.Name)
 }
 

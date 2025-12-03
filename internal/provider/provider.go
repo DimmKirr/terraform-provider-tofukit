@@ -230,13 +230,9 @@ func (p *TofukitProvider) Resources(ctx context.Context) []func() resource.Resou
 		resources.NewStackResource,
 		resources.NewFileResource,
 		resources.NewFeatureResource,
-		resources.NewBlueprintResource,
 		resources.NewLanguageResource,
-		resources.NewFrameworkResource,
+		resources.NewLibraryResource,
 		resources.NewToolResource,
-		resources.NewMethodologyResource,
-		resources.NewStyleResource,
-		resources.NewInfrastructureResource,
 		resources.NewIntegrationResource,
 	}
 }

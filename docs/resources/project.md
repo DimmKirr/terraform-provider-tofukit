@@ -28,7 +28,7 @@ resource "tofukit_project" "my_app" {
 
   kits = [
     tofukit_language.python,
-    tofukit_framework.flask
+    tofukit_library.flask
   ]
 
   requirements = [{
@@ -54,7 +54,7 @@ resource "tofukit_project" "my_app" {
 - `execution_error` (String) Error message if Claude Code execution failed
 - `features` (Dynamic) Features to implement (capabilities bundled with files, kits, and verifications). Can be inline definitions or references to feature resources.
 - `files` (Attributes Map) Files to generate and manage, keyed by file path. Accepts either inline file definitions or tofukit_file resource references. (see [below for nested schema](#nestedatt--files))
-- `kits` (Dynamic) List of kit references to include in the project (e.g., [tofukit_language.python, tofukit_framework.click])
+- `kits` (Dynamic) List of kit references to include in the project (e.g., [tofukit_language.python, tofukit_library.click])
 - `model` (String) Model to use for Claude execution. Options: 'haiku' (fast, cheap), 'sonnet' (balanced), 'opus' (most capable). Default: 'sonnet' (Claude CLI default)
 - `requirements` (Attributes List) Requirements for this component (ordered list) (see [below for nested schema](#nestedatt--requirements))
 - `stack` (Dynamic) Reference to the stack this project uses (e.g., tofukit_stack.python_cli or tofukit_stack.python_cli.id)

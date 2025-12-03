@@ -13,7 +13,7 @@ resource "tofukit_stack" "click_app" {
   kits = [
     tofukit_language.python,
     tofukit_tool.uv,
-    tofukit_framework.click,
+    tofukit_library.click,
   ]
 
   # Stack references its features

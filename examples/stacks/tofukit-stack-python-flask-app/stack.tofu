@@ -12,7 +12,7 @@ resource "tofukit_stack" "flask_app" {
   kits = [
     tofukit_language.python,
     tofukit_tool.uv,
-    tofukit_framework.flask,
+    tofukit_library.flask,
   ]
 
   # Stack references its features

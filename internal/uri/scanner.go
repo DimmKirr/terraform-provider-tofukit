@@ -8,7 +8,7 @@ import (
 
 // URIComponents represents the parsed components of a tofukit:// URI
 type URIComponents struct {
-	Type string // e.g., "feature", "file", "stack", "kit/language", "kit/framework"
+	Type string // e.g., "feature", "file", "stack", "kit/language", "kit/library"
 	Name string // e.g., "pterm_logger", "readme", "python312"
 }
 
@@ -48,7 +48,7 @@ func (s *Scanner) ExtractURIs(fields map[string]string) []string {
 // Examples:
 //   - tofukit://feature/logger → {Type: "feature", Name: "logger"}
 //   - tofukit://kit/language/python312 → {Type: "kit/language", Name: "python312"}
-//   - tofukit://kit/framework/viper → {Type: "kit/framework", Name: "viper"}
+//   - tofukit://kit/library/viper → {Type: "kit/library", Name: "viper"}
 func (s *Scanner) ParseURI(uri string) (URIComponents, error) {
 	// Remove scheme prefix
 	if !strings.HasPrefix(uri, "tofukit://") {
@@ -75,7 +75,7 @@ func (s *Scanner) ParseURI(uri string) (URIComponents, error) {
 	}
 
 	if len(parts) == 3 && parts[0] == "kit" {
-		// Kit type: tofukit://kit/language/name or tofukit://kit/framework/name
+		// Kit type: tofukit://kit/language/name or tofukit://kit/library/name
 		if parts[1] == "" || parts[2] == "" {
 			return URIComponents{}, fmt.Errorf("invalid URI format (empty parts): %s", uri)
 		}

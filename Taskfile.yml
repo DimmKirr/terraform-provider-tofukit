@@ -89,7 +89,25 @@ tasks:
       - go test ./test -v -run TestResourceProjectInlineFileCreateSuccess -timeout={{.TEST_TIMEOUT}}
 
   docs:
-    desc: Generate provider documentation
+    desc: Generate provider documentation from templates
+    summary: |
+      Regenerate provider documentation from templates.
+
+      IMPORTANT: Run this after every feature update or commit that changes:
+      - Resource schemas in internal/resources/*.go
+      - Resource descriptions or field documentation
+      - Any provider functionality that affects documentation
+
+      Documentation Workflow:
+      - Templates are in templates/resources/*.md.tmpl
+      - Generated docs are in docs/resources/*.md
+      - Templates combine custom content with auto-generated schemas
+      - Never edit docs/ files directly - they are auto-generated
+
+      Process:
+      1. Edit templates in templates/resources/*.md.tmpl
+      2. Run 'task docs' to regenerate
+      3. Commit both templates/ and docs/ changes
     cmds:
       - tfplugindocs generate
 

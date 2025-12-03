@@ -24,7 +24,7 @@ Stack resource for tofukit
 - `description` (String) Description of the stack
 - `features` (Dynamic) List of feature references to include in the stack (e.g., [tofukit_feature.readme, tofukit_feature.version_command])
 - `files` (Attributes Map) Files to generate and manage, keyed by file path. Accepts either inline file definitions or tofukit_file resource references. (see [below for nested schema](#nestedatt--files))
-- `kits` (Dynamic) List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_framework.click])
+- `kits` (Dynamic) List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_library.click])
 
 ### Read-Only
 

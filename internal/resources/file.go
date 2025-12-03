@@ -45,7 +45,9 @@ func (r *FileResource) Configure(ctx context.Context, req resource.ConfigureRequ
 
 func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "File resource for tofukit - enables reusable file definitions across projects",
+		MarkdownDescription: `File resource for reusable file definitions that can be shared across projects.
+
+**Examples:** .gitignore, LICENSE, .editorconfig, Dockerfile, Makefile, pyproject.toml, go.mod`,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

@@ -28,7 +28,7 @@ Language component for tofukit
 ### Read-Only
 
 - `id` (String) Resource identifier
-- `link` (String) URI link to this resource for cross-referencing (e.g., tofukit://kit/language/name or tofukit://kit/framework/name)
+- `link` (String) URI link to this resource for cross-referencing (e.g., tofukit://kit/language/name or tofukit://kit/library/name)
 
 <a id="nestedatt--requirements"></a>
 ### Nested Schema for `requirements`

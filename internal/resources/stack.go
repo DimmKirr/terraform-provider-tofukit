@@ -46,7 +46,9 @@ func (r *StackResource) Configure(ctx context.Context, req resource.ConfigureReq
 
 func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Stack resource for tofukit",
+		MarkdownDescription: `Stack resource for reusable collections of files, kits, and features that can be composed into projects.
+
+**Examples:** Python Flask app stack, Go CLI app stack, React frontend stack, Node.js API stack, Django REST API stack`,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -66,7 +68,7 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Optional:            true,
 			},
 			"kits": schema.DynamicAttribute{
-				MarkdownDescription: "List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_framework.click])",
+				MarkdownDescription: "List of kit references to include in the stack (e.g., [tofukit_language.python, tofukit_library.click])",
 				Optional:            true,
 			},
 			"features": schema.DynamicAttribute{

@@ -36,7 +36,7 @@ resource "tofukit_feature" "version_command" {
   # Note: Taskfile integration mentioned - ldflags will be set via:
   # GO_LDFLAGS: "-X {module}/internal/version.GitCommit={{.GIT_COMMIT_HASH}}"
 
-  kits = [tofukit_framework.cobra, tofukit_framework.pterm]
+  kits = [tofukit_library.cobra, tofukit_library.pterm]
 
   verifications = []
 }
@@ -70,7 +70,7 @@ resource "tofukit_feature" "viper_config" {
     "internal/config/config.go" = tofukit_file.viper_config_internal
   }
 
-  kits = [tofukit_framework.viper]
+  kits = [tofukit_library.viper]
 
   # Note: depends_on removed - dependency is implicit through file reference above (line 70)
 }
@@ -101,7 +101,7 @@ resource "tofukit_feature" "pterm_logger" {
   }
 
 
-  kits = [tofukit_framework.pterm]
+  kits = [tofukit_library.pterm]
 }
 
 resource "tofukit_feature" "taskfile" {

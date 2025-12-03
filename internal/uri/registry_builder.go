@@ -50,7 +50,7 @@ func (b *RegistryBuilder) getResourceMetadata(c URIComponents) (interface{}, err
 		return b.getStackMetadata(c.Name)
 	case "kit/language":
 		return b.getKitMetadata("language", c.Name)
-	case "kit/framework":
+	case "kit/library":
 		return b.getKitMetadata("framework", c.Name)
 	case "kit/tool":
 		return b.getKitMetadata("tool", c.Name)

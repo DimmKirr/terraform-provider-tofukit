@@ -4,7 +4,7 @@
 # ========================================
 # FRAMEWORK KITS
 # ========================================
-resource "tofukit_framework" "click" {
+resource "tofukit_library" "click" {
   name        = "click"
   description = "Composable command line interface toolkit"
   version     = var.click_version
