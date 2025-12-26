@@ -30,6 +30,7 @@ type FeatureResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
+	Model         types.String                `tfsdk:"model"`
 	Type          types.String                `tfsdk:"type"`
 	Description   types.String                `tfsdk:"description"`
 	Requirements  []schemas.RequirementModel  `tfsdk:"requirements"` // Now uses common type!
@@ -63,6 +64,10 @@ func (r *FeatureResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"link": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://feature/name)",
+			},
+			"model": schema.StringAttribute{
+				MarkdownDescription: "Model to use for this feature in provider/model format (e.g., 'anthropic/claude-haiku-4.5', 'openai/gpt-5.2'). Overrides provider-level model setting. If not specified, uses provider's default model.",
+				Optional:            true,
 			},
 			"type": schema.StringAttribute{
 				MarkdownDescription: `Feature type classification:

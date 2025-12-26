@@ -28,6 +28,7 @@ type StackResourceModel struct {
 	ID          types.String  `tfsdk:"id"`
 	Name        types.String  `tfsdk:"name"`
 	Link        types.String  `tfsdk:"link"`
+	Model       types.String  `tfsdk:"model"`
 	Description types.String  `tfsdk:"description"`
 	Kits        types.Dynamic `tfsdk:"kits"`     // Kits that compose this stack (list of kit references)
 	Features    types.Dynamic `tfsdk:"features"` // Features that compose this stack (list of feature references)
@@ -62,6 +63,10 @@ func (r *StackResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"link": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://stack/name)",
+			},
+			"model": schema.StringAttribute{
+				MarkdownDescription: "Model to use for this stack in provider/model format (e.g., 'anthropic/claude-sonnet-4.5', 'openai/gpt-5.2'). Overrides provider-level model setting. If not specified, uses provider's default model.",
+				Optional:            true,
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of the stack",

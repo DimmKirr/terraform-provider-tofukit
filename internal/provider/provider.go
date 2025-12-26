@@ -12,9 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/datasources"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/gemini"
-	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/openai"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/resources"
 )
@@ -32,8 +29,10 @@ type TofukitProvider struct {
 type TofukitProviderModel struct {
 	OutputFormat               types.String `tfsdk:"output_format"`
 	OutputPath                 types.String `tfsdk:"output_path"`
-	LLM                        types.String `tfsdk:"llm"`
-	APIKey                     types.String `tfsdk:"api_key"`
+	Model                      types.String `tfsdk:"model"`
+	OpenAIAPIKey               types.String `tfsdk:"openai_api_key"`
+	GoogleAPIKey               types.String `tfsdk:"google_api_key"`
+	MetaAPIKey                 types.String `tfsdk:"meta_api_key"`
 	ClaudeHomeDirectory        types.String `tfsdk:"claude_home_directory"`
 	Debug                      types.Bool   `tfsdk:"debug"`
 	MaxRetries                 types.Int64  `tfsdk:"max_retries"`
@@ -58,17 +57,27 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Path where to write generated context files",
 				Optional:            true,
 			},
-			"llm": schema.StringAttribute{
-				MarkdownDescription: "LLM provider to use (claude, openai, gemini). Default: claude",
+			"model": schema.StringAttribute{
+				MarkdownDescription: "Model to use in provider/model format (e.g., anthropic/claude-3-5-sonnet, openai/gpt-4o). Default: anthropic/claude-3-5-sonnet",
 				Optional:            true,
 			},
-			"api_key": schema.StringAttribute{
-				MarkdownDescription: "API key for LLM provider (required for openai and gemini, not used for claude)",
+			"openai_api_key": schema.StringAttribute{
+				MarkdownDescription: "OpenAI API key for OpenAI models (e.g., openai/gpt-4o, openai/dall-e-3)",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"google_api_key": schema.StringAttribute{
+				MarkdownDescription: "Google API key for Gemini models (e.g., google/gemini-1.5-pro)",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"meta_api_key": schema.StringAttribute{
+				MarkdownDescription: "Meta API key for LLaMA models (e.g., meta-llama/llama-3.1-70b)",
 				Optional:            true,
 				Sensitive:           true,
 			},
 			"claude_home_directory": schema.StringAttribute{
-				MarkdownDescription: "Claude home directory for authentication and configuration (default: ~/.claude, only used when llm=claude)",
+				MarkdownDescription: "Claude home directory for authentication and configuration (default: ~/.claude, only used for anthropic models)",
 				Optional:            true,
 			},
 			"debug": schema.BoolAttribute{
@@ -76,11 +85,11 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 			},
 			"max_retries": schema.Int64Attribute{
-				MarkdownDescription: "Maximum number of verification retry attempts (default: 3). If verification fails, Claude will receive the errors and retry until success or max retries.",
+				MarkdownDescription: "Maximum number of verification retry attempts (default: 3). If verification fails, the LLM will receive the errors and retry until success or max retries.",
 				Optional:            true,
 			},
 			"claude_max_turns": schema.Int64Attribute{
-				MarkdownDescription: "Maximum turns for Claude CLI execution (default: 100). Only applies when llm=claude. Higher values allow more complex projects but take longer. A 'turn' is one user message + Claude's response(s).",
+				MarkdownDescription: "Maximum turns for Claude CLI execution (default: 100). Only applies to anthropic models. Higher values allow more complex projects but take longer. A 'turn' is one user message + Claude's response(s).",
 				Optional:            true,
 			},
 			"dangerously_skip_permissions": schema.BoolAttribute{
@@ -106,14 +115,13 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	// Default values
 	outputFormat := "json"
-	outputPath := "./"  // Default to current directory
-	llmType := "claude" // Default LLM provider
-	apiKey := ""
-	claudeHomeDir := "~/.claude" // Default Claude home directory
+	outputPath := "./"
+	modelStr := "anthropic/claude-3-5-sonnet"
+	claudeHomeDir := "~/.claude"
 	debug := false
-	maxRetries := 3                    // Default to 3 verification retry attempts
-	dangerouslySkipPermissions := true // Default to true for backward compatibility
-	dryRun := false                    // Default to false - execute LLM normally
+	maxRetries := 3
+	dangerouslySkipPermissions := true
+	dryRun := false
 
 	if !data.OutputFormat.IsNull() {
 		outputFormat = data.OutputFormat.ValueString()
@@ -123,12 +131,33 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		outputPath = data.OutputPath.ValueString()
 	}
 
-	if !data.LLM.IsNull() {
-		llmType = data.LLM.ValueString()
+	if !data.Model.IsNull() {
+		modelStr = data.Model.ValueString()
 	}
 
-	if !data.APIKey.IsNull() {
-		apiKey = data.APIKey.ValueString()
+	// Parse model to get provider and model name
+	modelInfo, err := ParseModel(modelStr)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Model Format",
+			fmt.Sprintf("Failed to parse model '%s': %v. Expected format: provider/model (e.g., anthropic/claude-3-5-sonnet)", modelStr, err),
+		)
+		return
+	}
+
+	// Extract API keys
+	var openaiAPIKey, googleAPIKey, metaAPIKey string
+
+	if !data.OpenAIAPIKey.IsNull() {
+		openaiAPIKey = data.OpenAIAPIKey.ValueString()
+	}
+
+	if !data.GoogleAPIKey.IsNull() {
+		googleAPIKey = data.GoogleAPIKey.ValueString()
+	}
+
+	if !data.MetaAPIKey.IsNull() {
+		metaAPIKey = data.MetaAPIKey.ValueString()
 	}
 
 	if !data.ClaudeHomeDirectory.IsNull() {
@@ -142,15 +171,15 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	if !data.MaxRetries.IsNull() {
 		maxRetries = int(data.MaxRetries.ValueInt64())
 		if maxRetries < 1 {
-			maxRetries = 1 // Minimum 1 retry
+			maxRetries = 1
 		}
 	}
 
-	claudeMaxTurns := 100 // Default to 100 turns
+	claudeMaxTurns := 100
 	if !data.ClaudeMaxTurns.IsNull() {
 		claudeMaxTurns = int(data.ClaudeMaxTurns.ValueInt64())
 		if claudeMaxTurns < 1 {
-			claudeMaxTurns = 1 // Minimum 1 turn
+			claudeMaxTurns = 1
 		}
 	}
 
@@ -162,11 +191,8 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		dryRun = data.DryRun.ValueBool()
 	}
 
-	// Create LLM executor based on type
-	var llmExecutor llm.LLMExecutor
-	switch llmType {
-	case "claude":
-		// Validate that unbuffer is available (required for Claude CLI)
+	// Validate unbuffer for Claude/Anthropic provider
+	if modelInfo.Provider == "anthropic" {
 		if err := validateUnbufferAvailable(); err != nil {
 			resp.Diagnostics.AddError(
 				"Missing Required Command",
@@ -174,42 +200,35 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 			)
 			return
 		}
-		llmExecutor = newClaudeAdapter(claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns))
-	case "openai":
-		if apiKey == "" {
-			resp.Diagnostics.AddError(
-				"Missing API Key",
-				"api_key is required when llm=openai",
-			)
-			return
-		}
-		llmExecutor = openai.NewExecutor(apiKey)
-	case "gemini":
-		if apiKey == "" {
-			resp.Diagnostics.AddError(
-				"Missing API Key",
-				"api_key is required when llm=gemini",
-			)
-			return
-		}
-		llmExecutor = gemini.NewExecutor(apiKey)
-	default:
+	}
+
+	// Create executor factory with debug and outputPath from provider config
+	factory := NewExecutorFactory(
+		claudeHomeDir,
+		openaiAPIKey,
+		googleAPIKey,
+		metaAPIKey,
+		dangerouslySkipPermissions,
+		claudeMaxTurns,
+		debug,
+		outputPath,
+	)
+
+	// Get executor for the default model
+	llmExecutor, err := factory.GetExecutor(modelInfo.Provider, modelInfo.Model)
+	if err != nil {
 		resp.Diagnostics.AddError(
-			"Unsupported LLM Type",
-			fmt.Sprintf("Unsupported LLM type: %s. Supported types are: claude, openai, gemini", llmType),
+			"Executor Creation Failed",
+			fmt.Sprintf("Failed to create executor for model '%s': %v", modelStr, err),
 		)
 		return
 	}
-
-	// Configure the executor
-	llmExecutor.SetDebug(debug)
-	llmExecutor.SetOutputPath(outputPath)
 
 	// Create provider data that will be passed to resources
 	providerData := &ProviderData{
 		OutputFormat:               outputFormat,
 		OutputPath:                 outputPath,
-		LLM:                        llmType,
+		Model:                      modelStr,
 		ClaudeHomeDirectory:        claudeHomeDir,
 		Debug:                      debug,
 		MaxRetries:                 maxRetries,
@@ -217,6 +236,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
 		DryRun:                     dryRun,
 		Registry:                   registry.New(),
+		ExecutorFactory:            factory,
 		LLMExecutor:                llmExecutor,
 	}
 
@@ -255,7 +275,7 @@ func New(version string) func() provider.Provider {
 type ProviderData struct {
 	OutputFormat               string
 	OutputPath                 string
-	LLM                        string
+	Model                      string // Model in provider/model format
 	ClaudeHomeDirectory        string
 	Debug                      bool
 	MaxRetries                 int
@@ -263,7 +283,8 @@ type ProviderData struct {
 	DangerouslySkipPermissions bool
 	DryRun                     bool
 	Registry                   *registry.Registry
-	LLMExecutor                llm.LLMExecutor
+	ExecutorFactory            *ExecutorFactory
+	LLMExecutor                llm.LLMExecutor // Default executor for provider model
 }
 
 // GetClaudeHomeDirectory returns the Claude home directory
@@ -319,6 +340,30 @@ func (p *ProviderData) GetLLMExecutor() llm.LLMExecutor {
 // GetDryRun returns whether dry run mode is enabled
 func (p *ProviderData) GetDryRun() bool {
 	return p.DryRun
+}
+
+// GetModel returns the default model in provider/model format
+func (p *ProviderData) GetModel() string {
+	return p.Model
+}
+
+// GetExecutorFactory returns the executor factory
+func (p *ProviderData) GetExecutorFactory() *ExecutorFactory {
+	return p.ExecutorFactory
+}
+
+// GetExecutorForModel creates an executor for the specified model
+func (p *ProviderData) GetExecutorForModel(model string) (llm.LLMExecutor, error) {
+	return p.ExecutorFactory.GetExecutorForModel(model)
+}
+
+// ResolveModel determines which model to use for a resource
+// Priority: resource model > provider default model
+func ResolveModel(resourceModel string, providerDefaultModel string) string {
+	if resourceModel != "" {
+		return resourceModel
+	}
+	return providerDefaultModel
 }
 
 // validateUnbufferAvailable checks if the unbuffer command is available in PATH

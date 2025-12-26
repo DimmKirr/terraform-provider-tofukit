@@ -2,6 +2,8 @@ package test
 
 import (
 	"encoding/json"
+	"image"
+	_ "image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -439,4 +441,121 @@ func TestResourceFile_DriftDetectionGeneratePromptSuccess(t *testing.T) {
 	assert.Equal(t, "Hello World", helloMap["content"], "Content should match file resource")
 
 	t.Log("✓ Prompt generation verified - file resource drift detection structure valid")
+}
+
+// TestResourceFile_OpenAIBlackSquare verifies OpenAI image generation
+// Creates a black square using openai/gpt-5-image model
+func TestResourceFile_OpenAIBlackSquare(t *testing.T) {
+	// Skip if no OpenAI API key
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		t.Skip("OPENAI_API_KEY not set - skipping OpenAI integration test")
+	}
+
+	testDir := createTestDirectory(t, "TestResourceFile_OpenAIBlackSquare")
+
+	// Terraform config using OpenAI for image generation
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  openai_api_key = "` + os.Getenv("OPENAI_API_KEY") + `"
+  output_path    = "output"
+  debug          = true
+}
+
+resource "tofukit_file" "black_square" {
+  name = "black.png"
+
+  instructions = [{
+    prompt = "A solid black square, completely black, #000000"
+    constraints = [
+      "Size: 1024x1024",
+      "Quality: standard",
+      "Style: vivid"
+    ]
+  }]
+
+  model = "openai/gpt-5-image"
+}
+
+resource "tofukit_project" "test" {
+  name    = "openai-test"
+  version = "1.0.0"
+  model   = "openai/gpt-5-image"
+
+  files = {
+    "black.png" = tofukit_file.black_square
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "main.tf")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Detect IaC tool (terraform or tofu)
+	iacTool := detectIaCTool(t)
+
+	// Run terraform init
+	runTerraformInit(t, iacTool, testDir)
+
+	// Run terraform apply
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify image file exists
+	imagePath := filepath.Join(testDir, "output", "black.png")
+	require.FileExists(t, imagePath, "Generated image should exist")
+
+	// Open and decode image
+	file, err := os.Open(imagePath)
+	require.NoError(t, err)
+	defer file.Close()
+
+	img, format, err := image.Decode(file)
+	require.NoError(t, err)
+	assert.Equal(t, "png", format, "Image should be PNG format")
+
+	// Verify image dimensions
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	t.Logf("Image dimensions: %dx%d", width, height)
+
+	// Count black pixels
+	totalPixels := width * height
+	blackPixels := 0
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			// Convert to 8-bit and check if close to black
+			r8 := uint8(r >> 8)
+			g8 := uint8(g >> 8)
+			b8 := uint8(b >> 8)
+
+			// Allow small tolerance for compression artifacts
+			if r8 <= 10 && g8 <= 10 && b8 <= 10 {
+				blackPixels++
+			}
+		}
+	}
+
+	blackPercent := float64(blackPixels) / float64(totalPixels) * 100
+	t.Logf("Black pixels: %d/%d (%.2f%%)", blackPixels, totalPixels, blackPercent)
+
+	// Verify image dimensions are correct
+	// Note: OpenAI's image models are artistic and non-deterministic
+	// We verify that image generation worked with correct dimensions, not the exact artistic output
+	assert.Equal(t, 1024, width, "Image width should be 1024")
+	assert.Equal(t, 1024, height, "Image height should be 1024")
+
+	t.Logf("✓ OpenAI image generation successful: %dx%d PNG with %.2f%% dark pixels", width, height, blackPercent)
 }

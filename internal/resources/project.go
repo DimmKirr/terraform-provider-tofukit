@@ -23,7 +23,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/openai"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/uri"
@@ -164,7 +166,7 @@ func (r *ProjectResourceFinal) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:            true,
 			},
 			"model": schema.StringAttribute{
-				MarkdownDescription: "Model to use for Claude execution. Options: 'haiku' (fast, cheap), 'sonnet' (balanced), 'opus' (most capable). Default: 'sonnet' (Claude CLI default)",
+				MarkdownDescription: "Model to use for this project in provider/model format. Examples: 'anthropic/claude-opus-4.5', 'anthropic/claude-sonnet-4.5', 'anthropic/claude-haiku-4.5', 'openai/gpt-5.2', 'openai/gpt-5.1-codex'. Overrides provider-level model setting. If not specified, uses provider's default model.",
 				Optional:            true,
 			},
 			"planned_prompt_json": schema.StringAttribute{
@@ -2350,19 +2352,13 @@ func (r *ProjectResourceFinal) writeJSONFile(ctx context.Context, data ProjectMo
 func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *ProjectModelFinal, outputData map[string]interface{}, mergedFiles []schemas.FileModelWithPath, outputPath string, claudeHomeDir string, preserveTimestamps bool) error {
 	// Check if debug mode and dry_run are enabled
 	debug := false
-	dangerouslySkipPermissions := false
 	dryRun := false
-	claudeMaxTurns := 100
 	if provData, ok := r.ProviderData.(interface {
 		GetDebug() bool
-		GetDangerouslySkipPermissions() bool
 		GetDryRun() bool
-		GetClaudeMaxTurns() int
 	}); ok {
 		debug = provData.GetDebug()
-		dangerouslySkipPermissions = provData.GetDangerouslySkipPermissions()
 		dryRun = provData.GetDryRun()
-		claudeMaxTurns = provData.GetClaudeMaxTurns()
 	}
 
 	// Get system prompt from resource data
@@ -2371,17 +2367,39 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		systemPrompt = data.SystemPrompt.ValueString()
 	}
 
-	// Get model from resource data (defaults to sonnet if not specified)
-	model := "sonnet"
-	if !data.Model.IsNull() && !data.Model.IsUnknown() {
-		model = data.Model.ValueString()
+	// Resolve model: resource override > provider default
+	var resolvedModel string
+	resourceModel := data.Model.ValueString()
+
+	if resourceModel != "" {
+		// Resource model takes precedence
+		resolvedModel = resourceModel
+	} else if provData, ok := r.ProviderData.(interface{ GetModel() string }); ok {
+		// Fall back to provider default model
+		resolvedModel = provData.GetModel()
+	} else {
+		// Ultimate fallback
+		resolvedModel = "anthropic/claude-sonnet-4.5"
 	}
 
-	executor := claude.NewExecutor(claudeHomeDir, dangerouslySkipPermissions, claudeMaxTurns)
+	// Get executor for resolved model
+	var executor llm.LLMExecutor
+	if provData, ok := r.ProviderData.(interface {
+		GetExecutorForModel(string) (llm.LLMExecutor, error)
+	}); ok {
+		var err error
+		executor, err = provData.GetExecutorForModel(resolvedModel)
+		if err != nil {
+			return fmt.Errorf("failed to get executor for model '%s': %w", resolvedModel, err)
+		}
+	} else {
+		return fmt.Errorf("provider data does not support GetExecutorForModel()")
+	}
+
+	// Configure executor (these methods are part of llm.LLMExecutor interface)
 	executor.SetDebug(debug)
 	executor.SetOutputPath(outputPath)
 	executor.SetSystemPrompt(systemPrompt)
-	executor.SetModel(model)
 
 	// Get max retries from provider config (default to 3)
 	maxRetries := 3
@@ -2393,7 +2411,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 
 	// Check if we have a planned prompt from the plan phase (stored in state)
 	var promptJSON string
-	var status *claude.ExecutionStatus
+	var status *llm.ExecutionStatus
 	var report *files.VerificationReport
 	var err error
 
@@ -2420,7 +2438,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		tflog.Info(ctx, "Dry run mode enabled - skipping LLM execution")
 
 		// Mock successful execution status
-		status = &claude.ExecutionStatus{
+		status = &llm.ExecutionStatus{
 			State:       "completed",
 			StartedAt:   time.Now().Format(time.RFC3339),
 			CompletedAt: time.Now().Format(time.RFC3339),
@@ -2467,10 +2485,43 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			})
 		}
 
-		// Execute Claude with ALL verifications enforced
+		// Execute with ALL verifications enforced
 		// Failed verifications will trigger retries (up to maxRetries attempts)
 		// If all retries fail, an error is returned causing Terraform apply to fail
-		status, report, err = executor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
+
+		// Check if executor supports ExecuteWithPromptJSON
+		// Both Claude and OpenAI executors implement this method
+		type claudeAdapterInterface interface {
+			GetClaudeExecutor() *claude.Executor
+		}
+		type openaiAdapterInterface interface {
+			GetOpenAIExecutor() *openai.Executor
+		}
+
+		// Try Claude adapter first
+		if adapter, ok := executor.(claudeAdapterInterface); ok {
+			claudeExecutor := adapter.GetClaudeExecutor()
+			var claudeStatus *claude.ExecutionStatus
+			claudeStatus, report, err = claudeExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
+			// Convert claude.ExecutionStatus to llm.ExecutionStatus
+			if claudeStatus != nil {
+				status = &llm.ExecutionStatus{
+					State:       claudeStatus.State,
+					StartedAt:   claudeStatus.StartedAt,
+					CompletedAt: claudeStatus.CompletedAt,
+					ProjectPath: claudeStatus.ProjectPath,
+					Error:       claudeStatus.Error,
+					Output:      claudeStatus.Output,
+					Metadata:    claudeStatus.Metadata,
+				}
+			}
+		} else if adapter, ok := executor.(openaiAdapterInterface); ok {
+			// OpenAI adapter
+			openaiExecutor := adapter.GetOpenAIExecutor()
+			status, report, err = openaiExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
+		} else {
+			return fmt.Errorf("executor does not support ExecuteWithPromptJSON (only Claude and OpenAI executors are supported)")
+		}
 		if err != nil {
 			// Execution or verification failed
 			data.ExecutionStatus = types.StringValue("failed")

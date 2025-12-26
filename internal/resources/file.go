@@ -28,6 +28,7 @@ type FileResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
 	Link          types.String                `tfsdk:"link"`
+	Model         types.String                `tfsdk:"model"`
 	Description   types.String                `tfsdk:"description"`
 	Content       types.String                `tfsdk:"content"`
 	Instructions  []schemas.InstructionModel  `tfsdk:"instructions"`
@@ -64,6 +65,10 @@ func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"link": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://file/name)",
+			},
+			"model": schema.StringAttribute{
+				MarkdownDescription: "Model to use for this file in provider/model format (e.g., 'anthropic/claude-sonnet-4.5', 'openai/gpt-5-image'). Overrides provider-level model setting. If not specified, uses provider's default model.",
+				Optional:            true,
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "Description of what this file does",
