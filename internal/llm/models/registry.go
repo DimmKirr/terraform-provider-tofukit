@@ -114,6 +114,29 @@ var ModelRegistry = map[string]Model{
 		OutputModalities: []string{"image", "text"},
 	},
 
+	// OpenAI - Direct Image Generation Models (alternative naming)
+	"openai/gpt-image-1": {
+		Slug:             "openai/gpt-image-1",
+		Name:             "OpenAI GPT Image 1.5",
+		ProviderModelID:  "gpt-image-1.5",
+		ProviderSlug:     "openai",
+		ContextLength:    400000,
+		Description:      "GPT Image 1.5 - advanced image generation model",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"image"},
+	},
+
+	"openai/gpt-image-1-mini": {
+		Slug:             "openai/gpt-image-1-mini",
+		Name:             "OpenAI GPT Image 1 Mini",
+		ProviderModelID:  "gpt-image-1-mini",
+		ProviderSlug:     "openai",
+		ContextLength:    400000,
+		Description:      "Lightweight GPT Image model for faster, cost-effective image generation",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"image"},
+	},
+
 	// Anthropic - Claude Models (via Claude Code CLI)
 	"anthropic/claude-sonnet-4.5": {
 		Slug:             "anthropic/claude-sonnet-4.5",

@@ -93,6 +93,7 @@ func (e *Executor) executeImageGeneration(ctx context.Context, projectSpec map[s
 	}
 
 	// Process each file (should be image files)
+	generatedFiles := []map[string]interface{}{}
 	for path, fileData := range filesMap {
 		fileMap, ok := fileData.(map[string]interface{})
 		if !ok {
@@ -128,6 +129,29 @@ func (e *Executor) executeImageGeneration(ctx context.Context, projectSpec map[s
 			return nil, fmt.Errorf("failed to save image '%s': %w", path, err)
 		}
 		fmt.Printf("[OpenAI DEBUG] Image saved successfully\n")
+
+		// Collect response data for debug logging
+		generatedFiles = append(generatedFiles, map[string]interface{}{
+			"path":        path,
+			"prompt":      promptText,
+			"config":      config,
+			"base64_size": len(imageDataB64),
+			"model":       e.model,
+		})
+	}
+
+	// Save response data for debugging
+	if len(generatedFiles) > 0 {
+		responseData := map[string]interface{}{
+			"generated_files": generatedFiles,
+			"total_files":     len(generatedFiles),
+			"timestamp":       time.Now().Format(time.RFC3339),
+		}
+		if err := e.saveResponseData(ctx, responseData, outputDir, 1); err != nil {
+			tflog.Warn(ctx, "Failed to save response data", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 	}
 
 	return &llm.ExecutionStatus{

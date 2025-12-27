@@ -2367,19 +2367,28 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		systemPrompt = data.SystemPrompt.ValueString()
 	}
 
-	// Resolve model: resource override > provider default
+	// Resolve model: project.model > file.model (if all files have same model) > provider default
 	var resolvedModel string
 	resourceModel := data.Model.ValueString()
 
 	if resourceModel != "" {
-		// Resource model takes precedence
+		// Project model takes precedence
 		resolvedModel = resourceModel
-	} else if provData, ok := r.ProviderData.(interface{ GetModel() string }); ok {
-		// Fall back to provider default model
-		resolvedModel = provData.GetModel()
 	} else {
-		// Ultimate fallback
-		resolvedModel = "anthropic/claude-sonnet-4.5"
+		// Check if all files have the same model (enables file.model > provider.model inheritance)
+		fileModel := r.detectUnanimousFileModel(ctx, *data)
+		if fileModel != "" {
+			resolvedModel = fileModel
+			tflog.Info(ctx, "Using unanimous file model for project execution", map[string]interface{}{
+				"model": resolvedModel,
+			})
+		} else if provData, ok := r.ProviderData.(interface{ GetModel() string }); ok {
+			// Fall back to provider default model
+			resolvedModel = provData.GetModel()
+		} else {
+			// Ultimate fallback
+			resolvedModel = "anthropic/claude-sonnet-4.5"
+		}
 	}
 
 	// Get executor for resolved model
@@ -4953,6 +4962,140 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 	tflog.Info(ctx, "Merged files from all sources", logAttrs)
 
 	return mergedFiles
+}
+
+// detectUnanimousFileModel checks if all files referenced in the project use the same model
+// Returns the unanimous model if all files have the same non-empty model, empty string otherwise
+func (r *ProjectResourceFinal) detectUnanimousFileModel(ctx context.Context, data ProjectModelFinal) string {
+	if data.Files.IsNull() || data.Files.IsUnknown() {
+		tflog.Debug(ctx, "detectUnanimousFileModel: Files is null or unknown", map[string]interface{}{})
+		return ""
+	}
+
+	// Get the registry to access file resources
+	var reg *registry.Registry
+	if provData, ok := r.ProviderData.(interface {
+		GetRegistry() *registry.Registry
+	}); ok {
+		reg = provData.GetRegistry()
+	}
+
+	if reg == nil {
+		tflog.Debug(ctx, "detectUnanimousFileModel: Registry is nil", map[string]interface{}{})
+		return ""
+	}
+
+	// Track models we've seen
+	var unanimousModel string
+	filesChecked := 0
+
+	elements := data.Files.Elements()
+	tflog.Debug(ctx, "detectUnanimousFileModel: Checking files", map[string]interface{}{
+		"file_count": len(elements),
+	})
+
+	for pathKey, fileValue := range elements {
+		// Extract the file object
+		fileObj, ok := fileValue.(types.Object)
+		if !ok {
+			tflog.Debug(ctx, "detectUnanimousFileModel: File value is not an object", map[string]interface{}{
+				"path": pathKey,
+			})
+			continue
+		}
+
+		attrs := fileObj.Attributes()
+		tflog.Debug(ctx, "detectUnanimousFileModel: File attributes", map[string]interface{}{
+			"path":      pathKey,
+			"has_id":    attrs["id"] != nil,
+			"has_model": attrs["model"] != nil,
+		})
+
+		var fileModel string
+
+		// First, check if file has a direct model attribute (inline files or file resource references)
+		if modelAttr, hasModel := attrs["model"]; hasModel && !modelAttr.IsNull() && !modelAttr.IsUnknown() {
+			if modelStr, ok := modelAttr.(types.String); ok {
+				fileModel = modelStr.ValueString()
+				tflog.Debug(ctx, "detectUnanimousFileModel: Found model in attributes", map[string]interface{}{
+					"path":  pathKey,
+					"model": fileModel,
+				})
+			}
+		}
+
+		// If no direct model and this is a file resource reference, check registry
+		if fileModel == "" {
+			if idAttr, hasID := attrs["id"]; hasID && !idAttr.IsNull() && !idAttr.IsUnknown() {
+				idStr, ok := idAttr.(types.String)
+				if !ok {
+					continue
+				}
+
+				fileID := idStr.ValueString()
+				if fileID == "" {
+					continue
+				}
+
+				tflog.Debug(ctx, "detectUnanimousFileModel: Checking registry for file", map[string]interface{}{
+					"file_id": fileID,
+					"path":    pathKey,
+				})
+
+				// Look up file in registry
+				fileData, exists := reg.GetFile(fileID)
+				if !exists {
+					tflog.Debug(ctx, "File not found in registry", map[string]interface{}{
+						"file_id": fileID,
+						"path":    pathKey,
+					})
+					continue
+				}
+
+				// Extract model from file registry data
+				fileMap, ok := fileData.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				if modelVal, hasModel := fileMap["model"]; hasModel {
+					if modelStr, ok := modelVal.(string); ok && modelStr != "" {
+						fileModel = modelStr
+						tflog.Debug(ctx, "detectUnanimousFileModel: Found model in registry", map[string]interface{}{
+							"path":  pathKey,
+							"model": fileModel,
+						})
+					}
+				}
+			}
+		}
+
+		// If we found a model for this file, check for unanimity
+		if fileModel != "" {
+			filesChecked++
+			if unanimousModel == "" {
+				unanimousModel = fileModel
+			} else if unanimousModel != fileModel {
+				// Files have different models - not unanimous
+				tflog.Debug(ctx, "Files have different models", map[string]interface{}{
+					"file1_model": unanimousModel,
+					"file2_model": fileModel,
+				})
+				return ""
+			}
+		}
+	}
+
+	// Only return unanimous model if we actually checked files and they all agreed
+	if filesChecked > 0 && unanimousModel != "" {
+		tflog.Info(ctx, "Detected unanimous file model", map[string]interface{}{
+			"model":         unanimousModel,
+			"files_checked": filesChecked,
+		})
+		return unanimousModel
+	}
+
+	return ""
 }
 
 // collectStringFields collects all string fields from the project for URI scanning

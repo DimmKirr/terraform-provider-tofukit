@@ -15,11 +15,16 @@ type Client struct {
 }
 
 // NewClient creates a new OpenAI client with the provided API key
+// If apiKey is empty, the SDK will automatically use the OPENAI_API_KEY environment variable
 func NewClient(apiKey string) *Client {
+	var opts []option.RequestOption
+	if apiKey != "" {
+		opts = append(opts, option.WithAPIKey(apiKey))
+	}
+	// If no API key provided, SDK automatically reads from OPENAI_API_KEY env var
+
 	return &Client{
-		client: openai.NewClient(
-			option.WithAPIKey(apiKey),
-		),
+		client: openai.NewClient(opts...),
 	}
 }
 

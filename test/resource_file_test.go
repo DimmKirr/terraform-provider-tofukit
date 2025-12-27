@@ -443,17 +443,18 @@ func TestResourceFile_DriftDetectionGeneratePromptSuccess(t *testing.T) {
 	t.Log("✓ Prompt generation verified - file resource drift detection structure valid")
 }
 
-// TestResourceFile_OpenAIBlackSquare verifies OpenAI image generation
-// Creates a black square using openai/gpt-5-image model
-func TestResourceFile_OpenAIBlackSquare(t *testing.T) {
+// TestResourceFile_OpenAIGradient verifies OpenAI image generation
+// Creates International Klein Blue (IKB) monochrome painting using openai/gpt-image-1-mini model
+func TestResourceFile_OpenAIGradient(t *testing.T) {
 	// Skip if no OpenAI API key
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("OPENAI_API_KEY not set - skipping OpenAI integration test")
 	}
 
-	testDir := createTestDirectory(t, "TestResourceFile_OpenAIBlackSquare")
+	testDir := createTestDirectory(t, "TestResourceFile_OpenAIIKB")
 
-	// Terraform config using OpenAI for image generation
+	// Terraform config using OpenAI for IKB image generation
+	// Note: Provider automatically reads OPENAI_API_KEY from environment
 	config := `
 terraform {
   required_providers {
@@ -465,39 +466,39 @@ terraform {
 }
 
 provider "tofukit" {
-  openai_api_key = "` + os.Getenv("OPENAI_API_KEY") + `"
-  output_path    = "output"
-  debug          = true
+  output_path = "output"
+  debug       = true
 }
 
-resource "tofukit_file" "black_square" {
-  name = "black.png"
+resource "tofukit_file" "ikb" {
+  name = "ikb.png"
 
   instructions = [{
-    prompt = "A solid black square, completely black, #000000"
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting"
     constraints = [
       "Size: 1024x1024",
-      "Quality: standard",
-      "Style: vivid"
+      "Solid IKB blue #002FA7",
+      "Minimalist monochrome artwork",
+      "Deep saturated ultramarine blue"
     ]
   }]
 
-  model = "openai/gpt-5-image"
+  model = "openai/gpt-image-1-mini"
 }
 
 resource "tofukit_project" "test" {
-  name    = "openai-test"
+  name    = "openai-ikb-test"
   version = "1.0.0"
-  model   = "openai/gpt-5-image"
+  model   = "openai/gpt-image-1-mini"
 
   files = {
-    "black.png" = tofukit_file.black_square
+    "ikb.png" = tofukit_file.ikb
   }
 }
 `
 
 	// Write config
-	configPath := filepath.Join(testDir, "main.tf")
+	configPath := filepath.Join(testDir, "main.tofu")
 	err := os.WriteFile(configPath, []byte(config), 0644)
 	require.NoError(t, err)
 
@@ -511,7 +512,7 @@ resource "tofukit_project" "test" {
 	runTerraformApply(t, iacTool, testDir)
 
 	// Verify image file exists
-	imagePath := filepath.Join(testDir, "output", "black.png")
+	imagePath := filepath.Join(testDir, "output", "ikb.png")
 	require.FileExists(t, imagePath, "Generated image should exist")
 
 	// Open and decode image
@@ -528,34 +529,57 @@ resource "tofukit_project" "test" {
 	width := bounds.Dx()
 	height := bounds.Dy()
 	t.Logf("Image dimensions: %dx%d", width, height)
+	assert.Equal(t, 1024, width, "Image width should be 1024")
+	assert.Equal(t, 1024, height, "Image height should be 1024")
 
-	// Count black pixels
+	// Count blue pixels (IKB is ultramarine blue: high blue channel, low red/green)
 	totalPixels := width * height
-	blackPixels := 0
+	bluePixels := 0
 
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			r, g, b, _ := img.At(x, y).RGBA()
-			// Convert to 8-bit and check if close to black
+			// Convert to 8-bit
 			r8 := uint8(r >> 8)
 			g8 := uint8(g >> 8)
 			b8 := uint8(b >> 8)
 
-			// Allow small tolerance for compression artifacts
-			if r8 <= 10 && g8 <= 10 && b8 <= 10 {
-				blackPixels++
+			// Check if pixel is blue-ish (blue channel dominant)
+			// IKB is ultramarine: blue > 100, and blue > red, blue > green
+			if b8 > 100 && b8 > r8 && b8 > g8 {
+				bluePixels++
 			}
 		}
 	}
 
-	blackPercent := float64(blackPixels) / float64(totalPixels) * 100
-	t.Logf("Black pixels: %d/%d (%.2f%%)", blackPixels, totalPixels, blackPercent)
+	bluePercent := float64(bluePixels) / float64(totalPixels) * 100
+	t.Logf("Blue pixels: %d/%d (%.2f%%)", bluePixels, totalPixels, bluePercent)
 
-	// Verify image dimensions are correct
-	// Note: OpenAI's image models are artistic and non-deterministic
-	// We verify that image generation worked with correct dimensions, not the exact artistic output
-	assert.Equal(t, 1024, width, "Image width should be 1024")
-	assert.Equal(t, 1024, height, "Image height should be 1024")
+	// IKB paintings should be predominantly blue
+	// Allow flexibility for AI interpretation, but expect significant blue coverage
+	assert.Greater(t, bluePercent, 50.0, "IKB painting should be predominantly blue (>50%%)")
 
-	t.Logf("✓ OpenAI image generation successful: %dx%d PNG with %.2f%% dark pixels", width, height, blackPercent)
+	t.Logf("✓ OpenAI IKB generation successful: verified 1024x1024 PNG with %.2f%% blue pixels", bluePercent)
+}
+
+// averageBrightness calculates the average brightness (0-255) for a horizontal slice of the image
+func averageBrightness(img image.Image, yStart, yEnd int) float64 {
+	bounds := img.Bounds()
+	var total float64
+	pixels := 0
+
+	for y := yStart; y < yEnd && y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			// Convert to 0-255 range and calculate brightness
+			brightness := (float64(r>>8) + float64(g>>8) + float64(b>>8)) / 3.0
+			total += brightness
+			pixels++
+		}
+	}
+
+	if pixels == 0 {
+		return 0
+	}
+	return total / float64(pixels)
 }
