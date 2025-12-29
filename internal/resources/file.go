@@ -3,12 +3,14 @@ package resources
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/models"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
@@ -33,6 +35,7 @@ type FileResourceModel struct {
 	Content       types.String                `tfsdk:"content"`
 	Instructions  []schemas.InstructionModel  `tfsdk:"instructions"`
 	Verifications []schemas.VerificationModel `tfsdk:"verifications"`
+	Image         *schemas.ImageModel         `tfsdk:"image"`
 }
 
 func (r *FileResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -111,6 +114,23 @@ func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					},
 				},
 			},
+			"image": schema.SingleNestedAttribute{
+				MarkdownDescription: "Image generation configuration. Only applicable when using an image generation model (e.g., openai/gpt-image-1-mini, openai/dall-e-3).",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"size": schema.StringAttribute{
+						MarkdownDescription: "Image resolution in NNNNxNNNN format (e.g., '1024x1024', '1792x1024'). Default varies by model.",
+						Optional:            true,
+						Validators: []validator.String{
+							ImageSizeValidator(),
+						},
+					},
+					"quality": schema.StringAttribute{
+						MarkdownDescription: "Image quality level. Valid values depend on model: 'low'/'medium'/'high' for gpt-image-1*, 'standard'/'hd' for dall-e-3.",
+						Optional:            true,
+					},
+				},
+			},
 		},
 	}
 }
@@ -141,6 +161,32 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 			"File resource must have either 'content' or 'instructions'.",
 		)
 		return
+	}
+
+	// Validate image quality if image block is present
+	if data.Image != nil && !data.Image.Quality.IsNull() && !data.Image.Quality.IsUnknown() {
+		quality := data.Image.Quality.ValueString()
+		modelSlug := data.Model.ValueString()
+
+		if modelSlug != "" {
+			qualityOptions := models.GetQualityOptions(modelSlug)
+			if len(qualityOptions) == 0 {
+				// Model doesn't support quality parameter
+				resp.Diagnostics.AddError(
+					"Invalid Image Quality Configuration",
+					fmt.Sprintf("Model %q does not support image quality parameter. Remove the 'quality' attribute from the image block.", modelSlug),
+				)
+				return
+			}
+
+			if !models.IsValidQuality(modelSlug, quality) {
+				resp.Diagnostics.AddError(
+					"Invalid Image Quality Value",
+					fmt.Sprintf("Quality %q is not valid for model %q. Valid options: %s", quality, modelSlug, strings.Join(qualityOptions, ", ")),
+				)
+				return
+			}
+		}
 	}
 
 	data.ID = types.StringValue(fmt.Sprintf("file.%s", data.Name.ValueString()))
@@ -208,6 +254,32 @@ func (r *FileResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			"File resource must have either 'content' or 'instructions'.",
 		)
 		return
+	}
+
+	// Validate image quality if image block is present
+	if data.Image != nil && !data.Image.Quality.IsNull() && !data.Image.Quality.IsUnknown() {
+		quality := data.Image.Quality.ValueString()
+		modelSlug := data.Model.ValueString()
+
+		if modelSlug != "" {
+			qualityOptions := models.GetQualityOptions(modelSlug)
+			if len(qualityOptions) == 0 {
+				// Model doesn't support quality parameter
+				resp.Diagnostics.AddError(
+					"Invalid Image Quality Configuration",
+					fmt.Sprintf("Model %q does not support image quality parameter. Remove the 'quality' attribute from the image block.", modelSlug),
+				)
+				return
+			}
+
+			if !models.IsValidQuality(modelSlug, quality) {
+				resp.Diagnostics.AddError(
+					"Invalid Image Quality Value",
+					fmt.Sprintf("Quality %q is not valid for model %q. Valid options: %s", quality, modelSlug, strings.Join(qualityOptions, ", ")),
+				)
+				return
+			}
+		}
 	}
 
 	// Preserve computed fields from state

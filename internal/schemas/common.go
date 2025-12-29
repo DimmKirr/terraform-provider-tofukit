@@ -27,8 +27,15 @@ type VerificationModel struct {
 	Expect  types.String `tfsdk:"expect"`
 }
 
+// ImageModel represents image generation configuration
+type ImageModel struct {
+	Size    types.String `tfsdk:"size"`    // Resolution in NNNNxNNNN format (e.g., "1024x1024")
+	Quality types.String `tfsdk:"quality"` // Quality level (model-dependent: low/medium/high or standard/hd)
+}
+
 // FeatureModel represents a feature (inline or from resource reference)
 type FeatureModel struct {
+	Model         types.String        `tfsdk:"model"`        // Model to use for this feature's files
 	Requirements  []RequirementModel  `tfsdk:"requirements"` // Uses common type!
 	Files         types.Map           `tfsdk:"files"`
 	Kits          types.Dynamic       `tfsdk:"kits"`
@@ -41,6 +48,9 @@ type FileModel struct {
 	Content       types.String        `tfsdk:"content"`
 	Instructions  []InstructionModel  `tfsdk:"instructions"`
 	Verifications []VerificationModel `tfsdk:"verifications"`
+
+	// Image generation configuration (optional, for image models)
+	Image *ImageModel `tfsdk:"image"`
 
 	// Computed drift detection fields
 	ContentHash types.String `tfsdk:"content_hash"`
@@ -181,6 +191,11 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
 			Attributes: map[string]schema.Attribute{
+				// Model attribute for per-file model override
+				"model": schema.StringAttribute{
+					MarkdownDescription: "Model to use for this file in provider/model format (e.g., 'anthropic/claude-haiku', 'openai/gpt-image-1'). Overrides feature, stack, project, and provider-level model settings.",
+					Optional:            true,
+				},
 				// Core file attributes (used by both inline and resource references)
 				"content": schema.StringAttribute{
 					MarkdownDescription: "Static content of the file (mutually exclusive with instructions)",
@@ -216,6 +231,21 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 								MarkdownDescription: "Expected output or pattern",
 								Optional:            true,
 							},
+						},
+					},
+				},
+				// Image generation configuration (optional, for image models)
+				"image": schema.SingleNestedAttribute{
+					MarkdownDescription: "Image generation configuration. Only applicable when using an image generation model (e.g., openai/gpt-image-1-mini, openai/dall-e-3).",
+					Optional:            true,
+					Attributes: map[string]schema.Attribute{
+						"size": schema.StringAttribute{
+							MarkdownDescription: "Image resolution in NNNNxNNNN format (e.g., '1024x1024', '1792x1024'). Default varies by model.",
+							Optional:            true,
+						},
+						"quality": schema.StringAttribute{
+							MarkdownDescription: "Image quality level. Valid values depend on model: 'low'/'medium'/'high' for gpt-image-1*, 'standard'/'hd' for dall-e-3.",
+							Optional:            true,
 						},
 					},
 				},

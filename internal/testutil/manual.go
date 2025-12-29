@@ -63,8 +63,8 @@ func RunManualTest(config *ManualTestConfig) error {
 		},
 	}
 
-	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir, true) // Skip permissions for tests
+	// Create executor (maxTurns 0 = unlimited for tests)
+	executor := claude.NewExecutor(config.ClaudeHomeDir, true, 0) // Skip permissions for tests
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -200,8 +200,8 @@ func RunComplexProjectTest() error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Create executor
-	executor := claude.NewExecutor(config.ClaudeHomeDir, true) // Skip permissions for tests
+	// Create executor (maxTurns 0 = unlimited for tests)
+	executor := claude.NewExecutor(config.ClaudeHomeDir, true, 0) // Skip permissions for tests
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
@@ -238,7 +238,7 @@ func RunComplexProjectTest() error {
 func TestClaudeValidation() error {
 	fmt.Printf("🔍 Testing Claude CLI validation...\n")
 
-	executor := claude.NewExecutor("~/.claude", true) // Skip permissions for tests
+	executor := claude.NewExecutor("~/.claude", true, 0) // Skip permissions for tests
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -75,6 +75,7 @@ type Model struct {
 	Description      string   `json:"description"`       // Model description
 	InputModalities  []string `json:"input_modalities"`  // Supported input types
 	OutputModalities []string `json:"output_modalities"` // Supported output types
+	QualityOptions   []string `json:"quality_options"`   // Valid quality values for image generation (empty for text models)
 }
 
 // ModelRegistry contains all supported models
@@ -89,6 +90,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "GPT-5.2 is the most capable model series yet for professional knowledge work",
 		InputModalities:  []string{"text", "image", "file"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	// OpenAI - Image Generation
@@ -101,6 +103,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "GPT-5 Image combines GPT-5 reasoning with state-of-the-art image generation",
 		InputModalities:  []string{"text", "image", "file"},
 		OutputModalities: []string{"image", "text"},
+		QualityOptions:   []string{"low", "medium", "high"},
 	},
 
 	"openai/gpt-5-image-mini": {
@@ -112,6 +115,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Lightweight version of GPT-5 Image for faster, cost-effective image generation",
 		InputModalities:  []string{"text", "image", "file"},
 		OutputModalities: []string{"image", "text"},
+		QualityOptions:   []string{"low", "medium", "high"},
 	},
 
 	// OpenAI - Direct Image Generation Models (alternative naming)
@@ -124,6 +128,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "GPT Image 1.5 - advanced image generation model",
 		InputModalities:  []string{"text"},
 		OutputModalities: []string{"image"},
+		QualityOptions:   []string{"low", "medium", "high"},
 	},
 
 	"openai/gpt-image-1-mini": {
@@ -135,6 +140,32 @@ var ModelRegistry = map[string]Model{
 		Description:      "Lightweight GPT Image model for faster, cost-effective image generation",
 		InputModalities:  []string{"text"},
 		OutputModalities: []string{"image"},
+		QualityOptions:   []string{"low", "medium", "high"},
+	},
+
+	// OpenAI - DALL-E Models (legacy)
+	"openai/dall-e-3": {
+		Slug:             "openai/dall-e-3",
+		Name:             "OpenAI DALL-E 3",
+		ProviderModelID:  "dall-e-3",
+		ProviderSlug:     "openai",
+		ContextLength:    4000,
+		Description:      "DALL-E 3 - high quality image generation with better prompt following",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"image"},
+		QualityOptions:   []string{"standard", "hd"},
+	},
+
+	"openai/dall-e-2": {
+		Slug:             "openai/dall-e-2",
+		Name:             "OpenAI DALL-E 2",
+		ProviderModelID:  "dall-e-2",
+		ProviderSlug:     "openai",
+		ContextLength:    1000,
+		Description:      "DALL-E 2 - original DALL-E image generation model",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"image"},
+		QualityOptions:   []string{}, // DALL-E 2 doesn't support quality parameter
 	},
 
 	// Anthropic - Claude Models (via Claude Code CLI)
@@ -147,6 +178,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Claude Sonnet offers balanced performance for most tasks (auto-updates to latest Sonnet)",
 		InputModalities:  []string{"text", "image"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	"anthropic/claude-haiku": {
@@ -158,6 +190,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Claude Haiku is the fastest, most compact model for near-instant responsiveness (auto-updates to latest Haiku)",
 		InputModalities:  []string{"text"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	"anthropic/claude-opus": {
@@ -169,9 +202,10 @@ var ModelRegistry = map[string]Model{
 		Description:      "Claude Opus delivers top-level performance on highly complex tasks (auto-updates to latest Opus)",
 		InputModalities:  []string{"text", "image"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
-	// Google - Gemini Models
+	// Google - Gemini Models (Text)
 	"google/gemini-3-pro": {
 		Slug:             "google/gemini-3-pro",
 		Name:             "Google Gemini 3 Pro",
@@ -181,6 +215,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Gemini 3 Pro is Google's flagship frontier model for high-precision multimodal reasoning with 1M context window",
 		InputModalities:  []string{"text", "image", "video", "audio", "file"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	"google/gemini-2.5-flash": {
@@ -192,6 +227,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Gemini 2.5 Flash balances performance and speed for high-throughput tasks",
 		InputModalities:  []string{"text", "image", "audio", "file"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	"google/gemini-2.5-flash-lite": {
@@ -203,6 +239,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Gemini 2.5 Flash-Lite is optimized for ultra-low latency and cost efficiency",
 		InputModalities:  []string{"text", "image", "audio", "file"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
 	"google/gemini-2.5-pro": {
@@ -214,8 +251,10 @@ var ModelRegistry = map[string]Model{
 		Description:      "Gemini 2.5 Pro offers advanced reasoning and complex problem-solving with 2M context window",
 		InputModalities:  []string{"text", "image", "video", "audio", "file"},
 		OutputModalities: []string{"text"},
+		QualityOptions:   []string{}, // Text model - no image quality options
 	},
 
+	// Google - Gemini Image Models
 	"google/gemini-3-pro-image": {
 		Slug:             "google/gemini-3-pro-image",
 		Name:             "Google Gemini 3 Pro Image (Nano Banana Pro)",
@@ -225,6 +264,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Nano Banana Pro is Google's most advanced image generation model with multimodal reasoning and high-fidelity visual synthesis",
 		InputModalities:  []string{"text", "image"},
 		OutputModalities: []string{"image", "text"},
+		QualityOptions:   []string{}, // TODO: Add Gemini image quality options when documented
 	},
 
 	"google/gemini-2.5-flash-image": {
@@ -236,6 +276,7 @@ var ModelRegistry = map[string]Model{
 		Description:      "Nano Banana provides fast, efficient image generation with good quality",
 		InputModalities:  []string{"text", "image"},
 		OutputModalities: []string{"image", "text"},
+		QualityOptions:   []string{}, // TODO: Add Gemini image quality options when documented
 	},
 }
 
@@ -278,4 +319,29 @@ func IsImageModel(modelSlug string) bool {
 func GetModel(modelSlug string) (Model, bool) {
 	model, exists := ModelRegistry[modelSlug]
 	return model, exists
+}
+
+// GetQualityOptions returns valid quality options for a model
+// Returns empty slice for text models or models that don't support quality parameter
+func GetQualityOptions(modelSlug string) []string {
+	model, exists := ModelRegistry[modelSlug]
+	if !exists {
+		return []string{}
+	}
+	return model.QualityOptions
+}
+
+// IsValidQuality checks if a quality value is valid for a given model
+func IsValidQuality(modelSlug string, quality string) bool {
+	options := GetQualityOptions(modelSlug)
+	if len(options) == 0 {
+		// Model doesn't support quality - only empty/unset is valid
+		return quality == ""
+	}
+	for _, opt := range options {
+		if opt == quality {
+			return true
+		}
+	}
+	return false
 }

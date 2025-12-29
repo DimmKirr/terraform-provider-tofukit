@@ -132,14 +132,14 @@ func TestIsProviderSupported(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "openai is not yet supported",
+			name:     "openai is supported",
 			provider: "openai",
-			want:     false,
+			want:     true,
 		},
 		{
-			name:     "google is not yet supported",
+			name:     "google is supported",
 			provider: "google",
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "meta-llama is not yet supported",

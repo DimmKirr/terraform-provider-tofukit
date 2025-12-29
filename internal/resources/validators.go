@@ -140,3 +140,41 @@ func (v FileNameValidator) ValidateString(ctx context.Context, req validator.Str
 func ValidFileName() validator.String {
 	return FileNameValidator{}
 }
+
+// ImageSizeValidatorType validates that image size is in NNNNxNNNN format
+type ImageSizeValidatorType struct{}
+
+// Description returns a description of the validator
+func (v ImageSizeValidatorType) Description(ctx context.Context) string {
+	return "value must be a valid image resolution in NNNNxNNNN format (e.g., '1024x1024', '1792x1024')"
+}
+
+// MarkdownDescription returns a markdown description of the validator
+func (v ImageSizeValidatorType) MarkdownDescription(ctx context.Context) string {
+	return "Value must be a valid image resolution in `NNNNxNNNN` format (e.g., `1024x1024`, `1792x1024`)"
+}
+
+// ValidateString validates the image size format
+func (v ImageSizeValidatorType) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+
+	size := req.ConfigValue.ValueString()
+
+	// Regex pattern: one or more digits, 'x', one or more digits
+	sizePattern := regexp.MustCompile(`^\d+x\d+$`)
+	if !sizePattern.MatchString(size) {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid Image Size",
+			fmt.Sprintf("Image size must be in NNNNxNNNN format (e.g., '1024x1024', '1792x1024'). Got: %q", size),
+		)
+		return
+	}
+}
+
+// ImageSizeValidator returns a validator that checks if a string is a valid image size
+func ImageSizeValidator() validator.String {
+	return ImageSizeValidatorType{}
+}

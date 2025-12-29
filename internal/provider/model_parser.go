@@ -13,7 +13,7 @@ type ModelInfo struct {
 }
 
 // ParseModel parses a model string in provider/model format
-// Examples: "anthropic/claude-3-5-sonnet", "openai/dall-e-3"
+// Examples: "anthropic/claude-sonnet-4.5", "openai/gpt-5.2"
 func ParseModel(modelStr string) (*ModelInfo, error) {
 	if modelStr == "" {
 		return nil, fmt.Errorf("model string cannot be empty")
@@ -44,7 +44,7 @@ func ParseModel(modelStr string) (*ModelInfo, error) {
 
 // SupportedProviders returns a list of supported provider names
 func SupportedProviders() []string {
-	return []string{"anthropic"}
+	return []string{"anthropic", "openai", "google"}
 }
 
 // IsProviderSupported checks if a provider is currently supported

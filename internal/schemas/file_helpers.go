@@ -14,6 +14,7 @@ import (
 // Used internally when working with the files map
 type FileModelWithPath struct {
 	Path          string
+	Model         types.String // Model to use for this file (e.g., "openai/gpt-image-1", "anthropic/claude-haiku")
 	Content       types.String
 	Instructions  []InstructionModel
 	Verifications []VerificationModel
@@ -40,6 +41,14 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 		}
 
 		attrs := fileObj.Attributes()
+
+		// Extract model
+		model := types.StringNull()
+		if modelVal, exists := attrs["model"]; exists {
+			if strVal, ok := modelVal.(types.String); ok {
+				model = strVal
+			}
+		}
 
 		// Extract content
 		content := types.StringNull()
@@ -118,6 +127,7 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 		// Create FileModelWithPath
 		result = append(result, FileModelWithPath{
 			Path:          pathKey,
+			Model:         model,
 			Content:       content,
 			Instructions:  instructions,
 			Verifications: verifications,
@@ -208,6 +218,7 @@ func FilesListToMap(ctx context.Context, files []FileModelWithPath) types.Map {
 		fileObj := types.ObjectValueMust(
 			getFileAttrTypes(),
 			map[string]attr.Value{
+				"model":         file.Model,
 				"content":       file.Content,
 				"instructions":  instructionsValue,
 				"verifications": verificationsValue,
@@ -227,6 +238,7 @@ func FilesListToMap(ctx context.Context, files []FileModelWithPath) types.Map {
 
 func getFileAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
+		"model":   types.StringType,
 		"content": types.StringType,
 		"instructions": types.ListType{
 			ElemType: types.ObjectType{AttrTypes: getInstructionAttrTypes()},

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -443,9 +444,13 @@ func TestResourceFile_DriftDetectionGeneratePromptSuccess(t *testing.T) {
 	t.Log("✓ Prompt generation verified - file resource drift detection structure valid")
 }
 
-// TestResourceFile_OpenAIGradient verifies OpenAI image generation
+// TestResourceFile_OpenAIIKBImage verifies OpenAI image generation with different model resolution scenarios
 // Creates International Klein Blue (IKB) monochrome painting using openai/gpt-image-1-mini model
-func TestResourceFile_OpenAIGradient(t *testing.T) {
+// Tests 3 scenarios:
+// Step 1: Both file.model and project.model set to same value (openai/gpt-image-1-mini)
+// Step 2: Only file.model set (project.model commented out) - tests unanimous file model detection
+// Step 3: file.model=openai/gpt-image-1-mini, project.model=anthropic/claude-haiku - tests project override
+func TestResourceFile_OpenAIIKBImage(t *testing.T) {
 	// Skip if no OpenAI API key
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		t.Skip("OPENAI_API_KEY not set - skipping OpenAI integration test")
@@ -453,9 +458,80 @@ func TestResourceFile_OpenAIGradient(t *testing.T) {
 
 	testDir := createTestDirectory(t, "TestResourceFile_OpenAIIKB")
 
-	// Terraform config using OpenAI for IKB image generation
-	// Note: Provider automatically reads OPENAI_API_KEY from environment
-	config := `
+	// Detect IaC tool (terraform or tofu)
+	iacTool := detectIaCTool(t)
+
+	// Helper function to verify IKB image generation
+	verifyIKBImage := func(t *testing.T, step string) {
+		imagePath := filepath.Join(testDir, "output", "ikb.png")
+		require.FileExists(t, imagePath, "[%s] Generated image should exist", step)
+
+		// Open and decode image
+		file, err := os.Open(imagePath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		img, format, err := image.Decode(file)
+		require.NoError(t, err)
+		assert.Equal(t, "png", format, "[%s] Image should be PNG format", step)
+
+		// Verify image dimensions
+		bounds := img.Bounds()
+		width := bounds.Dx()
+		height := bounds.Dy()
+		t.Logf("[%s] Image dimensions: %dx%d", step, width, height)
+		assert.Equal(t, 1024, width, "[%s] Image width should be 1024", step)
+		assert.Equal(t, 1024, height, "[%s] Image height should be 1024", step)
+
+		// Count blue pixels (IKB is ultramarine blue: high blue channel, low red/green)
+		totalPixels := width * height
+		bluePixels := 0
+
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, _ := img.At(x, y).RGBA()
+				// Convert to 8-bit
+				r8 := uint8(r >> 8)
+				g8 := uint8(g >> 8)
+				b8 := uint8(b >> 8)
+
+				// Check if pixel is blue-ish (blue channel dominant)
+				// IKB is ultramarine: blue > 100, and blue > red, blue > green
+				if b8 > 100 && b8 > r8 && b8 > g8 {
+					bluePixels++
+				}
+			}
+		}
+
+		bluePercent := float64(bluePixels) / float64(totalPixels) * 100
+		t.Logf("[%s] Blue pixels: %d/%d (%.2f%%)", step, bluePixels, totalPixels, bluePercent)
+
+		// IKB paintings should have significant blue content
+		// AI interprets IKB in two modes: literal (~90-95%) or artistic (~26-47%)
+		// Threshold set to 20% to accommodate both interpretations while ensuring blue is present
+		assert.Greater(t, bluePercent, 20.0, "[%s] IKB painting should have significant blue content (>20%%)", step)
+
+		t.Logf("✓ [%s] OpenAI IKB generation successful: verified 1024x1024 PNG with %.2f%% blue pixels", step, bluePercent)
+	}
+
+	// Helper function to clean up between steps
+	cleanupStep := func(t *testing.T, step string) {
+		// Destroy resources
+		runTerraformDestroy(t, iacTool, testDir)
+
+		// Remove output directory
+		outputDir := filepath.Join(testDir, "output")
+		os.RemoveAll(outputDir)
+		t.Logf("[%s] Cleanup complete", step)
+	}
+
+	// ============================================================
+	// STEP 1: Both file.model and project.model set to same value
+	// Expected: Uses openai/gpt-image-1-mini (project.model takes precedence but same value)
+	// ============================================================
+	t.Log("=== STEP 1: Both file.model and project.model = openai/gpt-image-1-mini ===")
+
+	config1 := `
 terraform {
   required_providers {
     tofukit = {
@@ -474,14 +550,13 @@ resource "tofukit_file" "ikb" {
   name = "ikb.png"
 
   instructions = [{
-    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting"
-    constraints = [
-      "Size: 1024x1024",
-      "Solid IKB blue #002FA7",
-      "Minimalist monochrome artwork",
-      "Deep saturated ultramarine blue"
-    ]
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
   }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
 
   model = "openai/gpt-image-1-mini"
 }
@@ -497,70 +572,340 @@ resource "tofukit_project" "test" {
 }
 `
 
-	// Write config
 	configPath := filepath.Join(testDir, "main.tofu")
-	err := os.WriteFile(configPath, []byte(config), 0644)
+	err := os.WriteFile(configPath, []byte(config1), 0644)
 	require.NoError(t, err)
 
-	// Detect IaC tool (terraform or tofu)
-	iacTool := detectIaCTool(t)
-
-	// Run terraform init
+	// Run terraform init (only needed once)
 	runTerraformInit(t, iacTool, testDir)
 
 	// Run terraform apply
 	runTerraformApply(t, iacTool, testDir)
 
-	// Verify image file exists
+	// Verify image
+	verifyIKBImage(t, "Step1")
+
+	// Cleanup before next step
+	cleanupStep(t, "Step1")
+
+	// ============================================================
+	// STEP 2: Only file.model set, project.model NOT set
+	// Expected: Uses openai/gpt-image-1-mini via unanimous file model detection
+	// ============================================================
+	t.Log("=== STEP 2: Only file.model = openai/gpt-image-1-mini (project.model NOT set) ===")
+
+	config2 := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+resource "tofukit_file" "ikb" {
+  name = "ikb.png"
+
+  instructions = [{
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_project" "test" {
+  name    = "openai-ikb-test"
+  version = "1.0.0"
+  // model NOT set - should use file's model via unanimous detection
+
+  files = {
+    "ikb.png" = tofukit_file.ikb
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(config2), 0644)
+	require.NoError(t, err)
+
+	// Run terraform apply (no init needed, already initialized)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify image
+	verifyIKBImage(t, "Step2")
+
+	// Cleanup before next step
+	cleanupStep(t, "Step2")
+
+	// ============================================================
+	// STEP 3: file.model=openai/gpt-image-1-mini, project.model=anthropic/claude-haiku
+	// Expected: file.model takes precedence (per new hierarchy), so OpenAI is used
+	// This should produce a valid image because the file's model is used
+	// ============================================================
+	t.Log("=== STEP 3: file.model=openai/gpt-image-1-mini, project.model=anthropic/claude-haiku ===")
+	t.Log("NOTE: This step tests model override behavior - file.model should take precedence")
+
+	config3 := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+resource "tofukit_file" "ikb" {
+  name = "ikb.png"
+
+  instructions = [{
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_project" "test" {
+  name    = "openai-ikb-test"
+  version = "1.0.0"
+  model   = "anthropic/claude-haiku"
+
+  files = {
+    "ikb.png" = tofukit_file.ikb
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(config3), 0644)
+	require.NoError(t, err)
+
+	// Run terraform apply
+	// Note: This may fail because Claude cannot generate images, or produce unexpected output
+	// The test documents the current behavior where project.model overrides file.model
+	runTerraformApply(t, iacTool, testDir)
+
+	// Check if an image was created - should be valid since file.model takes precedence
 	imagePath := filepath.Join(testDir, "output", "ikb.png")
-	require.FileExists(t, imagePath, "Generated image should exist")
-
-	// Open and decode image
-	file, err := os.Open(imagePath)
-	require.NoError(t, err)
-	defer file.Close()
-
-	img, format, err := image.Decode(file)
-	require.NoError(t, err)
-	assert.Equal(t, "png", format, "Image should be PNG format")
-
-	// Verify image dimensions
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-	t.Logf("Image dimensions: %dx%d", width, height)
-	assert.Equal(t, 1024, width, "Image width should be 1024")
-	assert.Equal(t, 1024, height, "Image height should be 1024")
-
-	// Count blue pixels (IKB is ultramarine blue: high blue channel, low red/green)
-	totalPixels := width * height
-	bluePixels := 0
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			r, g, b, _ := img.At(x, y).RGBA()
-			// Convert to 8-bit
-			r8 := uint8(r >> 8)
-			g8 := uint8(g >> 8)
-			b8 := uint8(b >> 8)
-
-			// Check if pixel is blue-ish (blue channel dominant)
-			// IKB is ultramarine: blue > 100, and blue > red, blue > green
-			if b8 > 100 && b8 > r8 && b8 > g8 {
-				bluePixels++
-			}
-		}
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		t.Error("[Step3] No image created - file.model should have taken precedence over project.model")
+	} else {
+		t.Log("[Step3] File exists - verifying it's a valid image")
+		file, err := os.Open(imagePath)
+		require.NoError(t, err, "[Step3] Could not open file")
+		defer file.Close()
+		_, _, err = image.Decode(file)
+		require.NoError(t, err, "[Step3] File is not a valid image - file.model should have been used")
+		t.Log("[Step3] Valid image produced - confirms file.model takes precedence over project.model")
 	}
 
-	bluePercent := float64(bluePixels) / float64(totalPixels) * 100
-	t.Logf("Blue pixels: %d/%d (%.2f%%)", bluePixels, totalPixels, bluePercent)
+	// Cleanup before next step
+	cleanupStep(t, "Step3")
 
-	// IKB paintings should have significant blue content
-	// AI interprets IKB in two modes: literal (~90-95%) or artistic (~26-47%)
-	// Threshold set to 20% to accommodate both interpretations while ensuring blue is present
-	assert.Greater(t, bluePercent, 20.0, "IKB painting should have significant blue content (>20%%)")
+	// ============================================================
+	// STEP 4: Multiple files with different models (multi-model execution)
+	// - ikb.png uses openai/gpt-image-1-mini (image generation)
+	// - README.md uses anthropic/claude-haiku (text generation)
+	// Expected: Each file uses its own model; both are created successfully
+	// ============================================================
+	t.Log("=== STEP 4: Multiple files with different models (multi-model execution) ===")
+	t.Log("NOTE: Testing that different files can use different LLM providers in the same project")
 
-	t.Logf("✓ OpenAI IKB generation successful: verified 1024x1024 PNG with %.2f%% blue pixels", bluePercent)
+	config4 := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+# Image file using OpenAI's image generation model
+resource "tofukit_file" "ikb" {
+  name = "ikb.png"
+
+  instructions = [{
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+# Text file using Claude Haiku
+resource "tofukit_file" "readme" {
+  name = "README.md"
+
+  instructions = [{
+    prompt = "Create a README file explaining what International Klein Blue is and its artistic significance"
+    constraints = [
+      "Keep it concise (under 200 words)",
+      "Include the hex color code #002FA7",
+      "Mention Yves Klein as the creator"
+    ]
+  }]
+
+  # Explicitly use Claude Haiku for text generation
+  model = "anthropic/claude-haiku"
+}
+
+resource "tofukit_project" "test" {
+  name    = "multi-model-test"
+  version = "1.0.0"
+  # No project-level model - each file uses its own model or provider default
+
+  files = {
+    "ikb.png"   = tofukit_file.ikb
+    "README.md" = tofukit_file.readme
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(config4), 0644)
+	require.NoError(t, err)
+
+	// Run terraform apply
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify ikb.png was created and is a valid image
+	imagePath = filepath.Join(testDir, "output", "ikb.png")
+	require.FileExists(t, imagePath, "[Step4] ikb.png should exist")
+
+	imgFile, err := os.Open(imagePath)
+	require.NoError(t, err, "[Step4] Could not open ikb.png")
+	defer imgFile.Close()
+	img, _, err := image.Decode(imgFile)
+	require.NoError(t, err, "[Step4] ikb.png is not a valid image")
+	require.Equal(t, 1024, img.Bounds().Dx(), "[Step4] Image width should be 1024")
+	require.Equal(t, 1024, img.Bounds().Dy(), "[Step4] Image height should be 1024")
+	t.Log("[Step4] ikb.png: Valid 1024x1024 image generated by OpenAI")
+
+	// Verify README.md was created and has expected content
+	readmePath := filepath.Join(testDir, "output", "README.md")
+	require.FileExists(t, readmePath, "[Step4] README.md should exist")
+
+	readmeContent, err := os.ReadFile(readmePath)
+	require.NoError(t, err, "[Step4] Could not read README.md")
+	readmeStr := string(readmeContent)
+	require.NotEmpty(t, readmeStr, "[Step4] README.md should not be empty")
+
+	// Check for expected content (Claude should have generated this)
+	t.Logf("[Step4] README.md content length: %d bytes", len(readmeStr))
+	if strings.Contains(strings.ToLower(readmeStr), "klein") || strings.Contains(readmeStr, "#002FA7") {
+		t.Log("[Step4] README.md: Contains expected content about Klein Blue")
+	} else {
+		t.Log("[Step4] README.md: Content may not contain expected keywords, but file was generated")
+	}
+
+	// Cleanup before next step
+	cleanupStep(t, "Step4")
+
+	// ============================================================
+	// STEP 5: File model overrides project model (different providers)
+	// - file.model = openai/gpt-image-1-mini (image generation)
+	// - project.model = anthropic/claude-haiku (text generation)
+	// Expected: file.model takes precedence, OpenAI is used for the image
+	// ============================================================
+	t.Log("=== STEP 5: File model (OpenAI) overrides project model (Claude) ===")
+	t.Log("NOTE: Testing that file.model takes precedence even when providers differ")
+
+	config5 := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+resource "tofukit_file" "ui_weather_sun" {
+  name = "ui_weather_sun.png"
+
+  instructions = [{
+    prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_project" "labs" {
+  name        = "labs"
+  description = "Generated from kitcut analysis"
+  version     = "1.0.0"
+
+  model = "anthropic/claude-haiku"
+
+  files = {
+    "ui_weather_sun.png" = tofukit_file.ui_weather_sun
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(config5), 0644)
+	require.NoError(t, err)
+
+	// Run terraform apply
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify ui_weather_sun.png was created and is a valid image
+	imagePath = filepath.Join(testDir, "output", "ui_weather_sun.png")
+	require.FileExists(t, imagePath, "[Step5] ui_weather_sun.png should exist")
+
+	imgFile, err = os.Open(imagePath)
+	require.NoError(t, err, "[Step5] Could not open ui_weather_sun.png")
+	defer imgFile.Close()
+	img, _, err = image.Decode(imgFile)
+	require.NoError(t, err, "[Step5] ui_weather_sun.png is not a valid image - file.model (OpenAI) should have been used over project.model (Claude)")
+	require.Equal(t, 1024, img.Bounds().Dx(), "[Step5] Image width should be 1024")
+	require.Equal(t, 1024, img.Bounds().Dy(), "[Step5] Image height should be 1024")
+	t.Log("[Step5] ui_weather_sun.png: Valid 1024x1024 image - confirms file.model (openai/gpt-image-1-mini) overrides project.model (anthropic/claude-haiku)")
+
+	t.Log("✓ All 5 model resolution scenarios tested")
+	t.Log("  Step 1: Both file.model and project.model set - uses file.model")
+	t.Log("  Step 2: Only file.model set - uses file.model")
+	t.Log("  Step 3: file.model and project.model differ - uses file.model (precedence)")
+	t.Log("  Step 4: Multiple files with different models - each uses its own model")
+	t.Log("  Step 5: file.model (OpenAI) overrides project.model (Claude) - cross-provider precedence works")
 }
 
 // averageBrightness calculates the average brightness (0-255) for a horizontal slice of the image

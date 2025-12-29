@@ -58,7 +58,7 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 			},
 			"model": schema.StringAttribute{
-				MarkdownDescription: "Model to use in provider/model format (e.g., anthropic/claude-3-5-sonnet, openai/gpt-4o). Default: anthropic/claude-3-5-sonnet",
+				MarkdownDescription: "Model to use in provider/model format (e.g., anthropic/claude-sonnet-4.5, openai/gpt-5.2). Default: anthropic/claude-sonnet-4.5",
 				Optional:            true,
 			},
 			"openai_api_key": schema.StringAttribute{
@@ -116,7 +116,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Default values
 	outputFormat := "json"
 	outputPath := "./"
-	modelStr := "anthropic/claude-3-5-sonnet"
+	modelStr := "anthropic/claude-sonnet-4.5"
 	claudeHomeDir := "~/.claude"
 	debug := false
 	maxRetries := 3
@@ -140,7 +140,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid Model Format",
-			fmt.Sprintf("Failed to parse model '%s': %v. Expected format: provider/model (e.g., anthropic/claude-3-5-sonnet)", modelStr, err),
+			fmt.Sprintf("Failed to parse model '%s': %v. Expected format: provider/model (e.g., anthropic/claude-sonnet-4.5)", modelStr, err),
 		)
 		return
 	}

@@ -88,6 +88,14 @@ func InstructionModelType() map[string]attr.Type {
 	}
 }
 
+// ImageModelType returns the attribute types for ImageModel
+func ImageModelType() map[string]attr.Type {
+	return map[string]attr.Type{
+		"size":    types.StringType,
+		"quality": types.StringType,
+	}
+}
+
 // ToObjectValue converts RequirementModel to types.Object
 func (r RequirementModel) ToObjectValue() (types.Object, error) {
 	// Convert instructions

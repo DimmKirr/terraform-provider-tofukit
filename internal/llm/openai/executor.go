@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -92,52 +93,80 @@ func (e *Executor) executeImageGeneration(ctx context.Context, projectSpec map[s
 		return nil, fmt.Errorf("no files specified for image generation (checked specification.files and files)")
 	}
 
-	// Process each file (should be image files)
-	generatedFiles := []map[string]interface{}{}
+	// Process each file in parallel (image generation is I/O bound)
+	var (
+		generatedFiles []map[string]interface{}
+		resultsMu      sync.Mutex
+		wg             sync.WaitGroup
+		errChan        = make(chan error, len(filesMap))
+	)
+
 	for path, fileData := range filesMap {
-		fileMap, ok := fileData.(map[string]interface{})
-		if !ok {
-			continue
-		}
+		// Capture loop variables for goroutine
+		path := path
+		fileData := fileData
 
-		// Extract prompt from instructions
-		promptText := extractPromptText(fileMap)
-		if promptText == "" {
-			continue
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		// Extract image config from constraints
-		config := parseImageConfig(extractConstraints(fileMap))
+			fileMap, ok := fileData.(map[string]interface{})
+			if !ok {
+				return // Skip non-map entries
+			}
 
-		// Generate image
-		fmt.Printf("[OpenAI DEBUG] Generating image for path: %s\n", path)
-		fmt.Printf("[OpenAI DEBUG] Model: %s, Prompt: %s\n", e.model, promptText)
-		fmt.Printf("[OpenAI DEBUG] Config: %+v\n", config)
+			// Extract prompt from instructions
+			promptText := extractPromptText(fileMap)
+			if promptText == "" {
+				return // Skip files without prompts
+			}
 
-		imageDataB64, err := e.client.GenerateImage(ctx, e.model, promptText, config)
-		if err != nil {
-			fmt.Printf("[OpenAI DEBUG] Image generation FAILED: %v\n", err)
-			return nil, fmt.Errorf("failed to generate image '%s': %w", path, err)
-		}
-		fmt.Printf("[OpenAI DEBUG] Image generation SUCCESS, base64 length: %d\n", len(imageDataB64))
+			// Extract image config - prefer image block, fall back to constraint parsing
+			config := extractImageConfig(fileMap, e.model)
 
-		// Save image to file
-		fullPath := filepath.Join(outputDir, path)
-		fmt.Printf("[OpenAI DEBUG] Saving to: %s\n", fullPath)
-		if err := saveImageFromBase64(imageDataB64, fullPath); err != nil {
-			fmt.Printf("[OpenAI DEBUG] Save FAILED: %v\n", err)
-			return nil, fmt.Errorf("failed to save image '%s': %w", path, err)
-		}
-		fmt.Printf("[OpenAI DEBUG] Image saved successfully\n")
+			// Generate image
+			fmt.Printf("[OpenAI DEBUG] Generating image for path: %s\n", path)
+			fmt.Printf("[OpenAI DEBUG] Model: %s, Prompt: %s\n", e.model, promptText)
+			fmt.Printf("[OpenAI DEBUG] Config: %+v\n", config)
 
-		// Collect response data for debug logging
-		generatedFiles = append(generatedFiles, map[string]interface{}{
-			"path":        path,
-			"prompt":      promptText,
-			"config":      config,
-			"base64_size": len(imageDataB64),
-			"model":       e.model,
-		})
+			imageDataB64, err := e.client.GenerateImage(ctx, e.model, promptText, config)
+			if err != nil {
+				fmt.Printf("[OpenAI DEBUG] Image generation FAILED for %s: %v\n", path, err)
+				errChan <- fmt.Errorf("failed to generate image '%s': %w", path, err)
+				return
+			}
+			fmt.Printf("[OpenAI DEBUG] Image generation SUCCESS for %s, base64 length: %d\n", path, len(imageDataB64))
+
+			// Save image to file
+			fullPath := filepath.Join(outputDir, path)
+			fmt.Printf("[OpenAI DEBUG] Saving to: %s\n", fullPath)
+			if err := saveImageFromBase64(imageDataB64, fullPath); err != nil {
+				fmt.Printf("[OpenAI DEBUG] Save FAILED for %s: %v\n", path, err)
+				errChan <- fmt.Errorf("failed to save image '%s': %w", path, err)
+				return
+			}
+			fmt.Printf("[OpenAI DEBUG] Image saved successfully: %s\n", path)
+
+			// Collect response data for debug logging (thread-safe)
+			resultsMu.Lock()
+			generatedFiles = append(generatedFiles, map[string]interface{}{
+				"path":        path,
+				"prompt":      promptText,
+				"config":      config,
+				"base64_size": len(imageDataB64),
+				"model":       e.model,
+			})
+			resultsMu.Unlock()
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for any errors
+	if err := <-errChan; err != nil {
+		return nil, err
 	}
 
 	// Save response data for debugging
@@ -213,12 +242,26 @@ func ensureImageExtension(filePath string, imageData []byte) string {
 }
 
 // parseImageConfig extracts image configuration from constraints
-func parseImageConfig(constraints []string) ImageConfig {
+// Model is passed to set appropriate defaults:
+// - gpt-image-1*: quality=high/medium/low (default: high), no style support
+// - dall-e-3: quality=standard/hd (default: standard), style=vivid/natural (default: vivid)
+// - dall-e-2: no quality/style support
+func parseImageConfig(constraints []string, model string) ImageConfig {
 	config := ImageConfig{
-		Size:    "1024x1024",
-		Quality: "standard",
-		Style:   "vivid",
+		Size: "1024x1024",
 	}
+
+	// Set model-appropriate defaults
+	if strings.HasPrefix(model, "gpt-image") {
+		// gpt-image-1* models use high/medium/low quality, no style
+		config.Quality = "high"
+		// Style is not supported, leave empty
+	} else if model == "dall-e-3" {
+		// DALL-E 3 uses standard/hd quality and vivid/natural style
+		config.Quality = "standard"
+		config.Style = "vivid"
+	}
+	// dall-e-2 doesn't support quality or style
 
 	for _, c := range constraints {
 		lower := strings.ToLower(c)
@@ -241,6 +284,38 @@ func parseImageConfig(constraints []string) ImageConfig {
 	}
 
 	return config
+}
+
+// extractImageConfig extracts image configuration from file specification
+// Prefers the 'image' block if present, falls back to parsing constraints
+func extractImageConfig(fileMap map[string]interface{}, model string) ImageConfig {
+	// Check for image block first
+	if imageBlock, ok := fileMap["image"].(map[string]interface{}); ok {
+		config := ImageConfig{
+			Size: "1024x1024", // Default
+		}
+
+		// Set model-appropriate quality defaults
+		if strings.HasPrefix(model, "gpt-image") {
+			config.Quality = "high"
+		} else if model == "dall-e-3" {
+			config.Quality = "standard"
+			config.Style = "vivid"
+		}
+
+		// Override with values from image block if present
+		if size, ok := imageBlock["size"].(string); ok && size != "" {
+			config.Size = size
+		}
+		if quality, ok := imageBlock["quality"].(string); ok && quality != "" {
+			config.Quality = quality
+		}
+
+		return config
+	}
+
+	// Fall back to parsing constraints for backward compatibility
+	return parseImageConfig(extractConstraints(fileMap), model)
 }
 
 // extractPromptText extracts the prompt text from file specification

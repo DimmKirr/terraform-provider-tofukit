@@ -700,14 +700,14 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 		if data.ExecutionCompleted.IsNull() || data.ExecutionCompleted.ValueString() == "" {
 			data.ExecutionCompleted = types.StringValue(time.Now().Format(time.RFC3339))
 		}
-		tflog.Error(ctx, "Claude Code execution failed", map[string]interface{}{
+		tflog.Error(ctx, "LLM execution failed", map[string]interface{}{
 			"project_id": data.ID.ValueString(),
 			"error":      err.Error(),
 		})
 		// Fail the resource creation with a clear error message
 		resp.Diagnostics.AddError(
-			"Claude Code Execution Failed",
-			fmt.Sprintf("Failed to execute Claude Code for project '%s': %s\n\n"+
+			"LLM Execution Failed",
+			fmt.Sprintf("Failed to execute LLM for project '%s': %s\n\n"+
 				"Check the debug files in %s/.debug/ for more details.",
 				data.Name.ValueString(), err.Error(), outputPath),
 		)
@@ -1454,13 +1454,13 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 			if data.LastApplied.IsNull() || data.LastApplied.IsUnknown() {
 				data.LastApplied = types.StringValue(time.Now().Format(time.RFC3339))
 			}
-			tflog.Error(ctx, "Claude Code execution failed during update", map[string]interface{}{
+			tflog.Error(ctx, "LLM execution failed during update", map[string]interface{}{
 				"project_id": data.ID.ValueString(),
 				"error":      err.Error(),
 			})
 			resp.Diagnostics.AddError(
-				"Claude Code Execution Failed",
-				fmt.Sprintf("Failed to execute Claude Code for project %s: %s", data.Name.ValueString(), err.Error()),
+				"LLM Execution Failed",
+				fmt.Sprintf("Failed to execute LLM for project '%s': %s", data.Name.ValueString(), err.Error()),
 			)
 			return
 		} else {
@@ -2367,48 +2367,26 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		systemPrompt = data.SystemPrompt.ValueString()
 	}
 
-	// Resolve model: project.model > file.model (if all files have same model) > provider default
-	var resolvedModel string
-	resourceModel := data.Model.ValueString()
-
-	if resourceModel != "" {
-		// Project model takes precedence
-		resolvedModel = resourceModel
-	} else {
-		// Check if all files have the same model (enables file.model > provider.model inheritance)
-		fileModel := r.detectUnanimousFileModel(ctx, *data)
-		if fileModel != "" {
-			resolvedModel = fileModel
-			tflog.Info(ctx, "Using unanimous file model for project execution", map[string]interface{}{
-				"model": resolvedModel,
-			})
-		} else if provData, ok := r.ProviderData.(interface{ GetModel() string }); ok {
-			// Fall back to provider default model
-			resolvedModel = provData.GetModel()
-		} else {
-			// Ultimate fallback
-			resolvedModel = "anthropic/claude-sonnet-4.5"
-		}
+	// Get project model and provider model for the hierarchy
+	projectModel := ""
+	if !data.Model.IsNull() && !data.Model.IsUnknown() {
+		projectModel = data.Model.ValueString()
 	}
 
-	// Get executor for resolved model
-	var executor llm.LLMExecutor
-	if provData, ok := r.ProviderData.(interface {
-		GetExecutorForModel(string) (llm.LLMExecutor, error)
-	}); ok {
-		var err error
-		executor, err = provData.GetExecutorForModel(resolvedModel)
-		if err != nil {
-			return fmt.Errorf("failed to get executor for model '%s': %w", resolvedModel, err)
-		}
-	} else {
-		return fmt.Errorf("provider data does not support GetExecutorForModel()")
+	providerModel := ""
+	if provData, ok := r.ProviderData.(interface{ GetModel() string }); ok {
+		providerModel = provData.GetModel()
 	}
 
-	// Configure executor (these methods are part of llm.LLMExecutor interface)
-	executor.SetDebug(debug)
-	executor.SetOutputPath(outputPath)
-	executor.SetSystemPrompt(systemPrompt)
+	// Group files by their resolved model
+	// The hierarchy is: file.model > feature.model (already applied) > stack.model (already applied) > project.model > provider.model > default
+	modelGroups := r.groupFilesByModel(ctx, mergedFiles, projectModel, providerModel)
+
+	tflog.Info(ctx, "Prepared model groups for execution", map[string]interface{}{
+		"group_count":    len(modelGroups),
+		"project_model":  projectModel,
+		"provider_model": providerModel,
+	})
 
 	// Get max retries from provider config (default to 3)
 	maxRetries := 3
@@ -2418,26 +2396,17 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		}
 	}
 
-	// Check if we have a planned prompt from the plan phase (stored in state)
-	var promptJSON string
-	var status *llm.ExecutionStatus
-	var report *files.VerificationReport
-	var err error
+	// Variables to track overall execution status
+	var finalStatus *llm.ExecutionStatus
+	var aggregatedReport *files.VerificationReport
+	var executionStartTime = time.Now()
 
-	if !data.PlannedPromptJSON.IsNull() && !data.PlannedPromptJSON.IsUnknown() && data.PlannedPromptJSON.ValueString() != "" {
-		// Use the planned prompt from plan phase (stored in state)
-		promptJSON = data.PlannedPromptJSON.ValueString()
-		tflog.Info(ctx, "Using planned prompt from state", map[string]interface{}{
-			"prompt_size": len(promptJSON),
-		})
-	} else {
-		// Fallback: Generate prompt from outputData if not in state
-		promptJSON, err = r.generatePromptJSON(ctx, outputData, data.SystemPrompt.ValueString())
-		if err != nil {
-			return fmt.Errorf("failed to generate Claude prompt: %w", err)
-		}
-		tflog.Warn(ctx, "No planned prompt in state, generated from outputData", map[string]interface{}{
-			"prompt_size": len(promptJSON),
+	// Collect kit verifications (these apply to all groups)
+	var kitVerifications []schemas.FileModelWithPath
+	if kitsData, ok := outputData["kits"].(map[string]interface{}); ok {
+		kitVerifications = r.CollectKitVerifications(ctx, kitsData)
+		tflog.Debug(ctx, "Collected kit verifications", map[string]interface{}{
+			"kit_verifications": len(kitVerifications),
 		})
 	}
 
@@ -2447,16 +2416,16 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		tflog.Info(ctx, "Dry run mode enabled - skipping LLM execution")
 
 		// Mock successful execution status
-		status = &llm.ExecutionStatus{
+		finalStatus = &llm.ExecutionStatus{
 			State:       "completed",
-			StartedAt:   time.Now().Format(time.RFC3339),
+			StartedAt:   executionStartTime.Format(time.RFC3339),
 			CompletedAt: time.Now().Format(time.RFC3339),
 			ProjectPath: outputPath,
 			Error:       "",
 		}
 
 		// Create empty verification report (all passed)
-		report = &files.VerificationReport{
+		aggregatedReport = &files.VerificationReport{
 			AllPassed: true,
 		}
 
@@ -2466,40 +2435,27 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			if err := os.MkdirAll(debugDir, 0755); err != nil {
 				tflog.Warn(ctx, "Failed to create debug directory", map[string]interface{}{"error": err.Error()})
 			} else {
-				// Write prompt JSON
+				// Write prompt JSON for each model group
 				timestamp := time.Now().Format("20060102-150405")
-				promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt1-%s.json", timestamp))
-				if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err != nil {
-					tflog.Warn(ctx, "Failed to write prompt JSON", map[string]interface{}{"error": err.Error()})
-				} else {
-					tflog.Info(ctx, "Wrote prompt JSON for dry run", map[string]interface{}{"path": promptPath})
+				for groupIdx, group := range modelGroups {
+					groupOutputData := r.filterOutputDataForFiles(outputData, group.Files)
+					promptJSON, err := r.generatePromptJSON(ctx, groupOutputData, systemPrompt)
+					if err != nil {
+						tflog.Warn(ctx, "Failed to generate prompt JSON", map[string]interface{}{"error": err.Error()})
+						continue
+					}
+					promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-group%d-%s-%s.json", groupIdx+1, group.Model, timestamp))
+					if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err != nil {
+						tflog.Warn(ctx, "Failed to write prompt JSON", map[string]interface{}{"error": err.Error()})
+					} else {
+						tflog.Info(ctx, "Wrote prompt JSON for dry run", map[string]interface{}{"path": promptPath, "model": group.Model})
+					}
 				}
 			}
 		}
 	} else {
-		// Collect ALL verifications for enforcement: file verifications + kit verifications
-		// This ensures both file-level and kit-level verifications are checked after Claude execution
-		allVerifications := append([]schemas.FileModelWithPath{}, mergedFiles...)
-
-		// Extract and collect kit verifications from the specification
-		// Kit verifications ensure declared dependencies (languages, frameworks, tools) are actually available
-		if kitsData, ok := outputData["kits"].(map[string]interface{}); ok {
-			kitVerifications := r.CollectKitVerifications(ctx, kitsData)
-			allVerifications = append(allVerifications, kitVerifications...)
-
-			tflog.Debug(ctx, "Collected verifications for enforcement", map[string]interface{}{
-				"file_verifications":  len(mergedFiles),
-				"kit_verifications":   len(kitVerifications),
-				"total_verifications": len(allVerifications),
-			})
-		}
-
-		// Execute with ALL verifications enforced
-		// Failed verifications will trigger retries (up to maxRetries attempts)
-		// If all retries fail, an error is returned causing Terraform apply to fail
-
-		// Check if executor supports ExecuteWithPromptJSON
-		// Both Claude and OpenAI executors implement this method
+		// Execute each model group with its appropriate executor
+		// Interface types for executor type checking
 		type claudeAdapterInterface interface {
 			GetClaudeExecutor() *claude.Executor
 		}
@@ -2507,44 +2463,148 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			GetOpenAIExecutor() *openai.Executor
 		}
 
-		// Try Claude adapter first
-		if adapter, ok := executor.(claudeAdapterInterface); ok {
-			claudeExecutor := adapter.GetClaudeExecutor()
-			var claudeStatus *claude.ExecutionStatus
-			claudeStatus, report, err = claudeExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
-			// Convert claude.ExecutionStatus to llm.ExecutionStatus
-			if claudeStatus != nil {
-				status = &llm.ExecutionStatus{
-					State:       claudeStatus.State,
-					StartedAt:   claudeStatus.StartedAt,
-					CompletedAt: claudeStatus.CompletedAt,
-					ProjectPath: claudeStatus.ProjectPath,
-					Error:       claudeStatus.Error,
-					Output:      claudeStatus.Output,
-					Metadata:    claudeStatus.Metadata,
+		// Get executor factory from provider
+		provData, hasFactory := r.ProviderData.(interface {
+			GetExecutorForModel(model string) (llm.LLMExecutor, error)
+		})
+		if !hasFactory {
+			return fmt.Errorf("provider does not support GetExecutorForModel - cannot execute with per-file models")
+		}
+
+		// Initialize aggregated report
+		aggregatedReport = &files.VerificationReport{
+			AllPassed: true,
+		}
+
+		for groupIdx, group := range modelGroups {
+			tflog.Info(ctx, "Executing model group", map[string]interface{}{
+				"group_index": groupIdx + 1,
+				"group_count": len(modelGroups),
+				"model":       group.Model,
+				"file_count":  len(group.Files),
+			})
+
+			// Get executor for this model
+			executor, err := provData.GetExecutorForModel(group.Model)
+			if err != nil {
+				return fmt.Errorf("failed to get executor for model %s: %w", group.Model, err)
+			}
+
+			// Filter outputData to only include files for this group
+			groupOutputData := r.filterOutputDataForFiles(outputData, group.Files)
+
+			// Generate prompt JSON for this group
+			promptJSON, err := r.generatePromptJSON(ctx, groupOutputData, systemPrompt)
+			if err != nil {
+				return fmt.Errorf("failed to generate prompt for model group %s: %w", group.Model, err)
+			}
+
+			// Collect verifications for this group's files + kit verifications
+			groupVerifications := append([]schemas.FileModelWithPath{}, group.Files...)
+			groupVerifications = append(groupVerifications, kitVerifications...)
+
+			tflog.Debug(ctx, "Collected verifications for group", map[string]interface{}{
+				"group_model":         group.Model,
+				"file_verifications":  len(group.Files),
+				"kit_verifications":   len(kitVerifications),
+				"total_verifications": len(groupVerifications),
+			})
+
+			// Write debug prompt if enabled
+			if debug {
+				debugDir := filepath.Join(outputPath, ".debug")
+				if err := os.MkdirAll(debugDir, 0755); err == nil {
+					timestamp := time.Now().Format("20060102-150405")
+					// Sanitize model name for filename
+					modelFilename := strings.ReplaceAll(group.Model, "/", "-")
+					promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt1-%s-%s.json", modelFilename, timestamp))
+					if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err == nil {
+						tflog.Debug(ctx, "Wrote prompt JSON", map[string]interface{}{"path": promptPath})
+					}
 				}
 			}
-		} else if adapter, ok := executor.(openaiAdapterInterface); ok {
-			// OpenAI adapter
-			openaiExecutor := adapter.GetOpenAIExecutor()
-			status, report, err = openaiExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, allVerifications, maxRetries)
-		} else {
-			return fmt.Errorf("executor does not support ExecuteWithPromptJSON (only Claude and OpenAI executors are supported)")
-		}
-		if err != nil {
-			// Execution or verification failed
-			data.ExecutionStatus = types.StringValue("failed")
-			if report != nil && !report.AllPassed {
-				// Verification failed after retries
-				data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed after %d attempts:\n%s", maxRetries, report.GetFailureSummary()))
-				data.ExecutionStatus = types.StringValue("verification_failed")
+
+			// Execute with this group's executor
+			var status *llm.ExecutionStatus
+			var report *files.VerificationReport
+			var executorType string
+
+			if adapter, ok := executor.(claudeAdapterInterface); ok {
+				executorType = "Claude"
+				claudeExecutor := adapter.GetClaudeExecutor()
+				var claudeStatus *claude.ExecutionStatus
+				claudeStatus, report, err = claudeExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
+				if claudeStatus != nil {
+					status = &llm.ExecutionStatus{
+						State:       claudeStatus.State,
+						StartedAt:   claudeStatus.StartedAt,
+						CompletedAt: claudeStatus.CompletedAt,
+						ProjectPath: claudeStatus.ProjectPath,
+						Error:       claudeStatus.Error,
+						Output:      claudeStatus.Output,
+						Metadata:    claudeStatus.Metadata,
+					}
+				}
+			} else if adapter, ok := executor.(openaiAdapterInterface); ok {
+				executorType = "OpenAI"
+				openaiExecutor := adapter.GetOpenAIExecutor()
+				status, report, err = openaiExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
 			} else {
-				// Execution failed
-				data.ExecutionError = types.StringValue(err.Error())
+				return fmt.Errorf("executor for model %s does not support ExecuteWithPromptJSON", group.Model)
 			}
-			return fmt.Errorf("Claude Code execution failed: %w", err)
+
+			if err != nil {
+				// Execution or verification failed for this group
+				data.ExecutionStatus = types.StringValue("failed")
+				if report != nil && !report.AllPassed {
+					data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed for %s executor (model %s) after %d attempts:\n%s", executorType, group.Model, maxRetries, report.GetFailureSummary()))
+					data.ExecutionStatus = types.StringValue("verification_failed")
+				} else {
+					data.ExecutionError = types.StringValue(fmt.Sprintf("%s executor (model %s) execution failed: %s", executorType, group.Model, err.Error()))
+				}
+				return fmt.Errorf("%s executor failed for model %s: %w", executorType, group.Model, err)
+			}
+
+			// Aggregate reports
+			if report != nil {
+				aggregatedReport.PassedCount += report.PassedCount
+				aggregatedReport.FailedCount += report.FailedCount
+				aggregatedReport.Results = append(aggregatedReport.Results, report.Results...)
+				if !report.AllPassed {
+					aggregatedReport.AllPassed = false
+				}
+			}
+
+			// Track status (use the last group's status as final, but track start time from first)
+			if finalStatus == nil && status != nil {
+				finalStatus = status
+			} else if status != nil {
+				// Update completed time and preserve earliest start time
+				finalStatus.CompletedAt = status.CompletedAt
+				finalStatus.ProjectPath = status.ProjectPath
+			}
+
+			tflog.Info(ctx, "Completed model group execution", map[string]interface{}{
+				"group_index": groupIdx + 1,
+				"model":       group.Model,
+				"state":       status.State,
+			})
+		}
+
+		// Ensure we have a final status
+		if finalStatus == nil {
+			finalStatus = &llm.ExecutionStatus{
+				State:       "completed",
+				StartedAt:   executionStartTime.Format(time.RFC3339),
+				CompletedAt: time.Now().Format(time.RFC3339),
+				ProjectPath: outputPath,
+			}
 		}
 	}
+
+	// Use aggregated results
+	status := finalStatus
+	report := aggregatedReport
 
 	// Update the model with execution results
 	data.ExecutionStatus = types.StringValue(status.State)
@@ -2575,7 +2635,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 
 	// LastApplied was already set during initialization
 
-	tflog.Info(ctx, "Claude Code execution completed successfully", map[string]interface{}{
+	tflog.Info(ctx, "LLM execution completed successfully", map[string]interface{}{
 		"project_id":   data.ID.ValueString(),
 		"project_path": status.ProjectPath,
 		"state":        status.State,
@@ -3384,8 +3444,9 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 					})
 
 					if feature, ok := featureData.(FeatureResourceModel); ok {
-						// Convert FeatureResourceModel to FeatureModel
+						// Convert FeatureResourceModel to FeatureModel (preserving Model for inheritance)
 						return &schemas.FeatureModel{
+							Model:         feature.Model,
 							Requirements:  feature.Requirements,
 							Files:         feature.Files,
 							Kits:          feature.Kits,
@@ -3482,8 +3543,9 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 								"requirements_count": len(feature.Requirements),
 							})
 
-							// Convert FeatureResourceModel to FeatureModel
+							// Convert FeatureResourceModel to FeatureModel (preserving Model for inheritance)
 							return &schemas.FeatureModel{
+								Model:         feature.Model,
 								Requirements:  feature.Requirements,
 								Files:         feature.Files,
 								Kits:          feature.Kits,
@@ -3522,6 +3584,16 @@ func (r *ProjectResourceFinal) parseFeature(ctx context.Context, featureValue at
 	// No ID or registry lookup failed - parse as inline definition
 	tflog.Info(ctx, "Parsing as inline feature definition", nil)
 	featureModel := &schemas.FeatureModel{}
+
+	// Extract model (optional) - for model inheritance to feature's files
+	if modelVal, exists := attrs["model"]; exists {
+		if modelStr, ok := modelVal.(types.String); ok {
+			featureModel.Model = modelStr
+			tflog.Debug(ctx, "Parsed inline feature model", map[string]interface{}{
+				"model": modelStr.ValueString(),
+			})
+		}
+	}
 
 	// Extract requirements (optional)
 	tflog.Info(ctx, "Checking for requirements attribute", map[string]interface{}{
@@ -4037,6 +4109,25 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 
 			// Convert feature files from map to list
 			featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+
+			// Apply feature model inheritance: if file doesn't have model, use feature's model
+			featureModel := ""
+			if !feature.Model.IsNull() && !feature.Model.IsUnknown() {
+				featureModel = feature.Model.ValueString()
+			}
+			if featureModel != "" {
+				for i := range featureFiles {
+					if featureFiles[i].Model.IsNull() || featureFiles[i].Model.IsUnknown() || featureFiles[i].Model.ValueString() == "" {
+						featureFiles[i].Model = types.StringValue(featureModel)
+						tflog.Debug(ctx, "Applied feature model inheritance to file", map[string]interface{}{
+							"feature_name": featureName,
+							"file_path":    featureFiles[i].Path,
+							"model":        featureModel,
+						})
+					}
+				}
+			}
+
 			allFiles = append(allFiles, featureFiles...)
 
 			tflog.Info(ctx, "Collected files from feature in object", map[string]interface{}{
@@ -4094,6 +4185,25 @@ func (r *ProjectResourceFinal) collectFeatureFiles(ctx context.Context, data Pro
 
 		// Convert feature files from map to list
 		featureFiles := schemas.FilesMapToList(ctx, feature.Files)
+
+		// Apply feature model inheritance: if file doesn't have model, use feature's model
+		featureModel := ""
+		if !feature.Model.IsNull() && !feature.Model.IsUnknown() {
+			featureModel = feature.Model.ValueString()
+		}
+		if featureModel != "" {
+			for i := range featureFiles {
+				if featureFiles[i].Model.IsNull() || featureFiles[i].Model.IsUnknown() || featureFiles[i].Model.ValueString() == "" {
+					featureFiles[i].Model = types.StringValue(featureModel)
+					tflog.Debug(ctx, "Applied feature model inheritance to file", map[string]interface{}{
+						"feature_name": featureName,
+						"file_path":    featureFiles[i].Path,
+						"model":        featureModel,
+					})
+				}
+			}
+		}
+
 		allFiles = append(allFiles, featureFiles...)
 
 		tflog.Info(ctx, "Collected files from feature", map[string]interface{}{
@@ -4783,6 +4893,24 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 					// Convert stack files from map to list
 					stackFiles := schemas.FilesMapToList(ctx, stack.Files)
 
+					// Apply stack model inheritance: if file doesn't have model, use stack's model
+					stackModel := ""
+					if !stack.Model.IsNull() && !stack.Model.IsUnknown() {
+						stackModel = stack.Model.ValueString()
+					}
+					if stackModel != "" {
+						for i := range stackFiles {
+							if stackFiles[i].Model.IsNull() || stackFiles[i].Model.IsUnknown() || stackFiles[i].Model.ValueString() == "" {
+								stackFiles[i].Model = types.StringValue(stackModel)
+								tflog.Debug(ctx, "Applied stack model inheritance to file", map[string]interface{}{
+									"stack_id":  stackID,
+									"file_path": stackFiles[i].Path,
+									"model":     stackModel,
+								})
+							}
+						}
+					}
+
 					tflog.Info(ctx, "Found and processing primary stack", map[string]interface{}{
 						"stack_id":            stackID,
 						"file_count":          len(stackFiles),
@@ -4883,6 +5011,24 @@ func (r *ProjectResourceFinal) collectAndMergeFiles(ctx context.Context, data Pr
 				if stack, ok := stackData.(StackResourceModel); ok {
 					// Convert stack files from map to list
 					stackFiles := schemas.FilesMapToList(ctx, stack.Files)
+
+					// Apply stack model inheritance: if file doesn't have model, use stack's model
+					stackModel := ""
+					if !stack.Model.IsNull() && !stack.Model.IsUnknown() {
+						stackModel = stack.Model.ValueString()
+					}
+					if stackModel != "" {
+						for i := range stackFiles {
+							if stackFiles[i].Model.IsNull() || stackFiles[i].Model.IsUnknown() || stackFiles[i].Model.ValueString() == "" {
+								stackFiles[i].Model = types.StringValue(stackModel)
+								tflog.Debug(ctx, "Applied stack model inheritance to file (all stacks path)", map[string]interface{}{
+									"stack_id":  stackID,
+									"file_path": stackFiles[i].Path,
+									"model":     stackModel,
+								})
+							}
+						}
+					}
 
 					tflog.Info(ctx, "Processing stack files", map[string]interface{}{
 						"stack_id":   stackID,
@@ -5053,19 +5199,34 @@ func (r *ProjectResourceFinal) detectUnanimousFileModel(ctx context.Context, dat
 				}
 
 				// Extract model from file registry data
-				fileMap, ok := fileData.(map[string]interface{})
-				if !ok {
-					continue
-				}
-
-				if modelVal, hasModel := fileMap["model"]; hasModel {
-					if modelStr, ok := modelVal.(string); ok && modelStr != "" {
-						fileModel = modelStr
-						tflog.Debug(ctx, "detectUnanimousFileModel: Found model in registry", map[string]interface{}{
-							"path":  pathKey,
-							"model": fileModel,
-						})
+				// The registry stores FileResourceModel struct, not a map
+				if fileRes, ok := fileData.(FileResourceModel); ok {
+					if !fileRes.Model.IsNull() && !fileRes.Model.IsUnknown() {
+						modelStr := fileRes.Model.ValueString()
+						if modelStr != "" {
+							fileModel = modelStr
+							tflog.Debug(ctx, "detectUnanimousFileModel: Found model in registry (FileResourceModel)", map[string]interface{}{
+								"path":  pathKey,
+								"model": fileModel,
+							})
+						}
 					}
+				} else if fileMap, ok := fileData.(map[string]interface{}); ok {
+					// Fallback for map format (if stored differently)
+					if modelVal, hasModel := fileMap["model"]; hasModel {
+						if modelStr, ok := modelVal.(string); ok && modelStr != "" {
+							fileModel = modelStr
+							tflog.Debug(ctx, "detectUnanimousFileModel: Found model in registry (map)", map[string]interface{}{
+								"path":  pathKey,
+								"model": fileModel,
+							})
+						}
+					}
+				} else {
+					tflog.Debug(ctx, "detectUnanimousFileModel: Unknown registry data type", map[string]interface{}{
+						"path":      pathKey,
+						"data_type": fmt.Sprintf("%T", fileData),
+					})
 				}
 			}
 		}
@@ -5312,9 +5473,11 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 
 	// Build FileModel AttrTypes based on the schema
 	fileModelAttrTypes := map[string]attr.Type{
+		"model":         types.StringType,
 		"content":       types.StringType,
 		"instructions":  types.ListType{ElemType: types.ObjectType{AttrTypes: schemas.InstructionModelType()}},
 		"verifications": types.ListType{ElemType: types.ObjectType{AttrTypes: schemas.VerificationModelType()}},
+		"image":         types.ObjectType{AttrTypes: schemas.ImageModelType()},
 		"content_hash":  types.StringType,
 		"file_hash":     types.StringType,
 		"file_modtime":  types.StringType,
@@ -5421,4 +5584,104 @@ func keysOfMap(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// resolveFileModel returns the final model for a file based on the hierarchy:
+// file.model > project.model > provider.model > default
+// Note: feature.model and stack.model inheritance is already applied during file collection
+func (r *ProjectResourceFinal) resolveFileModel(file schemas.FileModelWithPath, projectModel, providerModel string) string {
+	// 1. File's own model takes highest precedence
+	if !file.Model.IsNull() && !file.Model.IsUnknown() && file.Model.ValueString() != "" {
+		return file.Model.ValueString()
+	}
+
+	// 2. Project model is next (already has feature/stack inheritance applied to file.Model)
+	if projectModel != "" {
+		return projectModel
+	}
+
+	// 3. Provider default model
+	if providerModel != "" {
+		return providerModel
+	}
+
+	// 4. Ultimate fallback
+	return "anthropic/claude-haiku"
+}
+
+// ModelFileGroup represents a group of files that share the same model
+type ModelFileGroup struct {
+	Model string
+	Files []schemas.FileModelWithPath
+}
+
+// groupFilesByModel groups files by their resolved model
+func (r *ProjectResourceFinal) groupFilesByModel(ctx context.Context, files []schemas.FileModelWithPath, projectModel, providerModel string) []ModelFileGroup {
+	// Map to collect files by model
+	filesByModel := make(map[string][]schemas.FileModelWithPath)
+
+	for _, file := range files {
+		tflog.Debug(ctx, "groupFilesByModel: Resolving file model", map[string]interface{}{
+			"path":               file.Path,
+			"file_model_is_null": file.Model.IsNull(),
+			"file_model_value":   file.Model.ValueString(),
+			"project_model":      projectModel,
+			"provider_model":     providerModel,
+		})
+		model := r.resolveFileModel(file, projectModel, providerModel)
+		tflog.Debug(ctx, "groupFilesByModel: Resolved model", map[string]interface{}{
+			"path":           file.Path,
+			"resolved_model": model,
+		})
+		filesByModel[model] = append(filesByModel[model], file)
+	}
+
+	// Convert to slice of groups
+	groups := make([]ModelFileGroup, 0, len(filesByModel))
+	for model, modelFiles := range filesByModel {
+		groups = append(groups, ModelFileGroup{
+			Model: model,
+			Files: modelFiles,
+		})
+		tflog.Debug(ctx, "Grouped files by model", map[string]interface{}{
+			"model":      model,
+			"file_count": len(modelFiles),
+		})
+	}
+
+	tflog.Info(ctx, "Files grouped by model", map[string]interface{}{
+		"total_files":  len(files),
+		"model_groups": len(groups),
+	})
+
+	return groups
+}
+
+// filterOutputDataForFiles creates a copy of outputData with only the specified files
+// This is used to generate per-model-group prompts
+func (r *ProjectResourceFinal) filterOutputDataForFiles(outputData map[string]interface{}, files []schemas.FileModelWithPath) map[string]interface{} {
+	// Create a shallow copy of outputData
+	result := make(map[string]interface{})
+	for k, v := range outputData {
+		result[k] = v
+	}
+
+	// Build a set of file paths to include
+	includePaths := make(map[string]bool)
+	for _, f := range files {
+		includePaths[f.Path] = true
+	}
+
+	// Filter the files in the copy
+	if filesData, ok := outputData["files"].(map[string]interface{}); ok {
+		filteredFiles := make(map[string]interface{})
+		for path, fileData := range filesData {
+			if includePaths[path] {
+				filteredFiles[path] = fileData
+			}
+		}
+		result["files"] = filteredFiles
+	}
+
+	return result
 }

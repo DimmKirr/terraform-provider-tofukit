@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -57,16 +58,39 @@ type ImageConfig struct {
 // GenerateImage wraps the official SDK's image generation API
 // Returns base64-encoded image data
 func (c *Client) GenerateImage(ctx context.Context, model string, prompt string, config ImageConfig) (string, error) {
-	// Build params with ResponseFormat set to b64_json to get base64 data
+	// Build params - gpt-image-1* models don't support response_format parameter
+	// and return base64 by default, while dall-e models need it explicitly
 	params := openai.ImageGenerateParams{
-		Prompt:         prompt,
-		N:              param.NewOpt[int64](1),
-		ResponseFormat: openai.ImageGenerateParamsResponseFormatB64JSON,
+		Prompt: prompt,
+		N:      param.NewOpt[int64](1),
+	}
+
+	// Apply model if specified (important: gpt-image-1.5 has higher prompt limits than gpt-image-1-mini)
+	if model != "" {
+		params.Model = model
+	}
+
+	// Only set ResponseFormat for dall-e models (gpt-image-1* models don't support it)
+	if !strings.HasPrefix(model, "gpt-image") {
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormatB64JSON
 	}
 
 	// Apply size if specified
 	if config.Size != "" {
 		params.Size = openai.ImageGenerateParamsSize(config.Size)
+	}
+
+	// Apply quality if specified
+	// - gpt-image-1*: high, medium, low
+	// - dall-e-3: standard, hd
+	// - dall-e-2: not supported
+	if config.Quality != "" {
+		params.Quality = openai.ImageGenerateParamsQuality(config.Quality)
+	}
+
+	// Apply style if specified (vivid, natural - DALL-E 3 only)
+	if config.Style != "" {
+		params.Style = openai.ImageGenerateParamsStyle(config.Style)
 	}
 
 	// Generate image
