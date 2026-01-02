@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -142,6 +143,13 @@ func extractSVGFromResponse(response string) (string, error) {
 
 // sanitizeSVG fixes common SVG issues that cause XML parsing errors
 func sanitizeSVG(svg string) string {
+	// Debug: Log entry to verify function is being called (KIRR-129 debugging)
+	inputPreview := svg
+	if len(inputPreview) > 300 {
+		inputPreview = inputPreview[:300]
+	}
+	log.Printf("[DEBUG sanitizeSVG] ENTRY - input length: %d, first 300 chars: %q", len(svg), inputPreview)
+
 	// Fix backslash-escaped content (KIRR-129)
 	// Claude sometimes outputs JSON-style escaping in SVG, including:
 	// - Double-escaped quotes: =\"\\\"value\\\"\" (from double JSON encoding)
@@ -192,6 +200,13 @@ func sanitizeSVG(svg string) string {
 
 	// Note: We don't fix empty tag pairs (<tag></tag> -> <tag/>) because Go's
 	// regexp doesn't support backreferences. The SVG parser handles both forms.
+
+	// Debug: Log exit
+	outputPreview := svg
+	if len(outputPreview) > 300 {
+		outputPreview = outputPreview[:300]
+	}
+	log.Printf("[DEBUG sanitizeSVG] EXIT - output length: %d, first 300 chars: %q", len(svg), outputPreview)
 
 	return svg
 }
