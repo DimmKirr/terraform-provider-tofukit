@@ -142,14 +142,37 @@ func extractSVGFromResponse(response string) (string, error) {
 
 // sanitizeSVG fixes common SVG issues that cause XML parsing errors
 func sanitizeSVG(svg string) string {
-	// Fix backslash-escaped quotes in attribute values (KIRR-129)
-	// Claude sometimes outputs JSON-style escaping like: xmlns="\"http://...\""
-	// In XML/SVG, backslash is NOT an escape character - quotes use &quot; entity.
-	// We fix this with two targeted replacements:
-	// 1. ="\" → =" (removes escaped quote after opening quote)
-	// 2. \"" → " (removes escaped quote before closing quote)
-	svg = strings.ReplaceAll(svg, `="\"`, `="`)
-	svg = strings.ReplaceAll(svg, `\""`, `"`)
+	// Fix backslash-escaped content (KIRR-129)
+	// Claude sometimes outputs JSON-style escaping in SVG, including:
+	// - Double-escaped quotes: =\"\\\"value\\\"\" (from double JSON encoding)
+	// - Single-escaped quotes: ="\"value\""
+	// - Literal newlines: \n instead of actual newline
+	// In XML/SVG, backslash is NOT an escape character.
+	//
+	// We handle all levels of escaping by:
+	// 1. Converting literal \n to actual newlines
+	// 2. Removing all backslashes before quotes (handles any nesting level)
+	// 3. Cleaning up any resulting double-quotes
+
+	// Convert literal \n to actual newlines
+	svg = strings.ReplaceAll(svg, `\n`, "\n")
+
+	// Remove backslashes before quotes - repeat until no more found
+	// This handles any level of escaping: \" → ", \\" → ", \\\" → ", etc.
+	for strings.Contains(svg, `\"`) {
+		svg = strings.ReplaceAll(svg, `\"`, `"`)
+	}
+
+	// Clean up any double-backslashes that might remain
+	for strings.Contains(svg, `\\`) {
+		svg = strings.ReplaceAll(svg, `\\`, `\`)
+	}
+
+	// Fix resulting double-quotes from pattern like ="\"value\""
+	// After removing backslashes: ="" becomes ="
+	svg = strings.ReplaceAll(svg, `=""`, `="`)
+	// And at the end: "" becomes "
+	svg = strings.ReplaceAll(svg, `""`, `"`)
 
 	// Fix unquoted attribute values (e.g., width=100 -> width="100")
 	// This regex finds attribute=value patterns where value is not quoted

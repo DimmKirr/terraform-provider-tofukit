@@ -125,3 +125,53 @@ func TestSanitizeSVG_MixedEscapedQuotes(t *testing.T) {
 	_, err := convertSVGToPNG(sanitized, 512, 512)
 	require.NoError(t, err)
 }
+
+func TestSanitizeSVG_DoubleBackslashEscapedQuotes(t *testing.T) {
+	// This is the EXACT pattern from QA failure (KIRR-129 re-test)
+	// Production shows: xmlns=\"\\\"http://...\\\"\"
+	// Which is: backslash-quote-backslash-backslash-backslash-quote
+	// In Go raw string: `=\"\\\"` for opening, `\\\"\"` for closing
+	inputSVG := `<svg xmlns=\"\\\"http://www.w3.org/2000/svg\\\"\" width=\"\\\"1024\\\"\" height=\"\\\"1024\\\"\">`
+
+	sanitized := sanitizeSVG(inputSVG)
+
+	// Should be clean
+	assert.Contains(t, sanitized, `xmlns="http://www.w3.org/2000/svg"`)
+	assert.Contains(t, sanitized, `width="1024"`)
+	assert.Contains(t, sanitized, `height="1024"`)
+	assert.NotContains(t, sanitized, `\\"`)
+	assert.NotContains(t, sanitized, `\"`)
+}
+
+func TestSanitizeSVG_LiteralNewlines(t *testing.T) {
+	// QA shows literal \n in the output instead of actual newlines
+	inputSVG := `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">\n  <rect width="512" height="512" fill="#fff"/>\n</svg>`
+
+	sanitized := sanitizeSVG(inputSVG)
+
+	// Literal \n should be converted to actual newlines or removed
+	assert.NotContains(t, sanitized, `\n`)
+
+	// Should parse successfully
+	_, err := convertSVGToPNG(sanitized, 512, 512)
+	require.NoError(t, err)
+}
+
+func TestSanitizeSVG_ProductionPattern_Rabbit(t *testing.T) {
+	// Exact pattern from rabbit1.png.failed.svg (first line)
+	inputSVG := `<svg xmlns=\"\\\"http://www.w3.org/2000/svg\\\"\" width=\"\\\"1024\\\"\" height=\"\\\"1024\\\"\" viewBox=\"\\\"0 0 1024 1024\\\"\">\n  <rect width=\"\\\"1024\\\"\" height=\"\\\"1024\\\"\" fill=\"\\\"#f5e6d3\\\"\"/>\n</svg>`
+
+	sanitized := sanitizeSVG(inputSVG)
+
+	// All escapes should be removed
+	assert.Contains(t, sanitized, `xmlns="http://www.w3.org/2000/svg"`)
+	assert.Contains(t, sanitized, `width="1024"`)
+	assert.Contains(t, sanitized, `viewBox="0 0 1024 1024"`)
+	assert.Contains(t, sanitized, `fill="#f5e6d3"`)
+	assert.NotContains(t, sanitized, `\\`)
+	assert.NotContains(t, sanitized, `\n`)
+
+	// Should parse successfully
+	_, err := convertSVGToPNG(sanitized, 1024, 1024)
+	require.NoError(t, err, "SVG parsing should succeed after sanitization")
+}
