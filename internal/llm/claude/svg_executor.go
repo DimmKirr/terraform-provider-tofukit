@@ -142,6 +142,15 @@ func extractSVGFromResponse(response string) (string, error) {
 
 // sanitizeSVG fixes common SVG issues that cause XML parsing errors
 func sanitizeSVG(svg string) string {
+	// Fix backslash-escaped quotes in attribute values (KIRR-129)
+	// Claude sometimes outputs JSON-style escaping like: xmlns="\"http://...\""
+	// In XML/SVG, backslash is NOT an escape character - quotes use &quot; entity.
+	// We fix this with two targeted replacements:
+	// 1. ="\" → =" (removes escaped quote after opening quote)
+	// 2. \"" → " (removes escaped quote before closing quote)
+	svg = strings.ReplaceAll(svg, `="\"`, `="`)
+	svg = strings.ReplaceAll(svg, `\""`, `"`)
+
 	// Fix unquoted attribute values (e.g., width=100 -> width="100")
 	// This regex finds attribute=value patterns where value is not quoted
 	attrRegex := regexp.MustCompile(`(\s)([a-zA-Z-]+)=([^"'\s>][^\s>]*)`)

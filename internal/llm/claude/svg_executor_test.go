@@ -85,3 +85,43 @@ func TestSanitizeSVG_MultipleUnescapedAmpersands(t *testing.T) {
 	_, err := convertSVGToPNG(sanitized, 512, 512)
 	require.NoError(t, err)
 }
+
+func TestSanitizeSVG_DoubleEscapedQuotes(t *testing.T) {
+	// This is the exact problematic SVG from KIRR-129
+	// Claude outputs backslash-escaped quotes in attribute values
+	inputSVG := `<svg xmlns="\"http://www.w3.org/2000/svg\"" width="\"1024\"" height="\"1024\"" viewBox="\"0 0 1024 1024\"">
+  <rect width="\"1024\"" height="\"1024\"" fill="\"#f5e6d3\""/>
+</svg>`
+
+	sanitized := sanitizeSVG(inputSVG)
+
+	// Double-escaped quotes should be fixed
+	assert.Contains(t, sanitized, `xmlns="http://www.w3.org/2000/svg"`)
+	assert.Contains(t, sanitized, `width="1024"`)
+	assert.Contains(t, sanitized, `height="1024"`)
+	assert.Contains(t, sanitized, `fill="#f5e6d3"`)
+	assert.NotContains(t, sanitized, `\"`)
+
+	// Should parse successfully
+	_, err := convertSVGToPNG(sanitized, 1024, 1024)
+	require.NoError(t, err, "SVG parsing should succeed after sanitization")
+}
+
+func TestSanitizeSVG_MixedEscapedQuotes(t *testing.T) {
+	// Some attributes have escaped quotes, some don't
+	inputSVG := `<svg xmlns="\"http://www.w3.org/2000/svg\"" width="512" height="\"512\"">
+  <rect x="0" y="\"0\"" fill="#fff"/>
+</svg>`
+
+	sanitized := sanitizeSVG(inputSVG)
+
+	// All attributes should have clean quotes
+	assert.Contains(t, sanitized, `xmlns="http://www.w3.org/2000/svg"`)
+	assert.Contains(t, sanitized, `width="512"`)
+	assert.Contains(t, sanitized, `height="512"`)
+	assert.NotContains(t, sanitized, `\"`)
+
+	// Should parse successfully
+	_, err := convertSVGToPNG(sanitized, 512, 512)
+	require.NoError(t, err)
+}
