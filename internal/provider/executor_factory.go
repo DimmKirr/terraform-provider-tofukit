@@ -17,6 +17,7 @@ type ExecutorFactory struct {
 	metaAPIKey                 string
 	dangerouslySkipPermissions bool
 	claudeMaxTurns             int
+	maxConcurrentClaudeCalls   int
 	debug                      bool
 	outputPath                 string
 }
@@ -29,6 +30,7 @@ func NewExecutorFactory(
 	metaAPIKey string,
 	dangerouslySkipPermissions bool,
 	claudeMaxTurns int,
+	maxConcurrentClaudeCalls int,
 	debug bool,
 	outputPath string,
 ) *ExecutorFactory {
@@ -39,6 +41,7 @@ func NewExecutorFactory(
 		metaAPIKey:                 metaAPIKey,
 		dangerouslySkipPermissions: dangerouslySkipPermissions,
 		claudeMaxTurns:             claudeMaxTurns,
+		maxConcurrentClaudeCalls:   maxConcurrentClaudeCalls,
 		debug:                      debug,
 		outputPath:                 outputPath,
 	}
@@ -130,4 +133,21 @@ func (f *ExecutorFactory) GetExecutorForModel(modelStr string) (llm.LLMExecutor,
 	}
 
 	return f.GetExecutor(modelInfo.Provider, modelInfo.Model)
+}
+
+// GetSVGExecutor creates a Claude SVG executor for wireframe image generation
+// This executor generates SVG wireframes using Claude and converts them to PNG
+func (f *ExecutorFactory) GetSVGExecutor() (llm.LLMExecutor, error) {
+	executor := claude.NewSVGExecutor(f.claudeHomeDir, f.dangerouslySkipPermissions, f.claudeMaxTurns, f.maxConcurrentClaudeCalls)
+
+	// Apply common settings
+	executor.SetDebug(f.debug)
+	if f.outputPath != "" {
+		executor.SetOutputPath(f.outputPath)
+	}
+
+	// Wrap in adapter to implement llm.LLMExecutor interface
+	adapter := newSVGAdapter(executor)
+
+	return adapter, nil
 }

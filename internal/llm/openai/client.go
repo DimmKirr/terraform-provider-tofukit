@@ -50,9 +50,11 @@ func (c *Client) CreateChatCompletion(ctx context.Context, model string, systemP
 
 // ImageConfig contains configuration for image generation
 type ImageConfig struct {
-	Size    string
-	Quality string
-	Style   string
+	Size       string
+	Quality    string
+	Style      string
+	Format     string // Output format: png, jpeg, webp (inferred from filename extension)
+	Moderation string // Moderation level: "auto" (default strict) or "low" (relaxed, allows more adult content)
 }
 
 // GenerateImage wraps the official SDK's image generation API
@@ -91,6 +93,23 @@ func (c *Client) GenerateImage(ctx context.Context, model string, prompt string,
 	// Apply style if specified (vivid, natural - DALL-E 3 only)
 	if config.Style != "" {
 		params.Style = openai.ImageGenerateParamsStyle(config.Style)
+	}
+
+	// Apply output format if specified (png, jpeg, webp - gpt-image-1* models only)
+	// This is inferred from the filename extension
+	if config.Format != "" && strings.HasPrefix(model, "gpt-image") {
+		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(config.Format)
+	}
+
+	// Apply moderation level (gpt-image-1* models only)
+	// Default to "low" for more permissive content generation
+	if strings.HasPrefix(model, "gpt-image") {
+		moderation := config.Moderation
+		if moderation == "" {
+			moderation = "low" // Default to low moderation
+		}
+		params.Moderation = openai.ImageGenerateParamsModeration(moderation)
+		fmt.Printf("[OpenAI DEBUG] Moderation set to: %s (model: %s)\n", moderation, model)
 	}
 
 	// Generate image

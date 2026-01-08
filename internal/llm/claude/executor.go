@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,22 +17,55 @@ import (
 )
 
 // Executor manages Claude Code execution lifecycle for Terraform resources
+// Each executor uses a session-isolated Claude home directory to prevent
+// corruption of the original ~/.claude config
 type Executor struct {
-	client     *Client
-	debug      bool
-	outputPath string
-	model      string
-	maxTurns   int
+	client       *Client
+	debug        bool
+	outputPath   string
+	model        string
+	maxTurns     int
+	isolatedHome *IsolatedClaudeHome // Session-isolated Claude home
 }
 
-// NewExecutor creates a new Claude Code executor
+// NewExecutor creates a new Claude Code executor with session-isolated config
+// The original Claude home (~/.claude) is NEVER modified - only copied from
 func NewExecutor(claudeHomeDir string, dangerouslySkipPermissions bool, maxTurns int) *Executor {
-	return &Executor{
-		client:     NewClient(claudeHomeDir, dangerouslySkipPermissions, maxTurns),
-		debug:      false,
-		outputPath: "",
-		maxTurns:   maxTurns,
+	// Generate unique session ID for this executor instance
+	sessionID := GenerateSessionID()
+
+	// Create session-isolated Claude home
+	isolatedHome, err := CreateIsolatedClaudeHome(claudeHomeDir, sessionID)
+	if err != nil {
+		// Fall back to original if isolation fails (will log warning)
+		log.Printf("[WARN] Failed to create isolated Claude home, using original: %v", err)
+		return &Executor{
+			client:     NewClient(claudeHomeDir, dangerouslySkipPermissions, maxTurns),
+			debug:      false,
+			outputPath: "",
+			maxTurns:   maxTurns,
+			isolatedHome: &IsolatedClaudeHome{
+				IsolatedPath: claudeHomeDir,
+				OriginalPath: claudeHomeDir,
+			},
+		}
 	}
+
+	return &Executor{
+		client:       NewClient(isolatedHome.Path(), dangerouslySkipPermissions, maxTurns),
+		debug:        false,
+		outputPath:   "",
+		maxTurns:     maxTurns,
+		isolatedHome: isolatedHome,
+	}
+}
+
+// Cleanup releases resources including the isolated Claude home directory
+func (e *Executor) Cleanup() error {
+	if e.isolatedHome != nil {
+		return e.isolatedHome.Cleanup()
+	}
+	return nil
 }
 
 // SetDebug enables or disables debug mode
@@ -68,6 +102,8 @@ type ExecutionStatus struct {
 }
 
 // Execute runs Claude Code with the provided project specification
+// NOTE: Callers should call Cleanup() after all execution attempts complete,
+// or use ExecuteWithPromptJSON/ExecuteWithVerification which handle cleanup automatically.
 func (e *Executor) Execute(ctx context.Context, projectSpec map[string]interface{}, outputDir string) (*ExecutionStatus, error) {
 	tflog.Info(ctx, "Starting Claude Code execution", map[string]interface{}{
 		"output_dir": outputDir,
@@ -235,6 +271,13 @@ func (e *Executor) ExecuteWithVerification(
 	filesToVerify []schemas.FileModelWithPath,
 	maxRetries int,
 ) (*ExecutionStatus, *files.VerificationReport, error) {
+	// Cleanup isolated Claude home after all execution attempts (deferred to run even on error)
+	defer func() {
+		if err := e.Cleanup(); err != nil {
+			log.Printf("[WARN] Failed to cleanup isolated Claude home: %v", err)
+		}
+	}()
+
 	var lastStatus *ExecutionStatus
 	var lastReport *files.VerificationReport
 
@@ -355,6 +398,13 @@ func (e *Executor) ExecuteWithPromptJSON(
 	filesToVerify []schemas.FileModelWithPath,
 	maxRetries int,
 ) (*ExecutionStatus, *files.VerificationReport, error) {
+	// Cleanup isolated Claude home after execution (deferred to run even on error)
+	defer func() {
+		if err := e.Cleanup(); err != nil {
+			log.Printf("[WARN] Failed to cleanup isolated Claude home: %v", err)
+		}
+	}()
+
 	// Parse the prompt JSON to extract project specification
 	var projectSpec map[string]interface{}
 	if err := json.Unmarshal([]byte(promptJSON), &projectSpec); err != nil {

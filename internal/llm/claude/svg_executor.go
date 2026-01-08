@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,31 +24,70 @@ import (
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
 )
 
+// SVGQueryFunc is a function type for making LLM queries (used for dependency injection in tests)
+type SVGQueryFunc func(ctx context.Context, prompt string) (string, error)
+
 // SVGExecutor generates images using Claude to create SVG wireframes, then converts to PNG
+// Uses per-call isolated Claude homes and semaphore to prevent config file corruption
 type SVGExecutor struct {
-	claudeExecutor *Executor
-	debug          bool
-	outputPath     string
+	originalClaudeHome       string // Original Claude home to copy from (e.g., ~/.claude)
+	sessionID                string // Session ID for isolation (shared prefix for all calls)
+	dangerouslySkipPerms     bool   // Skip permission prompts
+	maxTurns                 int    // Max turns for Claude CLI
+	debug                    bool
+	outputPath               string
+	semaphore                chan struct{} // Limits concurrent Claude calls
+	maxConcurrentClaudeCalls int           // Configured limit for parallel calls
+	queryFunc                SVGQueryFunc  // Injectable query function (nil = use real Claude)
 }
 
 // NewSVGExecutor creates a new SVG executor that uses Claude for wireframe generation
-func NewSVGExecutor(claudeHomeDir string, dangerouslySkipPermissions bool, maxTurns int) *SVGExecutor {
-	return &SVGExecutor{
-		claudeExecutor: NewExecutor(claudeHomeDir, dangerouslySkipPermissions, maxTurns),
-		debug:          false,
+// Each Claude call gets its own isolated home directory for safe parallel execution
+// maxConcurrentClaudeCalls controls the semaphore size (default: 4 if <= 0)
+func NewSVGExecutor(claudeHomeDir string, dangerouslySkipPermissions bool, maxTurns int, maxConcurrentClaudeCalls int) *SVGExecutor {
+	// Default to 4 if not configured
+	if maxConcurrentClaudeCalls <= 0 {
+		maxConcurrentClaudeCalls = 4
 	}
+
+	// Expand ~ in claude home path
+	if strings.HasPrefix(claudeHomeDir, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			claudeHomeDir = filepath.Join(home, claudeHomeDir[2:])
+		}
+	}
+
+	// Generate session ID once for all calls in this executor instance
+	sessionID := GenerateSessionID()
+
+	log.Printf("[INFO] SVGExecutor created with sessionID=%s, max_concurrent_claude_calls=%d (per-call isolation enabled)", sessionID, maxConcurrentClaudeCalls)
+
+	return &SVGExecutor{
+		originalClaudeHome:       claudeHomeDir,
+		sessionID:                sessionID,
+		dangerouslySkipPerms:     dangerouslySkipPermissions,
+		maxTurns:                 maxTurns,
+		debug:                    false,
+		semaphore:                make(chan struct{}, maxConcurrentClaudeCalls),
+		maxConcurrentClaudeCalls: maxConcurrentClaudeCalls,
+	}
+}
+
+// Cleanup releases resources (no-op for SVGExecutor since each call cleans up its own isolation)
+func (e *SVGExecutor) Cleanup() error {
+	// Per-call isolation means each goroutine cleans up its own isolated home
+	// Nothing to clean up at executor level
+	return nil
 }
 
 // SetDebug enables or disables debug mode
 func (e *SVGExecutor) SetDebug(debug bool) {
 	e.debug = debug
-	e.claudeExecutor.SetDebug(debug)
 }
 
 // SetOutputPath sets the output path for debug files
 func (e *SVGExecutor) SetOutputPath(outputPath string) {
 	e.outputPath = outputPath
-	e.claudeExecutor.SetOutputPath(outputPath)
 }
 
 // SetSystemPrompt sets a custom system prompt (not used for SVG mode)
@@ -55,14 +95,19 @@ func (e *SVGExecutor) SetSystemPrompt(systemPrompt string) {
 	// SVG executor uses its own system prompt
 }
 
-// SetModel sets the model (not used, always uses Claude)
+// SetModel sets the model (not used, always uses Claude haiku for SVG)
 func (e *SVGExecutor) SetModel(model string) {
-	e.claudeExecutor.SetModel(model)
+	// SVG mode uses haiku by default for speed
+}
+
+// SetQueryFunc sets a custom query function (for testing/mocking)
+func (e *SVGExecutor) SetQueryFunc(fn SVGQueryFunc) {
+	e.queryFunc = fn
 }
 
 // wrapPromptForSVG wraps the user's image prompt with instructions for SVG wireframe generation
 func wrapPromptForSVG(originalPrompt string, width, height int) string {
-	return fmt.Sprintf(`Generate a valid SVG wireframe/schematic representing the following image composition.
+	return fmt.Sprintf(`Generate a valid SVG 1.1 wireframe/schematic representing the following image composition.
 This should be a visual layout guide as if you were creating a wireframe for an artist to follow.
 
 Use simple shapes, lines, and labels to represent:
@@ -72,20 +117,68 @@ Use simple shapes, lines, and labels to represent:
 - Composition guidelines (rule of thirds, focal points)
 - Approximate color regions (use solid fills with hex colors)
 
-CRITICAL SVG REQUIREMENTS:
-- Output ONLY the SVG code, no explanations or markdown
+CRITICAL SVG 1.1 REQUIREMENTS:
+- Output ONLY valid SVG 1.1 code, no explanations or markdown
 - Start with <svg and end with </svg>
 - ALL attributes MUST have quoted values (e.g., width="512" NOT width=512)
+- Hex colors MUST be exactly 3 digits (#RGB) or 6 digits (#RRGGBB) - NEVER use 5, 7, or 8 digit hex colors
+- Escape ampersands in text content as &amp; (e.g., "Tom &amp; Jerry" NOT "Tom & Jerry")
+- Closing tags MUST be exactly </tagname> with NO extra characters after the tag name
+- Text content must NOT contain unescaped quote characters - describe colors by name instead
 - Use viewBox="0 0 %d %d"
-- Use valid XML syntax throughout
-- Include descriptive labels/annotations as text elements
 - Use a clean, minimalist style
 
-Example of valid SVG start:
-<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">
+COMPLETE EXAMPLE SVG (person portrait wireframe):
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect x="0" y="0" width="512" height="512" fill="#f5f5f5"/>
+  <ellipse cx="256" cy="180" rx="80" ry="100" fill="#ffe0bd" stroke="#000000" stroke-width="2"/>
+  <ellipse cx="256" cy="400" rx="120" ry="60" fill="#000000" opacity="0.1"/>
+  <rect x="180" y="280" width="152" height="200" fill="#4a90d9"/>
+  <text x="256" y="480" text-anchor="middle" font-size="14">Person &amp; shadow - centered composition</text>
+</svg>
+
+Your SVG must use width="%d" height="%d" viewBox="0 0 %d %d".
 
 Image to create wireframe for:
 %s`, width, height, width, height, width, height, originalPrompt)
+}
+
+// buildSVGFeedbackPrompt constructs a prompt that includes error feedback for Claude to fix
+// TFK-11 Option B: Feedback loop for SVG validation errors
+func buildSVGFeedbackPrompt(originalPrompt string, errorMessage string, failedSVG string) string {
+	var feedback strings.Builder
+
+	feedback.WriteString("IMPORTANT: Your previous SVG generation attempt FAILED with the following error:\n\n")
+	feedback.WriteString("ERROR: ")
+	feedback.WriteString(errorMessage)
+	feedback.WriteString("\n\n")
+
+	if failedSVG != "" {
+		// Include a snippet of the failed SVG for context (first 500 chars)
+		svgPreview := failedSVG
+		if len(svgPreview) > 500 {
+			svgPreview = svgPreview[:500] + "..."
+		}
+		feedback.WriteString("FAILED SVG (excerpt):\n")
+		feedback.WriteString(svgPreview)
+		feedback.WriteString("\n\n")
+	}
+
+	feedback.WriteString("COMMON SVG ISSUES TO AVOID:\n")
+	feedback.WriteString("1. Inside <style> blocks, use CSS syntax (property: value;) NOT XML syntax (property=\"value\")\n")
+	feedback.WriteString("   WRONG: .class { fill=\"none\" stroke=\"#FF0000\" }\n")
+	feedback.WriteString("   RIGHT: .class { fill: none; stroke: #FF0000; }\n")
+	feedback.WriteString("2. Hex colors must be 3 or 6 digits: #RGB or #RRGGBB (not 5 or 8 digits)\n")
+	feedback.WriteString("3. Escape ampersands in text as &amp;\n")
+	feedback.WriteString("4. All tags must be properly closed\n")
+	feedback.WriteString("5. Attribute values must be quoted: width=\"100\" not width=100\n\n")
+
+	feedback.WriteString("Please regenerate a VALID SVG that fixes the error above.\n\n")
+	feedback.WriteString("---\n\n")
+	feedback.WriteString("ORIGINAL REQUEST:\n")
+	feedback.WriteString(originalPrompt)
+
+	return feedback.String()
 }
 
 // stripANSIAndTrim removes ANSI escape sequences and trims whitespace
@@ -198,6 +291,25 @@ func sanitizeSVG(svg string) string {
 	// Go's RE2 doesn't support negative lookahead, so we use ReplaceAllStringFunc
 	svg = escapeUnescapedAmpersands(svg)
 
+	// Convert 8-digit hex colors to 6-digit + opacity (KIRR-132)
+	// CSS Color Level 4 supports #RRGGBBAA but SVG 1.1 only supports #RGB or #RRGGBB
+	// Claude sometimes generates 8-digit hex colors for transparency effects
+	svg = convertEightDigitHexColors(svg)
+
+	// Fix truncated 5-digit hex colors to valid 6-digit (TFK-11)
+	// Claude sometimes outputs truncated hex colors like #00000 instead of #000000
+	svg = convertFiveDigitHexColors(svg)
+
+	// Fix invalid CSS syntax in <style> blocks (TFK-14)
+	// OpenAI sometimes generates XML attribute syntax inside CSS: fill="none" instead of fill: none;
+	svg = normalizeStyleBlockCSS(svg)
+
+	// Fix malformed closing tags (KIRR-140) - FALLBACK SAFETY NET
+	// When text content contains unescaped quotes like: <text>Color="#FF0000"</text">
+	// Claude sometimes bleeds the quote into the closing tag: </text">
+	// This is a last-resort fix; the prompt now instructs Claude to avoid this pattern.
+	svg = fixMalformedClosingTags(svg)
+
 	// Note: We don't fix empty tag pairs (<tag></tag> -> <tag/>) because Go's
 	// regexp doesn't support backreferences. The SVG parser handles both forms.
 
@@ -299,6 +411,97 @@ func isHexDigit(b byte) bool {
 	return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
+// convertFiveDigitHexColors fixes truncated 5-digit hex colors to valid 6-digit (TFK-11)
+// Converts: fill="#00000" -> fill="#000000" (prepends missing digit)
+// Converts: stroke="#12345" -> stroke="#012345"
+// SVG 1.1 only supports 3-digit (#RGB) or 6-digit (#RRGGBB) hex colors.
+// Claude sometimes outputs truncated 5-digit hex colors which violate the spec.
+func convertFiveDigitHexColors(svg string) string {
+	// Match fill="#XXXXX" or stroke="#XXXXX" where XXXXX is exactly 5 hex digits
+	// The regex captures: (1) fill or stroke, (2) 5-digit color
+	re := regexp.MustCompile(`(fill|stroke)="#([0-9A-Fa-f]{5})"`)
+
+	return re.ReplaceAllString(svg, `$1="#0$2"`)
+}
+
+// normalizeStyleBlockCSS fixes invalid CSS syntax in SVG <style> blocks (TFK-14)
+// OpenAI GPT-image-1 sometimes generates XML attribute syntax inside CSS style blocks:
+//
+//	INVALID: .orbit { fill="none" stroke="#61DAFB" stroke-width="24" }
+//	VALID:   .orbit { fill: none; stroke: #61DAFB; stroke-width: 24; }
+//
+// This function converts XML attribute syntax to proper CSS property syntax within <style> blocks.
+func normalizeStyleBlockCSS(svg string) string {
+	// Find all <style>...</style> blocks (case-insensitive, handles CDATA)
+	styleRegex := regexp.MustCompile(`(?is)(<style[^>]*>)(.*?)(</style>)`)
+
+	return styleRegex.ReplaceAllStringFunc(svg, func(match string) string {
+		parts := styleRegex.FindStringSubmatch(match)
+		if len(parts) != 4 {
+			return match // Safety: return original if no match
+		}
+
+		openTag := parts[1]      // <style> or <style type="text/css">
+		styleContent := parts[2] // The CSS content
+		closeTag := parts[3]     // </style>
+
+		// Convert XML attribute syntax to CSS property syntax
+		// Pattern: property="value" -> property: value;
+		// This handles: fill="none", stroke="#61DAFB", font-family="Arial, sans-serif", etc.
+		attrRegex := regexp.MustCompile(`([a-zA-Z-]+)="([^"]*)"`)
+		normalizedCSS := attrRegex.ReplaceAllString(styleContent, `$1: $2;`)
+
+		// Clean up any double semicolons that might result from already-semicolon-terminated values
+		normalizedCSS = strings.ReplaceAll(normalizedCSS, ";;", ";")
+
+		return openTag + normalizedCSS + closeTag
+	})
+}
+
+// convertEightDigitHexColors converts CSS Color Level 4 8-digit hex colors to SVG 1.1 compatible format (KIRR-132)
+// Converts: fill="#RRGGBBAA" -> fill="#RRGGBB" fill-opacity="0.XX"
+// Converts: stroke="#RRGGBBAA" -> stroke="#RRGGBB" stroke-opacity="0.XX"
+// SVG 1.1 only supports 3-digit (#RGB) or 6-digit (#RRGGBB) hex colors.
+// CSS Color Level 4 adds optional alpha channel as 8-digit hex (#RRGGBBAA).
+func convertEightDigitHexColors(svg string) string {
+	// Match fill="#RRGGBBAA" or stroke="#RRGGBBAA" where AA is the alpha channel
+	// The regex captures: (1) fill or stroke, (2) 6-digit color, (3) 2-digit alpha
+	re := regexp.MustCompile(`(fill|stroke)="#([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})"`)
+
+	return re.ReplaceAllStringFunc(svg, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) != 4 {
+			return match // Safety: return original if no match
+		}
+
+		attr := parts[1]  // "fill" or "stroke"
+		color := parts[2] // "RRGGBB"
+		alpha := parts[3] // "AA"
+
+		// Convert alpha hex to decimal opacity (0.00 to 1.00)
+		alphaInt, err := strconv.ParseInt(alpha, 16, 64)
+		if err != nil {
+			return match // Safety: return original if parse fails
+		}
+		opacity := float64(alphaInt) / 255.0
+
+		// Return the converted attribute with separate opacity
+		// e.g., fill="#000000" fill-opacity="0.08"
+		return fmt.Sprintf(`%s="#%s" %s-opacity="%.2f"`, attr, color, attr, opacity)
+	})
+}
+
+// fixMalformedClosingTags fixes closing tags with extra characters (KIRR-140)
+// Pattern: </tagname"> → </tagname>
+// This happens when Claude's text content contains unescaped quotes that bleed into closing tags
+func fixMalformedClosingTags(svg string) string {
+	// Match closing tags with extra quote before >
+	// e.g., </text"> → </text>
+	// e.g., </tspan"> → </tspan>
+	malformedCloseTagRegex := regexp.MustCompile(`</(\w+)">`)
+	return malformedCloseTagRegex.ReplaceAllString(svg, `</$1>`)
+}
+
 // convertSVGToPNG converts SVG content to PNG image data
 func convertSVGToPNG(svgContent string, width, height int) ([]byte, error) {
 	// Parse SVG
@@ -328,6 +531,7 @@ func convertSVGToPNG(svgContent string, width, height int) ([]byte, error) {
 }
 
 // Execute generates images using Claude SVG wireframes
+// Each file gets its own isolated Claude home for safe parallel execution
 func (e *SVGExecutor) Execute(ctx context.Context, projectSpec map[string]interface{}, outputDir string) (*llm.ExecutionStatus, error) {
 	// Extract files from projectSpec
 	var filesMap map[string]interface{}
@@ -389,74 +593,193 @@ func (e *SVGExecutor) Execute(ctx context.Context, projectSpec map[string]interf
 				})
 			}
 
-			// Use Claude to generate SVG
-			response, err := e.claudeExecutor.Query(ctx, []string{svgPrompt}, "")
+			// Acquire semaphore to limit concurrent Claude calls
+			e.semaphore <- struct{}{}
+			defer func() { <-e.semaphore }()
+
+			// Create per-call isolated Claude home: sessionID + file path suffix
+			// Result: ~/.claude-tofukit-{sessionID}-{sanitized-path}
+			isolatedHome, err := CreateIsolatedClaudeHome(e.originalClaudeHome, e.sessionID, path)
 			if err != nil {
-				errChan <- fmt.Errorf("failed to generate SVG for '%s': %w", path, err)
+				errChan <- fmt.Errorf("failed to create isolated home for '%s': %w", path, err)
 				return
 			}
-
-			// Save raw Claude response for debugging
-			if e.debug {
-				debugDir := filepath.Join(outputDir, ".debug")
-				if err := os.MkdirAll(debugDir, 0755); err == nil {
-					rawPath := filepath.Join(debugDir, strings.ReplaceAll(path, "/", "-")+".claude-response.txt")
-					_ = os.WriteFile(rawPath, []byte(response), 0644)
+			// Cleanup this call's isolated home when done
+			defer func() {
+				if cleanupErr := isolatedHome.Cleanup(); cleanupErr != nil {
+					log.Printf("[WARN] Failed to cleanup isolated home for '%s': %v", path, cleanupErr)
 				}
+			}()
+
+			// Create executor for this call using the isolated home
+			callExecutor := &Executor{
+				client:       NewClient(isolatedHome.Path(), e.dangerouslySkipPerms, e.maxTurns),
+				debug:        e.debug,
+				outputPath:   e.outputPath,
+				maxTurns:     e.maxTurns,
+				isolatedHome: nil, // We manage isolation ourselves
 			}
 
-			// Extract SVG from response
-			svgContent, err := extractSVGFromResponse(response)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to extract SVG from response for '%s': %w (response length: %d)", path, err, len(response))
-				return
-			}
+			// TFK-11 Option B: SVG generation with feedback loop
+			// Retry up to maxRetries times, sending parse errors back to Claude for correction
+			const maxSVGRetries = 3
+			var lastError error
+			var svgContent string
+			currentPrompt := svgPrompt
 
-			// Save sanitized SVG for debugging if enabled
-			if e.debug {
-				svgPath := strings.TrimSuffix(filepath.Join(outputDir, path), filepath.Ext(path)) + ".svg"
-				if err := os.MkdirAll(filepath.Dir(svgPath), 0755); err == nil {
-					_ = os.WriteFile(svgPath, []byte(svgContent), 0644)
+			for attempt := 1; attempt <= maxSVGRetries; attempt++ {
+				if e.debug && attempt > 1 {
+					tflog.Info(ctx, "SVG feedback loop: retrying generation", map[string]interface{}{
+						"path":    path,
+						"attempt": attempt,
+						"error":   lastError.Error(),
+					})
 				}
-			}
 
-			// Convert SVG to PNG
-			pngData, err := convertSVGToPNG(svgContent, width, height)
-			if err != nil {
-				// Save the problematic SVG for debugging
+				// Save the prompt being sent (including feedback prompts) for debugging
 				if e.debug {
+					debugDir := filepath.Join(outputDir, ".debug")
+					if err := os.MkdirAll(debugDir, 0755); err == nil {
+						suffix := ""
+						if attempt > 1 {
+							suffix = fmt.Sprintf(".attempt%d", attempt)
+						}
+						promptPath := filepath.Join(debugDir, strings.ReplaceAll(path, "/", "-")+suffix+".prompt.txt")
+						_ = os.WriteFile(promptPath, []byte(currentPrompt), 0644)
+					}
+				}
+
+				// Use Claude to generate SVG (or mock if queryFunc is set)
+				var response string
+				var queryErr error
+				if e.queryFunc != nil {
+					// Use injected query function (for testing)
+					response, queryErr = e.queryFunc(ctx, currentPrompt)
+				} else {
+					// Use real Claude executor
+					response, queryErr = callExecutor.Query(ctx, []string{currentPrompt}, "")
+				}
+				if queryErr != nil {
+					errChan <- fmt.Errorf("failed to generate SVG for '%s': %w", path, queryErr)
+					return
+				}
+
+				// Save raw Claude response for debugging
+				if e.debug {
+					debugDir := filepath.Join(outputDir, ".debug")
+					if err := os.MkdirAll(debugDir, 0755); err == nil {
+						suffix := ""
+						if attempt > 1 {
+							suffix = fmt.Sprintf(".attempt%d", attempt)
+						}
+						rawPath := filepath.Join(debugDir, strings.ReplaceAll(path, "/", "-")+suffix+".claude-response.txt")
+						_ = os.WriteFile(rawPath, []byte(response), 0644)
+					}
+				}
+
+				// Extract SVG from response
+				svgContent, err = extractSVGFromResponse(response)
+				if err != nil {
+					lastError = fmt.Errorf("failed to extract SVG: %w", err)
+					currentPrompt = buildSVGFeedbackPrompt(svgPrompt, lastError.Error(), "")
+					continue
+				}
+
+				// For non-SVG targets, validate by attempting PNG conversion
+				ext := strings.ToLower(filepath.Ext(path))
+				if ext != ".svg" {
+					_, convErr := convertSVGToPNG(svgContent, width, height)
+					if convErr != nil {
+						// Save the problematic SVG for debugging
+						if e.debug {
+							debugDir := filepath.Join(outputDir, ".debug")
+							if mkErr := os.MkdirAll(debugDir, 0755); mkErr == nil {
+								failedSvgPath := filepath.Join(debugDir, strings.ReplaceAll(path, "/", "-")+fmt.Sprintf(".attempt%d.failed.svg", attempt))
+								_ = os.WriteFile(failedSvgPath, []byte(svgContent), 0644)
+							}
+						}
+
+						lastError = fmt.Errorf("SVG parsing/conversion failed: %w", convErr)
+						currentPrompt = buildSVGFeedbackPrompt(svgPrompt, lastError.Error(), svgContent)
+						continue
+					}
+				}
+
+				// Success - SVG is valid
+				lastError = nil
+				break
+			}
+
+			// If all retries failed, report the error
+			if lastError != nil {
+				// Save final failed SVG
+				if e.debug && svgContent != "" {
 					debugDir := filepath.Join(outputDir, ".debug")
 					if mkErr := os.MkdirAll(debugDir, 0755); mkErr == nil {
 						failedSvgPath := filepath.Join(debugDir, strings.ReplaceAll(path, "/", "-")+".failed.svg")
 						_ = os.WriteFile(failedSvgPath, []byte(svgContent), 0644)
 					}
 				}
-				errChan <- fmt.Errorf("failed to convert SVG to PNG for '%s': %w", path, err)
+				errChan <- fmt.Errorf("failed to generate valid SVG for '%s' after %d attempts: %w", path, maxSVGRetries, lastError)
 				return
 			}
 
-			// Save PNG file
+			// Save sanitized SVG for debugging if enabled
+			if e.debug {
+				debugDir := filepath.Join(outputDir, ".debug")
+				svgPath := filepath.Join(debugDir, strings.TrimSuffix(path, filepath.Ext(path))+".svg")
+				if err := os.MkdirAll(filepath.Dir(svgPath), 0755); err == nil {
+					_ = os.WriteFile(svgPath, []byte(svgContent), 0644)
+				}
+			}
+
+			// Determine output format based on file extension (TFK-12)
+			// If target is .svg, keep as SVG; otherwise convert to PNG
 			fullPath := filepath.Join(outputDir, path)
 			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 				errChan <- fmt.Errorf("failed to create directory for '%s': %w", path, err)
 				return
 			}
 
-			if err := os.WriteFile(fullPath, pngData, 0644); err != nil {
-				errChan <- fmt.Errorf("failed to write PNG file '%s': %w", path, err)
-				return
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext == ".svg" {
+				// Keep as SVG - no conversion needed
+				if err := os.WriteFile(fullPath, []byte(svgContent), 0644); err != nil {
+					errChan <- fmt.Errorf("failed to write SVG file '%s': %w", path, err)
+					return
+				}
+
+				if e.debug {
+					tflog.Debug(ctx, "Generated wireframe SVG (no conversion)", map[string]interface{}{
+						"path": path,
+						"size": len(svgContent),
+					})
+				}
+			} else {
+				// Convert SVG to PNG for .png, .jpg, .jpeg, etc.
+				// Note: We already validated conversion in the retry loop, so this should succeed
+				pngData, err := convertSVGToPNG(svgContent, width, height)
+				if err != nil {
+					errChan <- fmt.Errorf("failed to convert SVG to PNG for '%s': %w", path, err)
+					return
+				}
+
+				if err := os.WriteFile(fullPath, pngData, 0644); err != nil {
+					errChan <- fmt.Errorf("failed to write PNG file '%s': %w", path, err)
+					return
+				}
+
+				if e.debug {
+					tflog.Debug(ctx, "Generated wireframe PNG", map[string]interface{}{
+						"path": path,
+						"size": len(pngData),
+					})
+				}
 			}
 
 			resultsMu.Lock()
 			generatedFiles = append(generatedFiles, path)
 			resultsMu.Unlock()
-
-			if e.debug {
-				tflog.Debug(ctx, "Generated wireframe image", map[string]interface{}{
-					"path": path,
-					"size": len(pngData),
-				})
-			}
 		}()
 	}
 
@@ -569,14 +892,30 @@ func (e *SVGExecutor) ExecuteWithPromptJSON(
 	return status, report, nil
 }
 
-// Query executes a simple query (delegates to Claude)
+// Query executes a simple query (creates temporary isolated home)
 func (e *SVGExecutor) Query(ctx context.Context, instructions []string, model string) (string, error) {
-	return e.claudeExecutor.Query(ctx, instructions, model)
+	// Create temporary isolated home for this query: sessionID + "query" suffix
+	isolatedHome, err := CreateIsolatedClaudeHome(e.originalClaudeHome, e.sessionID, "query")
+	if err != nil {
+		return "", fmt.Errorf("failed to create isolated home for query: %w", err)
+	}
+	defer isolatedHome.Cleanup()
+
+	executor := &Executor{
+		client:       NewClient(isolatedHome.Path(), e.dangerouslySkipPerms, e.maxTurns),
+		debug:        e.debug,
+		outputPath:   e.outputPath,
+		maxTurns:     e.maxTurns,
+		isolatedHome: nil,
+	}
+	return executor.Query(ctx, instructions, model)
 }
 
 // Validate checks if the executor is properly configured
 func (e *SVGExecutor) Validate(ctx context.Context) error {
-	return e.claudeExecutor.client.ValidateClaudeCodeAvailability(ctx)
+	// Create temporary client to validate (uses original home, read-only check)
+	client := NewClient(e.originalClaudeHome, e.dangerouslySkipPerms, e.maxTurns)
+	return client.ValidateClaudeCodeAvailability(ctx)
 }
 
 // RetryExecution retries execution (simple re-execution for SVG mode)

@@ -18,6 +18,7 @@ type FileModelWithPath struct {
 	Content       types.String
 	Instructions  []InstructionModel
 	Verifications []VerificationModel
+	Image         *ImageModel // Image generation config (size, quality)
 }
 
 // FilesMapToList converts a types.Map of files to a sorted list of FileModelWithPath
@@ -124,6 +125,31 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 			}
 		}
 
+		// Extract image config
+		var imageConfig *ImageModel
+		if imageVal, exists := attrs["image"]; exists {
+			if imageObj, ok := imageVal.(types.Object); ok && !imageObj.IsNull() {
+				imageAttrs := imageObj.Attributes()
+				img := &ImageModel{}
+
+				if sizeVal, exists := imageAttrs["size"]; exists {
+					if strVal, ok := sizeVal.(types.String); ok {
+						img.Size = strVal
+					}
+				}
+				if qualityVal, exists := imageAttrs["quality"]; exists {
+					if strVal, ok := qualityVal.(types.String); ok {
+						img.Quality = strVal
+					}
+				}
+
+				// Only set if at least one field is populated
+				if !img.Size.IsNull() || !img.Quality.IsNull() {
+					imageConfig = img
+				}
+			}
+		}
+
 		// Create FileModelWithPath
 		result = append(result, FileModelWithPath{
 			Path:          pathKey,
@@ -131,6 +157,7 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 			Content:       content,
 			Instructions:  instructions,
 			Verifications: verifications,
+			Image:         imageConfig,
 		})
 	}
 

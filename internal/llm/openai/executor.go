@@ -122,7 +122,10 @@ func (e *Executor) executeImageGeneration(ctx context.Context, projectSpec map[s
 			}
 
 			// Extract image config - prefer image block, fall back to constraint parsing
-			config := extractImageConfig(fileMap, e.model)
+			config := extractImageConfig(fileMap, e.model, e.debug)
+
+			// Infer output format from filename extension
+			config.Format = inferFormatFromExtension(path)
 
 			// Generate image
 			fmt.Printf("[OpenAI DEBUG] Generating image for path: %s\n", path)
@@ -241,20 +244,40 @@ func ensureImageExtension(filePath string, imageData []byte) string {
 	return filePath
 }
 
+// inferFormatFromExtension determines the output format based on filename extension
+func inferFormatFromExtension(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "jpeg"
+	case ".webp":
+		return "webp"
+	case ".png":
+		return "png"
+	default:
+		return "png" // Default to PNG for unknown extensions
+	}
+}
+
 // parseImageConfig extracts image configuration from constraints
 // Model is passed to set appropriate defaults:
-// - gpt-image-1*: quality=high/medium/low (default: high), no style support
+// - gpt-image-1*: quality=high/medium/low (default: high, or low in debug mode), no style support
 // - dall-e-3: quality=standard/hd (default: standard), style=vivid/natural (default: vivid)
 // - dall-e-2: no quality/style support
-func parseImageConfig(constraints []string, model string) ImageConfig {
+func parseImageConfig(constraints []string, model string, debug bool) ImageConfig {
 	config := ImageConfig{
 		Size: "1024x1024",
 	}
 
 	// Set model-appropriate defaults
+	// In debug mode, use "low" quality for faster/cheaper iteration
 	if strings.HasPrefix(model, "gpt-image") {
 		// gpt-image-1* models use high/medium/low quality, no style
-		config.Quality = "high"
+		if debug {
+			config.Quality = "low"
+		} else {
+			config.Quality = "high"
+		}
 		// Style is not supported, leave empty
 	} else if model == "dall-e-3" {
 		// DALL-E 3 uses standard/hd quality and vivid/natural style
@@ -288,7 +311,8 @@ func parseImageConfig(constraints []string, model string) ImageConfig {
 
 // extractImageConfig extracts image configuration from file specification
 // Prefers the 'image' block if present, falls back to parsing constraints
-func extractImageConfig(fileMap map[string]interface{}, model string) ImageConfig {
+// In debug mode, defaults to "low" quality for faster/cheaper iteration
+func extractImageConfig(fileMap map[string]interface{}, model string, debug bool) ImageConfig {
 	// Check for image block first
 	if imageBlock, ok := fileMap["image"].(map[string]interface{}); ok {
 		config := ImageConfig{
@@ -296,8 +320,13 @@ func extractImageConfig(fileMap map[string]interface{}, model string) ImageConfi
 		}
 
 		// Set model-appropriate quality defaults
+		// In debug mode, use "low" quality for faster/cheaper iteration
 		if strings.HasPrefix(model, "gpt-image") {
-			config.Quality = "high"
+			if debug {
+				config.Quality = "low"
+			} else {
+				config.Quality = "high"
+			}
 		} else if model == "dall-e-3" {
 			config.Quality = "standard"
 			config.Style = "vivid"
@@ -315,7 +344,7 @@ func extractImageConfig(fileMap map[string]interface{}, model string) ImageConfi
 	}
 
 	// Fall back to parsing constraints for backward compatibility
-	return parseImageConfig(extractConstraints(fileMap), model)
+	return parseImageConfig(extractConstraints(fileMap), model, debug)
 }
 
 // extractPromptText extracts the prompt text from file specification

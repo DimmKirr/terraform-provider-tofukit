@@ -25,6 +25,7 @@ import (
 	"github.com/tofukit/opentofu-provider-tofukit/internal/files"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/claude"
+	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/models"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/llm/openai"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/registry"
 	"github.com/tofukit/opentofu-provider-tofukit/internal/schemas"
@@ -2071,6 +2072,20 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 			fileData["verification"] = verifications
 		}
 
+		// Add image config if present (for image generation files)
+		if file.Image != nil {
+			imageData := map[string]interface{}{}
+			if !file.Image.Size.IsNull() && !file.Image.Size.IsUnknown() {
+				imageData["size"] = file.Image.Size.ValueString()
+			}
+			if !file.Image.Quality.IsNull() && !file.Image.Quality.IsUnknown() {
+				imageData["quality"] = file.Image.Quality.ValueString()
+			}
+			if len(imageData) > 0 {
+				fileData["image"] = imageData
+			}
+		}
+
 		files[file.Path] = fileData
 	}
 	// Always include files, even if empty, for consistency
@@ -2462,6 +2477,9 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		type openaiAdapterInterface interface {
 			GetOpenAIExecutor() *openai.Executor
 		}
+		type svgAdapterInterface interface {
+			GetSVGExecutor() *claude.SVGExecutor
+		}
 
 		// Get executor factory from provider
 		provData, hasFactory := r.ProviderData.(interface {
@@ -2470,6 +2488,17 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		if !hasFactory {
 			return fmt.Errorf("provider does not support GetExecutorForModel - cannot execute with per-file models")
 		}
+
+		// Get image_mode from provider (for wireframe mode)
+		imageMode := "normal"
+		if imgModeProvider, ok := r.ProviderData.(interface{ GetImageMode() string }); ok {
+			imageMode = imgModeProvider.GetImageMode()
+		}
+
+		// Get SVG executor interface for wireframe mode
+		svgExecProvider, hasSVGExec := r.ProviderData.(interface {
+			GetSVGExecutor() (llm.LLMExecutor, error)
+		})
 
 		// Initialize aggregated report
 		aggregatedReport = &files.VerificationReport{
@@ -2485,27 +2514,156 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			})
 
 			// Get executor for this model
-			executor, err := provData.GetExecutorForModel(group.Model)
-			if err != nil {
-				return fmt.Errorf("failed to get executor for model %s: %w", group.Model, err)
+			// Check if this is an image model and we're in wireframe mode
+			isImageModel := models.IsImageModel(group.Model)
+			potentialWireframeMode := isImageModel && imageMode == "wireframe" && hasSVGExec
+
+			// TFK-13: SVG files should always use main LLM executor (text generation), not wireframe
+			// If we're in potential wireframe mode and have mixed file types, split them
+			var svgFilesInGroup, rasterFilesInGroup []schemas.FileModelWithPath
+			if potentialWireframeMode {
+				svgFilesInGroup, rasterFilesInGroup = SplitSVGFromRasterFiles(group.Files)
+				if len(svgFilesInGroup) > 0 {
+					tflog.Info(ctx, "TFK-13: Found SVG files in image group - routing to text executor", map[string]interface{}{
+						"svg_file_count":    len(svgFilesInGroup),
+						"raster_file_count": len(rasterFilesInGroup),
+						"original_model":    group.Model,
+					})
+				}
 			}
 
-			// Filter outputData to only include files for this group
-			groupOutputData := r.filterOutputDataForFiles(outputData, group.Files)
+			// Process SVG files with default Claude executor first (if any)
+			if len(svgFilesInGroup) > 0 {
+				// Use provider's default model (Claude) for SVG text generation
+				defaultModel := providerModel
+				if defaultModel == "" {
+					defaultModel = "anthropic/claude-sonnet-4-20250514" // Fallback default
+				}
+				svgExecutor, svgErr := provData.GetExecutorForModel(defaultModel)
+				if svgErr != nil {
+					return fmt.Errorf("failed to get executor for SVG files: %w", svgErr)
+				}
+
+				svgGroupData := r.filterOutputDataForFiles(outputData, svgFilesInGroup)
+				svgPromptJSON, jsonErr := r.generatePromptJSON(ctx, svgGroupData, systemPrompt)
+				if jsonErr != nil {
+					return fmt.Errorf("failed to generate prompt for SVG files: %w", jsonErr)
+				}
+
+				// Write debug prompt if enabled
+				if debug {
+					debugDir := filepath.Join(outputPath, ".debug")
+					if err := os.MkdirAll(debugDir, 0755); err == nil {
+						timestamp := time.Now().Format("20060102-150405")
+						promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-svg-files-%s.json", timestamp))
+						_ = os.WriteFile(promptPath, []byte(svgPromptJSON), 0644)
+					}
+				}
+
+				tflog.Info(ctx, "Executing SVG files with text executor", map[string]interface{}{
+					"file_count": len(svgFilesInGroup),
+				})
+
+				svgVerifications := append([]schemas.FileModelWithPath{}, svgFilesInGroup...)
+				svgVerifications = append(svgVerifications, kitVerifications...)
+
+				if adapter, ok := svgExecutor.(claudeAdapterInterface); ok {
+					claudeExec := adapter.GetClaudeExecutor()
+					_, svgReport, execErr := claudeExec.ExecuteWithPromptJSON(ctx, svgPromptJSON, outputPath, svgVerifications, maxRetries)
+					if execErr != nil {
+						return fmt.Errorf("failed to execute SVG files: %w", execErr)
+					}
+					if svgReport != nil && !svgReport.AllPassed {
+						aggregatedReport.AllPassed = false
+						aggregatedReport.FailedCount += svgReport.FailedCount
+						aggregatedReport.Results = append(aggregatedReport.Results, svgReport.Results...)
+					}
+				}
+			}
+
+			// Determine what files remain for this group's normal processing
+			filesToProcess := group.Files
+			if len(svgFilesInGroup) > 0 {
+				// Only process raster files with this group's executor
+				filesToProcess = rasterFilesInGroup
+				if len(filesToProcess) == 0 {
+					// All files were SVG - skip to next group
+					tflog.Debug(ctx, "All files in group were SVG - already processed", map[string]interface{}{
+						"model": group.Model,
+					})
+					continue
+				}
+			}
+
+			// Determine if we should use wireframe mode for remaining files
+			useWireframeMode := potentialWireframeMode && len(filesToProcess) > 0 && len(svgFilesInGroup) == 0 ||
+				(potentialWireframeMode && len(rasterFilesInGroup) > 0)
+
+			var executor llm.LLMExecutor
+			var err error
+
+			if useWireframeMode {
+				// Use SVG executor for wireframe mode - generates SVG with Claude, converts to PNG
+				executor, err = svgExecProvider.GetSVGExecutor()
+				if err != nil {
+					return fmt.Errorf("failed to get SVG executor for wireframe mode: %w", err)
+				}
+				tflog.Info(ctx, "Using wireframe mode (Claude SVG) for raster image generation", map[string]interface{}{
+					"original_model": group.Model,
+					"file_count":     len(filesToProcess),
+				})
+			} else {
+				// Use normal executor for the specified model
+				executor, err = provData.GetExecutorForModel(group.Model)
+				if err != nil {
+					return fmt.Errorf("failed to get executor for model %s: %w", group.Model, err)
+				}
+			}
+
+			// Filter outputData to only include files for this group (or remaining raster files)
+			groupOutputData := r.filterOutputDataForFiles(outputData, filesToProcess)
 
 			// Generate prompt JSON for this group
-			promptJSON, err := r.generatePromptJSON(ctx, groupOutputData, systemPrompt)
-			if err != nil {
-				return fmt.Errorf("failed to generate prompt for model group %s: %w", group.Model, err)
+			// KIRR-126: For OpenAI image models, use simple prompt structure without Claude's system prompt
+			var promptJSON string
+			var promptPrefix string // For debug file naming
+
+			isOpenAIImageModel := strings.HasPrefix(group.Model, "openai/") && isImageModel
+			if isOpenAIImageModel && !useWireframeMode {
+				// Simple prompt for OpenAI image generation - just the files with their instructions
+				// No Claude system prompt or project implementation instructions needed
+				simplePrompt := map[string]interface{}{
+					"files": groupOutputData["files"],
+				}
+				promptBytes, jsonErr := json.MarshalIndent(simplePrompt, "", "  ")
+				if jsonErr != nil {
+					return fmt.Errorf("failed to generate simple prompt for OpenAI image model %s: %w", group.Model, jsonErr)
+				}
+				promptJSON = string(promptBytes)
+				promptPrefix = "openai"
+
+				tflog.Debug(ctx, "Using simple prompt for OpenAI image model", map[string]interface{}{
+					"model":       group.Model,
+					"file_count":  len(filesToProcess),
+					"prompt_size": len(promptJSON),
+				})
+			} else {
+				// Use Claude prompt builder for non-image models
+				var jsonErr error
+				promptJSON, jsonErr = r.generatePromptJSON(ctx, groupOutputData, systemPrompt)
+				if jsonErr != nil {
+					return fmt.Errorf("failed to generate prompt for model group %s: %w", group.Model, jsonErr)
+				}
+				promptPrefix = "claude"
 			}
 
 			// Collect verifications for this group's files + kit verifications
-			groupVerifications := append([]schemas.FileModelWithPath{}, group.Files...)
+			groupVerifications := append([]schemas.FileModelWithPath{}, filesToProcess...)
 			groupVerifications = append(groupVerifications, kitVerifications...)
 
 			tflog.Debug(ctx, "Collected verifications for group", map[string]interface{}{
 				"group_model":         group.Model,
-				"file_verifications":  len(group.Files),
+				"file_verifications":  len(filesToProcess),
 				"kit_verifications":   len(kitVerifications),
 				"total_verifications": len(groupVerifications),
 			})
@@ -2517,7 +2675,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 					timestamp := time.Now().Format("20060102-150405")
 					// Sanitize model name for filename
 					modelFilename := strings.ReplaceAll(group.Model, "/", "-")
-					promptPath := filepath.Join(debugDir, fmt.Sprintf("claude-prompt-attempt1-%s-%s.json", modelFilename, timestamp))
+					promptPath := filepath.Join(debugDir, fmt.Sprintf("%s-prompt-attempt1-%s-%s.json", promptPrefix, modelFilename, timestamp))
 					if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err == nil {
 						tflog.Debug(ctx, "Wrote prompt JSON", map[string]interface{}{"path": promptPath})
 					}
@@ -2549,6 +2707,10 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 				executorType = "OpenAI"
 				openaiExecutor := adapter.GetOpenAIExecutor()
 				status, report, err = openaiExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
+			} else if adapter, ok := executor.(svgAdapterInterface); ok {
+				executorType = "SVG/Wireframe"
+				svgExecutor := adapter.GetSVGExecutor()
+				status, report, err = svgExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
 			} else {
 				return fmt.Errorf("executor for model %s does not support ExecuteWithPromptJSON", group.Model)
 			}
@@ -5655,6 +5817,21 @@ func (r *ProjectResourceFinal) groupFilesByModel(ctx context.Context, files []sc
 	})
 
 	return groups
+}
+
+// SplitSVGFromRasterFiles separates .svg files from raster image files (.png, .jpg, .jpeg)
+// This is used in wireframe mode to route SVG files to text executor while raster files use wireframe
+// TFK-13: SVG files should always use main LLM executor (text generation)
+func SplitSVGFromRasterFiles(files []schemas.FileModelWithPath) (svgFiles, rasterFiles []schemas.FileModelWithPath) {
+	for _, file := range files {
+		ext := strings.ToLower(filepath.Ext(file.Path))
+		if ext == ".svg" {
+			svgFiles = append(svgFiles, file)
+		} else {
+			rasterFiles = append(rasterFiles, file)
+		}
+	}
+	return svgFiles, rasterFiles
 }
 
 // filterOutputDataForFiles creates a copy of outputData with only the specified files

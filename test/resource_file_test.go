@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	_ "image/png"
 	"os"
@@ -900,12 +901,154 @@ resource "tofukit_project" "labs" {
 	require.Equal(t, 1024, img.Bounds().Dy(), "[Step5] Image height should be 1024")
 	t.Log("[Step5] ui_weather_sun.png: Valid 1024x1024 image - confirms file.model (openai/gpt-image-1-mini) overrides project.model (anthropic/claude-haiku)")
 
-	t.Log("✓ All 5 model resolution scenarios tested")
+	// Cleanup before next step
+	cleanupStep(t, "Step5")
+
+	// ============================================================
+	// STEP 6: Multiple image files in single project (KIRR-126 bug reproduction)
+	// - 3 image files, all using openai/gpt-image-1-mini
+	// - Expected: ALL images are generated (not just 1)
+	// - Expected: Debug prompts are small (~1KB each, NOT 292KB)
+	// - Expected: No "software architect" system prompt in debug files
+	// ============================================================
+	t.Log("=== STEP 6: Multiple image files in single project (KIRR-126) ===")
+	t.Log("NOTE: Testing that ALL images are generated when project has multiple image files")
+
+	config6 := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+resource "tofukit_file" "red_square" {
+  name = "red_square.png"
+
+  instructions = [{
+    prompt = "A solid red square on white background. Simple geometric shape, flat color, no gradients."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_file" "blue_circle" {
+  name = "blue_circle.png"
+
+  instructions = [{
+    prompt = "A solid blue circle on white background. Simple geometric shape, flat color, no gradients."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_file" "green_triangle" {
+  name = "green_triangle.png"
+
+  instructions = [{
+    prompt = "A solid green triangle on white background. Simple geometric shape, flat color, no gradients."
+  }]
+
+  image = {
+    size    = "1024x1024"
+    quality = "low"
+  }
+
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_project" "multi_image" {
+  name        = "multi-image-test"
+  description = "Test multiple images in single project"
+  version     = "1.0.0"
+
+  files = {
+    "red_square.png"    = tofukit_file.red_square
+    "blue_circle.png"   = tofukit_file.blue_circle
+    "green_triangle.png" = tofukit_file.green_triangle
+  }
+}
+`
+
+	err = os.WriteFile(configPath, []byte(config6), 0644)
+	require.NoError(t, err)
+
+	// Run terraform apply
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify ALL 3 images were created
+	imageFiles := []string{"red_square.png", "blue_circle.png", "green_triangle.png"}
+	for _, imgName := range imageFiles {
+		imgPath := filepath.Join(testDir, "output", imgName)
+		require.FileExists(t, imgPath, "[Step6] %s should exist", imgName)
+
+		imgFile, err := os.Open(imgPath)
+		require.NoError(t, err, "[Step6] Could not open %s", imgName)
+
+		img, _, err := image.Decode(imgFile)
+		imgFile.Close()
+		require.NoError(t, err, "[Step6] %s is not a valid image", imgName)
+		require.Equal(t, 1024, img.Bounds().Dx(), "[Step6] %s width should be 1024", imgName)
+		require.Equal(t, 1024, img.Bounds().Dy(), "[Step6] %s height should be 1024", imgName)
+
+		t.Logf("[Step6] %s: Valid 1024x1024 image generated", imgName)
+	}
+
+	// Verify debug prompts are small (not 292KB) and don't contain wrong system prompt
+	debugDir := filepath.Join(testDir, "output", ".debug")
+	debugFiles, err := os.ReadDir(debugDir)
+	if err == nil {
+		for _, df := range debugFiles {
+			if strings.HasSuffix(df.Name(), ".json") {
+				debugPath := filepath.Join(debugDir, df.Name())
+				debugContent, err := os.ReadFile(debugPath)
+				if err != nil {
+					continue
+				}
+
+				// Check size - should be small (~1KB for image prompts, not 292KB)
+				sizeKB := len(debugContent) / 1024
+				if sizeKB > 50 {
+					t.Errorf("[Step6] Debug file %s is too large: %dKB (should be <50KB for image prompts)", df.Name(), sizeKB)
+				} else {
+					t.Logf("[Step6] Debug file %s size: %dKB (OK)", df.Name(), sizeKB)
+				}
+
+				// Check for wrong system prompt
+				contentStr := string(debugContent)
+				if strings.Contains(contentStr, "senior software architect") {
+					t.Errorf("[Step6] Debug file %s contains wrong system prompt 'senior software architect' - image generation should not use Claude project prompt", df.Name())
+				}
+			}
+		}
+	}
+
+	t.Log("[Step6] All 3 images generated successfully")
+
+	t.Log("✓ All 6 model resolution scenarios tested")
 	t.Log("  Step 1: Both file.model and project.model set - uses file.model")
 	t.Log("  Step 2: Only file.model set - uses file.model")
 	t.Log("  Step 3: file.model and project.model differ - uses file.model (precedence)")
 	t.Log("  Step 4: Multiple files with different models - each uses its own model")
 	t.Log("  Step 5: file.model (OpenAI) overrides project.model (Claude) - cross-provider precedence works")
+	t.Log("  Step 6: Multiple image files in project - all images generated with correct prompts (KIRR-126)")
 }
 
 // averageBrightness calculates the average brightness (0-255) for a horizontal slice of the image
@@ -928,4 +1071,349 @@ func averageBrightness(img image.Image, yStart, yEnd int) float64 {
 		return 0
 	}
 	return total / float64(pixels)
+}
+
+// TestResourceFile_WireframeImage verifies wireframe mode image generation
+// Uses Claude to generate SVG wireframe, then converts to PNG
+// This mode does NOT require OpenAI API key - uses Claude for SVG generation
+func TestResourceFile_WireframeImage(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_Wireframe")
+
+	// Detect IaC tool (terraform or tofu)
+	iacTool := detectIaCTool(t)
+
+	// Helper function to verify wireframe image generation
+	verifyWireframeImage := func(t *testing.T, imagePath string, expectedWidth, expectedHeight int) {
+		require.FileExists(t, imagePath, "Generated wireframe image should exist")
+
+		// Open and decode image
+		file, err := os.Open(imagePath)
+		require.NoError(t, err)
+		defer file.Close()
+
+		img, format, err := image.Decode(file)
+		require.NoError(t, err)
+		assert.Equal(t, "png", format, "Wireframe image should be PNG format")
+
+		// Verify image dimensions
+		bounds := img.Bounds()
+		width := bounds.Dx()
+		height := bounds.Dy()
+		t.Logf("Wireframe image dimensions: %dx%d", width, height)
+
+		// Check dimensions are as expected
+		assert.Equal(t, expectedWidth, width, "Wireframe image width should match")
+		assert.Equal(t, expectedHeight, height, "Wireframe image height should match")
+
+		// Verify image has some content (not entirely blank)
+		// Calculate average brightness to ensure it's not all black or all white
+		totalPixels := width * height
+		var totalBrightness float64
+
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				r, g, b, _ := img.At(x, y).RGBA()
+				brightness := (float64(r>>8) + float64(g>>8) + float64(b>>8)) / 3.0
+				totalBrightness += brightness
+			}
+		}
+
+		avgBrightness := totalBrightness / float64(totalPixels)
+		t.Logf("Wireframe average brightness: %.2f (0=black, 255=white)", avgBrightness)
+
+		// Wireframe should have some variation (not all black or all white)
+		// A valid SVG wireframe should have brightness between 10 and 245
+		assert.Greater(t, avgBrightness, 5.0, "Wireframe should not be entirely black")
+		assert.Less(t, avgBrightness, 250.0, "Wireframe should not be entirely white")
+
+		t.Logf("✓ Wireframe generation successful: verified %dx%d PNG with avg brightness %.2f", width, height, avgBrightness)
+	}
+
+	// ============================================================
+	// TEST: Wireframe mode generates SVG wireframe and converts to PNG
+	// Uses image_mode = "wireframe" in provider config
+	// ============================================================
+	t.Log("=== Testing wireframe mode (Claude SVG -> PNG) ===")
+
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  image_mode  = "wireframe"
+}
+
+resource "tofukit_file" "portrait" {
+  name = "portrait.png"
+
+  instructions = [{
+    prompt = "A portrait of a wizard with a long beard, pointed hat, and a staff. The wizard is standing in front of a mystical forest with glowing mushrooms."
+  }]
+
+  image = {
+    size = "512x512"
+  }
+
+  # Use an OpenAI image model - but wireframe mode will intercept and use Claude SVG instead
+  model = "openai/gpt-image-1-mini"
+}
+
+resource "tofukit_project" "test" {
+  name    = "wireframe-test"
+  version = "1.0.0"
+
+  files = {
+    "portrait.png" = tofukit_file.portrait
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "main.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Run terraform init
+	runTerraformInit(t, iacTool, testDir)
+
+	// Run terraform apply
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify wireframe image was created with the size specified in file's image block
+	imagePath := filepath.Join(testDir, "output", "portrait.png")
+	verifyWireframeImage(t, imagePath, 512, 512)
+
+	// Check if SVG was saved in debug mode (now in .debug/ directory)
+	debugDir := filepath.Join(testDir, "output", ".debug")
+	if _, err := os.Stat(debugDir); !os.IsNotExist(err) {
+		// Look for SVG file in .debug/ directory (saved when debug=true)
+		svgPath := filepath.Join(debugDir, "portrait.svg")
+		if _, err := os.Stat(svgPath); !os.IsNotExist(err) {
+			t.Log("✓ SVG intermediate file found in .debug/ directory")
+		}
+	}
+
+	// Cleanup
+	runTerraformDestroy(t, iacTool, testDir)
+
+	t.Log("✓ Wireframe mode test completed successfully")
+}
+
+// TestResourceFile_WireframeSVGGenerationSuccess tests SVG generation via wireframe mode
+// Tests the SVG feedback loop (TFK-11 Option B) where invalid SVGs are sent back to Claude for correction
+// Uses Claude Haiku for SVG generation via wireframe mode
+func TestResourceFile_WireframeSVGGenerationSuccess(t *testing.T) {
+	// This test requires Claude to be available for wireframe SVG generation
+	// No OpenAI API key needed - uses Claude CLI
+
+	testCases := []struct {
+		name           string
+		fileName       string
+		expectedFormat string
+		expectedWidth  int
+		expectedHeight int
+		prompt         string
+	}{
+		{
+			name:           "SVG_ReactIcon",
+			fileName:       "react-icon.svg",
+			expectedFormat: "svg",
+			expectedWidth:  512,
+			expectedHeight: 512,
+			prompt: `**CRITICAL: EXECUTE IMMEDIATELY. DO NOT ASK QUESTIONS.**
+
+**Style:** Technology brand logo/icon with React official color scheme
+
+**Composition:**
+- Square icon format: centered blue atom/electron structure
+- 60% cyan blue (#61DAFB) occupying center space
+- Central nucleus circle surrounded by three elliptical electron orbits
+- Electron orbits at 120-degree angles creating balanced composition
+- Clean lines, minimal design, modern JavaScript library aesthetic
+- High contrast: bright cyan on dark/transparent background
+- Scalable vector-style design
+- Professional technology branding look
+
+**Generation Prompt:**
+
+Create a technology brand icon for React. Design a square icon featuring the distinctive React atom logo. Use a central circle nucleus in cyan blue (#61DAFB or similar React blue) at the center of the composition. Around this nucleus, create three elliptical electron orbit paths positioned at 120-degree angles from each other, creating a balanced, symmetrical design. The orbits should be simple curved lines in the same cyan blue color.`,
+		},
+		{
+			name:           "PNG_BrainIllustration",
+			fileName:       "brain-lifting.png",
+			expectedFormat: "png",
+			expectedWidth:  512,
+			expectedHeight: 512,
+			prompt: `**CRITICAL: EXECUTE IMMEDIATELY. DO NOT ASK QUESTIONS.**
+
+**Style:** Flat design animated character illustration with cartoon aesthetic, friendly and approachable style
+
+**Composition:**
+- Square composition: 20% white top padding, 60% character, 20% white bottom padding
+- Centered character at approximately 60% of frame height
+- Pink brain shape as character head, 25% of character height
+- Rounded, organic brain contour with subtle ridge texture
+- Dark eyes (simple dots or ovals) positioned at 40% of head height
+- Pink arms extended outward and upward
+- Dark gray metal dumbbells in each hand
+- Warm pink/magenta color (#FF69B4 or similar) for brain and body
+- Dark gray (#4A4A4A) for dumbbells and accent features
+- Clean white background
+
+**Generation Prompt:**
+
+Create a flat design character illustration of a friendly cartoon brain lifting dumbbells. The composition should be square with the character centered. The character should be a large rounded pink brain shape. Use warm pink/magenta color (#FF69B4 or similar) for the brain and body. Use dark gray (#4A4A4A) for the dumbbells. The background should be clean white.`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testDir := createTestDirectory(t, "TestResourceFile_WireframeSVG_"+tc.name)
+
+			// Detect IaC tool
+			iacTool := detectIaCTool(t)
+
+			// Build configuration
+			config := fmt.Sprintf(`
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  image_mode  = "wireframe"
+}
+
+resource "tofukit_file" "test_image" {
+  name = "%s"
+
+  instructions = [{
+    prompt = <<-PROMPT
+%s
+    PROMPT
+  }]
+
+  image = {
+    size = "%dx%d"
+  }
+
+  # Model is intercepted by wireframe mode - Claude is used for SVG generation
+  model = "openai/gpt-image-1"
+}
+
+resource "tofukit_project" "test" {
+  name    = "wireframe-svg-test"
+  version = "1.0.0"
+
+  files = {
+    "%s" = tofukit_file.test_image
+  }
+}
+`, tc.fileName, tc.prompt, tc.expectedWidth, tc.expectedHeight, tc.fileName)
+
+			configPath := filepath.Join(testDir, "main.tofu")
+			err := os.WriteFile(configPath, []byte(config), 0644)
+			require.NoError(t, err)
+
+			// Run terraform init and apply
+			runTerraformInit(t, iacTool, testDir)
+			runTerraformApply(t, iacTool, testDir)
+
+			// Verify output file exists
+			outputPath := filepath.Join(testDir, "output", tc.fileName)
+			require.FileExists(t, outputPath, "Generated file should exist: %s", tc.fileName)
+
+			// Verify file format and content
+			if tc.expectedFormat == "svg" {
+				// Read SVG content and verify it's valid XML
+				content, err := os.ReadFile(outputPath)
+				require.NoError(t, err, "Should be able to read SVG file")
+
+				svgStr := string(content)
+				assert.Contains(t, svgStr, "<svg", "SVG file should contain <svg tag")
+				assert.Contains(t, svgStr, "</svg>", "SVG file should contain closing </svg> tag")
+				assert.Contains(t, svgStr, "xmlns", "SVG should have xmlns attribute")
+
+				// Check that SVG has proper dimensions
+				assert.True(t,
+					strings.Contains(svgStr, fmt.Sprintf(`width="%d"`, tc.expectedWidth)) ||
+						strings.Contains(svgStr, fmt.Sprintf(`width='%d'`, tc.expectedWidth)) ||
+						strings.Contains(svgStr, `viewBox`),
+					"SVG should have width attribute or viewBox")
+
+				t.Logf("✓ SVG file generated: %d bytes, contains valid SVG structure", len(content))
+
+			} else if tc.expectedFormat == "png" {
+				// Open and decode PNG image
+				file, err := os.Open(outputPath)
+				require.NoError(t, err, "Should be able to open PNG file")
+				defer file.Close()
+
+				img, format, err := image.Decode(file)
+				require.NoError(t, err, "PNG file should be decodable - SVG feedback loop should have produced valid SVG for conversion")
+				assert.Equal(t, "png", format, "File should be PNG format")
+
+				// Verify dimensions
+				bounds := img.Bounds()
+				assert.Equal(t, tc.expectedWidth, bounds.Dx(), "Image width should match")
+				assert.Equal(t, tc.expectedHeight, bounds.Dy(), "Image height should match")
+
+				// Verify image has content (not blank)
+				var totalBrightness float64
+				totalPixels := bounds.Dx() * bounds.Dy()
+				for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+					for x := bounds.Min.X; x < bounds.Max.X; x++ {
+						r, g, b, _ := img.At(x, y).RGBA()
+						brightness := (float64(r>>8) + float64(g>>8) + float64(b>>8)) / 3.0
+						totalBrightness += brightness
+					}
+				}
+				avgBrightness := totalBrightness / float64(totalPixels)
+
+				assert.Greater(t, avgBrightness, 5.0, "Image should not be entirely black")
+				assert.Less(t, avgBrightness, 250.0, "Image should not be entirely white")
+
+				t.Logf("✓ PNG file generated: %dx%d, avg brightness: %.2f", bounds.Dx(), bounds.Dy(), avgBrightness)
+			}
+
+			// Check debug directory for SVG intermediate files
+			debugDir := filepath.Join(testDir, "output", ".debug")
+			if _, err := os.Stat(debugDir); !os.IsNotExist(err) {
+				// Look for SVG debug files
+				debugFiles, _ := os.ReadDir(debugDir)
+				for _, df := range debugFiles {
+					if strings.HasSuffix(df.Name(), ".svg") {
+						t.Logf("✓ Found SVG debug file: %s", df.Name())
+					}
+					if strings.Contains(df.Name(), ".failed.svg") {
+						// If there's a failed SVG, the feedback loop was triggered
+						t.Logf("ℹ Found failed SVG attempt (feedback loop triggered): %s", df.Name())
+					}
+					if strings.Contains(df.Name(), ".attempt") {
+						t.Logf("ℹ Found retry attempt file: %s", df.Name())
+					}
+				}
+			}
+
+			// NOTE: Do NOT run terraform destroy - keep output files for inspection
+			// The test directory cleanup is handled by t.Cleanup() in createTestDirectory
+			// which only runs if CLEANUP_TEST_OUTPUT=true
+
+			t.Logf("✓ Wireframe %s generation test completed successfully", tc.expectedFormat)
+			t.Logf("  Output preserved at: %s/output/", testDir)
+		})
+	}
 }

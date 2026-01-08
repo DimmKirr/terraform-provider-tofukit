@@ -30,6 +30,7 @@ type TofukitProviderModel struct {
 	OutputFormat               types.String `tfsdk:"output_format"`
 	OutputPath                 types.String `tfsdk:"output_path"`
 	Model                      types.String `tfsdk:"model"`
+	ImageMode                  types.String `tfsdk:"image_mode"`
 	OpenAIAPIKey               types.String `tfsdk:"openai_api_key"`
 	GoogleAPIKey               types.String `tfsdk:"google_api_key"`
 	MetaAPIKey                 types.String `tfsdk:"meta_api_key"`
@@ -37,6 +38,7 @@ type TofukitProviderModel struct {
 	Debug                      types.Bool   `tfsdk:"debug"`
 	MaxRetries                 types.Int64  `tfsdk:"max_retries"`
 	ClaudeMaxTurns             types.Int64  `tfsdk:"claude_max_turns"`
+	MaxConcurrentClaudeCalls   types.Int64  `tfsdk:"max_concurrent_claude_calls"`
 	DangerouslySkipPermissions types.Bool   `tfsdk:"dangerously_skip_permissions"`
 	DryRun                     types.Bool   `tfsdk:"dry_run"`
 }
@@ -59,6 +61,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 			},
 			"model": schema.StringAttribute{
 				MarkdownDescription: "Model to use in provider/model format (e.g., anthropic/claude-sonnet-4.5, openai/gpt-5.2). Default: anthropic/claude-sonnet-4.5",
+				Optional:            true,
+			},
+			"image_mode": schema.StringAttribute{
+				MarkdownDescription: "Image generation mode: 'normal' uses OpenAI's image API for photorealistic images, 'wireframe' uses Claude to generate SVG wireframes/schematics then converts to PNG (default: 'normal'). The 'wireframe' mode generates a composition layout as if creating a wireframe for an artist.",
 				Optional:            true,
 			},
 			"openai_api_key": schema.StringAttribute{
@@ -92,6 +98,10 @@ func (p *TofukitProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Maximum turns for Claude CLI execution (default: 100). Only applies to anthropic models. Higher values allow more complex projects but take longer. A 'turn' is one user message + Claude's response(s).",
 				Optional:            true,
 			},
+			"max_concurrent_claude_calls": schema.Int64Attribute{
+				MarkdownDescription: "Maximum concurrent Claude CLI calls for batch operations like wireframe image generation (default: 4). Limits parallel execution to prevent config file corruption.",
+				Optional:            true,
+			},
 			"dangerously_skip_permissions": schema.BoolAttribute{
 				MarkdownDescription: "Skip Claude CLI permission prompts (default: true). When enabled, Claude can create/modify files without prompting. When combined with --add-dir, Claude's access is still restricted to the output directory.",
 				Optional:            true,
@@ -117,6 +127,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 	outputFormat := "json"
 	outputPath := "./"
 	modelStr := "anthropic/claude-sonnet-4.5"
+	imageMode := "normal" // "normal" = OpenAI image API, "wireframe" = Claude SVG
 	claudeHomeDir := "~/.claude"
 	debug := false
 	maxRetries := 3
@@ -183,12 +194,32 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		}
 	}
 
+	maxConcurrentClaudeCalls := 4
+	if !data.MaxConcurrentClaudeCalls.IsNull() {
+		maxConcurrentClaudeCalls = int(data.MaxConcurrentClaudeCalls.ValueInt64())
+		if maxConcurrentClaudeCalls < 1 {
+			maxConcurrentClaudeCalls = 1
+		}
+	}
+
 	if !data.DangerouslySkipPermissions.IsNull() {
 		dangerouslySkipPermissions = data.DangerouslySkipPermissions.ValueBool()
 	}
 
 	if !data.DryRun.IsNull() {
 		dryRun = data.DryRun.ValueBool()
+	}
+
+	if !data.ImageMode.IsNull() {
+		imageMode = data.ImageMode.ValueString()
+		// Validate image_mode value
+		if imageMode != "normal" && imageMode != "wireframe" {
+			resp.Diagnostics.AddError(
+				"Invalid Image Mode",
+				fmt.Sprintf("image_mode must be 'normal' or 'wireframe', got '%s'", imageMode),
+			)
+			return
+		}
 	}
 
 	// Validate unbuffer for Claude/Anthropic provider
@@ -210,6 +241,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		metaAPIKey,
 		dangerouslySkipPermissions,
 		claudeMaxTurns,
+		maxConcurrentClaudeCalls,
 		debug,
 		outputPath,
 	)
@@ -229,6 +261,7 @@ func (p *TofukitProvider) Configure(ctx context.Context, req provider.ConfigureR
 		OutputFormat:               outputFormat,
 		OutputPath:                 outputPath,
 		Model:                      modelStr,
+		ImageMode:                  imageMode,
 		ClaudeHomeDirectory:        claudeHomeDir,
 		Debug:                      debug,
 		MaxRetries:                 maxRetries,
@@ -276,6 +309,7 @@ type ProviderData struct {
 	OutputFormat               string
 	OutputPath                 string
 	Model                      string // Model in provider/model format
+	ImageMode                  string // Image generation mode: "normal" (OpenAI) or "wireframe" (Claude SVG)
 	ClaudeHomeDirectory        string
 	Debug                      bool
 	MaxRetries                 int
@@ -347,9 +381,19 @@ func (p *ProviderData) GetModel() string {
 	return p.Model
 }
 
+// GetImageMode returns the image generation mode ("normal" or "wireframe")
+func (p *ProviderData) GetImageMode() string {
+	return p.ImageMode
+}
+
 // GetExecutorFactory returns the executor factory
 func (p *ProviderData) GetExecutorFactory() *ExecutorFactory {
 	return p.ExecutorFactory
+}
+
+// GetSVGExecutor returns the SVG executor for wireframe mode
+func (p *ProviderData) GetSVGExecutor() (llm.LLMExecutor, error) {
+	return p.ExecutorFactory.GetSVGExecutor()
 }
 
 // GetExecutorForModel creates an executor for the specified model
