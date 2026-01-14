@@ -42,7 +42,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "hello" {
-  name    = "hello.txt"
+  name    = "hello"
+  path    = "hello.txt"
   content = "Hello World"
 }
 
@@ -110,7 +111,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "hello" {
-  name    = "hello.txt"
+  name    = "hello"
+  path    = "hello.txt"
   content = "Hello World"
 }
 
@@ -221,9 +223,145 @@ resource "tofukit_project" "test" {
 	t.Log("✓✓✓ File drift detection and restoration completed successfully!")
 }
 
-// TestResourceFileNameValidation_ValidNames tests that valid file names are accepted
-func TestResourceFileNameValidation_ValidNames(t *testing.T) {
-	validNames := []string{
+// TestResourceFile_DriftDetection_DeletedFile verifies drift detection when a file is deleted
+// This is the TFK-19 regression test - ensure deleted files are detected even when no hash is stored
+func TestResourceFile_DriftDetection_DeletedFile(t *testing.T) {
+	os.Setenv("TF_LOG", "DEBUG")
+	defer os.Unsetenv("TF_LOG")
+
+	testDir := createTestDirectory(t, "TestResourceFile_DriftDetection_DeletedFile")
+
+	var err error
+
+	// Create project configuration with file resource
+	projectTofuContent := `# Terraform configuration for TFK-19 file deletion drift detection test
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_format = "json"
+  output_path   = "output"
+  debug         = true
+}
+
+resource "tofukit_file" "hello" {
+  name    = "hello"
+  path    = "hello.txt"
+  content = "Hello World"
+}
+
+resource "tofukit_project" "test" {
+  name    = "file-deletion-drift-test"
+  version = "1.0.0"
+
+  files = {
+    "hello.txt" = tofukit_file.hello
+  }
+}
+`
+
+	projectTofuPath := filepath.Join(testDir, "project.tofu")
+	err = os.WriteFile(projectTofuPath, []byte(projectTofuContent), 0644)
+	require.NoError(t, err, "Failed to write project.tofu")
+
+	// Step 1: Initialize and apply
+	iacTool := detectIaCTool(t)
+
+	initCmd := exec.Command(iacTool, "init")
+	initCmd.Dir = testDir
+	initOutput, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "init failed: %s", string(initOutput))
+
+	applyCmd := exec.Command(iacTool, "apply", "-auto-approve")
+	applyCmd.Dir = testDir
+	applyOutput, err := applyCmd.CombinedOutput()
+	require.NoError(t, err, "apply failed: %s", string(applyOutput))
+
+	t.Log("✓ Initial apply completed")
+
+	// Verify initial file exists
+	helloPath := filepath.Join(testDir, "output", "hello.txt")
+	content, err := os.ReadFile(helloPath)
+	require.NoError(t, err, "Failed to read hello.txt")
+	assert.Equal(t, "Hello World", string(content), "Initial file content should match")
+
+	// Step 2: Verify initial state has no drift
+	showCmd := exec.Command(iacTool, "show", "-json")
+	showCmd.Dir = testDir
+	showOutput, err := showCmd.CombinedOutput()
+	require.NoError(t, err, "show failed: %s", string(showOutput))
+
+	stateJSON := string(showOutput)
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "Initial state should have drift_detected=false")
+
+	t.Log("✓ Initial state verified - no drift")
+
+	// Step 3: TFK-19 - DELETE the file (simulating external deletion)
+	err = os.Remove(helloPath)
+	require.NoError(t, err, "Failed to delete hello.txt")
+
+	// Verify file is actually deleted
+	_, err = os.Stat(helloPath)
+	require.True(t, os.IsNotExist(err), "hello.txt should be deleted")
+
+	t.Log("✓ Deleted hello.txt (simulating external deletion)")
+
+	// Step 4: Run plan to detect drift from file deletion
+	planCmd := exec.Command(iacTool, "plan", "-detailed-exitcode")
+	planCmd.Dir = testDir
+	planOutput, planErr := planCmd.CombinedOutput() // Expecting exit code 2 (changes detected)
+
+	planOutputStr := string(planOutput)
+	t.Logf("Plan output:\n%s", planOutputStr)
+
+	// TFK-19 FIX: Plan should detect that the file was deleted (drift)
+	// Exit code 2 means changes are present
+	if planErr != nil {
+		// Exit code 2 is expected - it means changes detected
+		assert.Contains(t, planOutputStr, "drift_detected", "Plan should show drift_detected change for deleted file")
+	}
+	assert.Contains(t, planOutputStr, "hello.txt", "Plan should mention hello.txt as affected")
+
+	t.Log("✓ Plan detected drift from file deletion (TFK-19 fix verified)")
+
+	// Step 5: Apply to regenerate the deleted file
+	applyCmd = exec.Command(iacTool, "apply", "-auto-approve")
+	applyCmd.Dir = testDir
+	applyOutput, err = applyCmd.CombinedOutput()
+	require.NoError(t, err, "apply to restore file failed: %s", string(applyOutput))
+
+	t.Log("✓ Applied to regenerate deleted file")
+
+	// Step 6: Verify file was restored
+	restoredContent, err := os.ReadFile(helloPath)
+	require.NoError(t, err, "Failed to read restored hello.txt")
+	assert.Equal(t, "Hello World", string(restoredContent), "File should be restored to 'Hello World'")
+
+	t.Log("✓ File restored successfully")
+
+	// Step 7: Verify drift cleared in state
+	showCmd = exec.Command(iacTool, "show", "-json")
+	showCmd.Dir = testDir
+	showOutput, err = showCmd.CombinedOutput()
+	require.NoError(t, err, "show failed after restore: %s", string(showOutput))
+
+	stateJSON = string(showOutput)
+	assert.Contains(t, stateJSON, `"drift_detected":false`, "State should have drift_detected=false after restore")
+
+	t.Log("✓ Drift cleared from state after restoration")
+
+	t.Log("✓✓✓ TFK-19 file deletion drift detection and restoration completed successfully!")
+}
+
+// TestResourceFilePathValidation_ValidPaths tests that valid file paths are accepted
+func TestResourceFilePathValidation_ValidPaths(t *testing.T) {
+	validPaths := []string{
 		"file.txt",
 		"README.md",
 		".gitignore",
@@ -231,9 +369,9 @@ func TestResourceFileNameValidation_ValidNames(t *testing.T) {
 		"my-file_v2.txt",
 	}
 
-	for _, name := range validNames {
-		t.Run(name, func(t *testing.T) {
-			testDir := createTestDirectory(t, "TestResourceFileNameValidation_Valid")
+	for _, path := range validPaths {
+		t.Run(path, func(t *testing.T) {
+			testDir := createTestDirectory(t, "TestResourceFilePathValidation_Valid")
 
 			projectTofuContent := `terraform {
   required_providers {
@@ -250,7 +388,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "test" {
-  name = "` + name + `"
+  name = "test"
+  path = "` + path + `"
   content = "test content\n"
 }
 `
@@ -275,18 +414,18 @@ resource "tofukit_file" "test" {
 			validateOutput, err := validateCmd.CombinedOutput()
 			if err != nil {
 				t.Logf("Validate output: %s", validateOutput)
-				t.Fatalf("Validate should fail for valid name %q", name)
+				t.Fatalf("Validate should fail for valid path %q", path)
 			}
 
-			assert.Contains(t, string(validateOutput), "Success", "Validation should succeed for %q", name)
+			assert.Contains(t, string(validateOutput), "Success", "Validation should succeed for %q", path)
 		})
 	}
 }
 
-// TestResourceFileNameValidation_InvalidNames tests that invalid file names are rejected
-func TestResourceFileNameValidation_InvalidNames(t *testing.T) {
+// TestResourceFilePathValidation_InvalidPaths tests that invalid file paths are rejected
+func TestResourceFilePathValidation_InvalidPaths(t *testing.T) {
 	invalidTests := []struct {
-		name          string
+		path          string
 		expectedError string
 	}{
 		{"hello world.txt", "cannot contain spaces"},
@@ -297,8 +436,8 @@ func TestResourceFileNameValidation_InvalidNames(t *testing.T) {
 	}
 
 	for _, tt := range invalidTests {
-		t.Run(tt.name, func(t *testing.T) {
-			testDir := createTestDirectory(t, "TestResourceFileNameValidation_Invalid")
+		t.Run(tt.path, func(t *testing.T) {
+			testDir := createTestDirectory(t, "TestResourceFilePathValidation_Invalid")
 
 			projectTofuContent := `terraform {
   required_providers {
@@ -315,7 +454,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "test" {
-  name = "` + tt.name + `"
+  name = "test"
+  path = "` + tt.path + `"
   content = "test content\n"
 }
 `
@@ -342,7 +482,7 @@ resource "tofukit_file" "test" {
 			// We expect validation to fail
 			if err == nil {
 				t.Logf("Validate output: %s", validateOutput)
-				t.Fatalf("Validate should fail for invalid name %q", tt.name)
+				t.Fatalf("Validate should fail for invalid path %q", tt.path)
 			}
 
 			// Check that error message contains expected text
@@ -548,7 +688,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "ikb" {
-  name = "ikb.png"
+  name = "ikb"
+  path = "ikb.png"
 
   instructions = [{
     prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
@@ -611,7 +752,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "ikb" {
-  name = "ikb.png"
+  name = "ikb"
+  path = "ikb.png"
 
   instructions = [{
     prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
@@ -672,7 +814,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "ikb" {
-  name = "ikb.png"
+  name = "ikb"
+  path = "ikb.png"
 
   instructions = [{
     prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
@@ -748,7 +891,8 @@ provider "tofukit" {
 
 # Image file using OpenAI's image generation model
 resource "tofukit_file" "ikb" {
-  name = "ikb.png"
+  name = "ikb"
+  path = "ikb.png"
 
   instructions = [{
     prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
@@ -764,7 +908,8 @@ resource "tofukit_file" "ikb" {
 
 # Text file using Claude Haiku
 resource "tofukit_file" "readme" {
-  name = "README.md"
+  name = "readme"
+  path = "README.md"
 
   instructions = [{
     prompt = "Create a README file explaining what International Klein Blue is and its artistic significance"
@@ -855,7 +1000,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "ui_weather_sun" {
-  name = "ui_weather_sun.png"
+  name = "ui_weather_sun"
+  path = "ui_weather_sun.png"
 
   instructions = [{
     prompt = "Create an International Klein Blue (IKB), pure ultramarine blue monochrome painting. Solid IKB blue #002FA7, minimalist monochrome artwork, deep saturated ultramarine blue."
@@ -930,7 +1076,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "red_square" {
-  name = "red_square.png"
+  name = "red_square"
+  path = "red_square.png"
 
   instructions = [{
     prompt = "A solid red square on white background. Simple geometric shape, flat color, no gradients."
@@ -945,7 +1092,8 @@ resource "tofukit_file" "red_square" {
 }
 
 resource "tofukit_file" "blue_circle" {
-  name = "blue_circle.png"
+  name = "blue_circle"
+  path = "blue_circle.png"
 
   instructions = [{
     prompt = "A solid blue circle on white background. Simple geometric shape, flat color, no gradients."
@@ -960,7 +1108,8 @@ resource "tofukit_file" "blue_circle" {
 }
 
 resource "tofukit_file" "green_triangle" {
-  name = "green_triangle.png"
+  name = "green_triangle"
+  path = "green_triangle.png"
 
   instructions = [{
     prompt = "A solid green triangle on white background. Simple geometric shape, flat color, no gradients."
@@ -1152,7 +1301,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "portrait" {
-  name = "portrait.png"
+  name = "portrait"
+  path = "portrait.png"
 
   instructions = [{
     prompt = "A portrait of a wizard with a long beard, pointed hat, and a staff. The wizard is standing in front of a mystical forest with glowing mushrooms."
@@ -1215,6 +1365,7 @@ func TestResourceFile_WireframeSVGGenerationSuccess(t *testing.T) {
 
 	testCases := []struct {
 		name           string
+		resourceName   string
 		fileName       string
 		expectedFormat string
 		expectedWidth  int
@@ -1223,6 +1374,7 @@ func TestResourceFile_WireframeSVGGenerationSuccess(t *testing.T) {
 	}{
 		{
 			name:           "SVG_ReactIcon",
+			resourceName:   "react_icon",
 			fileName:       "react-icon.svg",
 			expectedFormat: "svg",
 			expectedWidth:  512,
@@ -1247,6 +1399,7 @@ Create a technology brand icon for React. Design a square icon featuring the dis
 		},
 		{
 			name:           "PNG_BrainIllustration",
+			resourceName:   "brain_lifting",
 			fileName:       "brain-lifting.png",
 			expectedFormat: "png",
 			expectedWidth:  512,
@@ -1299,6 +1452,7 @@ provider "tofukit" {
 
 resource "tofukit_file" "test_image" {
   name = "%s"
+  path = "%s"
 
   instructions = [{
     prompt = <<-PROMPT
@@ -1322,7 +1476,7 @@ resource "tofukit_project" "test" {
     "%s" = tofukit_file.test_image
   }
 }
-`, tc.fileName, tc.prompt, tc.expectedWidth, tc.expectedHeight, tc.fileName)
+`, tc.resourceName, tc.fileName, tc.prompt, tc.expectedWidth, tc.expectedHeight, tc.fileName)
 
 			configPath := filepath.Join(testDir, "main.tofu")
 			err := os.WriteFile(configPath, []byte(config), 0644)
@@ -1416,4 +1570,443 @@ resource "tofukit_project" "test" {
 			t.Logf("  Output preserved at: %s/output/", testDir)
 		})
 	}
+}
+
+// TestResourceFile_WireframeNestedPath verifies wireframe mode works with nested/recursive paths
+// Tests that directories like img/blog/ are created automatically
+func TestResourceFile_WireframeNestedPath(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_WireframeNestedPath")
+	iacTool := detectIaCTool(t)
+
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  image_mode  = "wireframe"
+}
+
+resource "tofukit_file" "nested_image" {
+  name = "ui_image_blog_tech"
+  path = "img/blog/remote-tech-team.png"
+
+  image = {
+    quality = "low"
+    size = "400x300"
+  }
+
+  instructions = [
+    {
+      prompt = <<-PROMPT
+        Create a simple flat design illustration showing remote team collaboration.
+        Include 3-4 stick figures or simple shapes representing team members.
+        Use a minimal style with basic geometric shapes.
+        Color palette: cyan (#20B2AA), orange (#FFA500), black, white background.
+      PROMPT
+      constraints = [
+        "Keep design minimal - simple shapes only",
+        "No complex gradients or shadows",
+      ]
+    },
+  ]
+
+  model = "openai/gpt-image-1"
+  description = "Test nested path image generation"
+}
+
+resource "tofukit_project" "test" {
+  name    = "wireframe-nested-path-test"
+  version = "1.0.0"
+
+  files = {
+    "img/blog/remote-tech-team.png" = tofukit_file.nested_image
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Run terraform init and apply
+	runTerraformInit(t, iacTool, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Verify nested directory was created
+	nestedDir := filepath.Join(testDir, "output", "img", "blog")
+	require.DirExists(t, nestedDir, "Nested directory img/blog/ should exist")
+
+	// Verify image was created at nested path
+	imagePath := filepath.Join(testDir, "output", "img", "blog", "remote-tech-team.png")
+	require.FileExists(t, imagePath, "Image should exist at nested path")
+
+	// Verify it's a valid PNG
+	file, err := os.Open(imagePath)
+	require.NoError(t, err)
+	defer file.Close()
+
+	img, format, err := image.Decode(file)
+	require.NoError(t, err, "Should decode as valid image")
+	assert.Equal(t, "png", format, "Should be PNG format")
+
+	bounds := img.Bounds()
+	assert.Equal(t, 400, bounds.Dx(), "Width should be 400")
+	assert.Equal(t, 300, bounds.Dy(), "Height should be 300")
+
+	t.Logf("✓ Wireframe nested path test passed: img/blog/remote-tech-team.png created at %dx%d", bounds.Dx(), bounds.Dy())
+}
+
+// TestResourceFile_TFK20_PathAttributeOverridesMapKey verifies that the file's path attribute
+// is used for output location instead of the map key (TFK-20 fix)
+// This is the exact scenario from the bug report where files were created at "name" instead of "path"
+func TestResourceFile_TFK20_PathAttributeOverridesMapKey(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_TFK20_PathAttribute")
+	iacTool := detectIaCTool(t)
+
+	// This config uses the resource NAME as the map key, but the file's PATH attribute
+	// should determine where the file is actually created
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  image_mode  = "wireframe"
+}
+
+resource "tofukit_file" "ui_image_aws" {
+  name = "ui_image_aws"
+  path = "_next/static/media/aws.png"  # This should be the actual output path
+
+  image = {
+    quality = "low"
+    size = "100x100"
+  }
+
+  instructions = [
+    {
+      prompt = "Create a simple AWS cloud logo icon with orange/yellow colors on white background."
+      constraints = [
+        "Simple flat design",
+        "Minimal details",
+      ]
+    },
+  ]
+
+  model = "openai/gpt-image-1"
+  description = "AWS logo for TFK-20 test"
+}
+
+resource "tofukit_project" "test" {
+  name    = "tfk20-path-attribute-test"
+  version = "1.0.0"
+
+  # Key test: map key is "ui_image_aws" but file's path is "_next/static/media/aws.png"
+  # The file should be created at the PATH, not the map key
+  files = {
+    "ui_image_aws" = tofukit_file.ui_image_aws
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Run terraform init and apply
+	runTerraformInit(t, iacTool, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// CRITICAL ASSERTIONS for TFK-20:
+
+	// 1. File SHOULD exist at the path attribute location
+	correctPath := filepath.Join(testDir, "output", "_next", "static", "media", "aws.png")
+	require.FileExists(t, correctPath, "TFK-20: File should be created at path attribute location (_next/static/media/aws.png)")
+
+	// 2. File should NOT exist at the map key location (the bug behavior)
+	wrongPath := filepath.Join(testDir, "output", "ui_image_aws")
+	_, err = os.Stat(wrongPath)
+	require.True(t, os.IsNotExist(err), "TFK-20: File should NOT be created at map key location (ui_image_aws)")
+
+	// 3. Nested directory should have been created
+	nestedDir := filepath.Join(testDir, "output", "_next", "static", "media")
+	require.DirExists(t, nestedDir, "TFK-20: Nested directories should be created from path attribute")
+
+	// 4. Verify it's a valid image
+	file, err := os.Open(correctPath)
+	require.NoError(t, err)
+	defer file.Close()
+
+	img, format, err := image.Decode(file)
+	require.NoError(t, err, "Should decode as valid image")
+	assert.Equal(t, "png", format, "Should be PNG format")
+
+	bounds := img.Bounds()
+	assert.Equal(t, 100, bounds.Dx(), "Width should be 100")
+	assert.Equal(t, 100, bounds.Dy(), "Height should be 100")
+
+	t.Logf("✓ TFK-20 fix verified: File created at path attribute (_next/static/media/aws.png), not map key (ui_image_aws)")
+	t.Logf("  Image dimensions: %dx%d", bounds.Dx(), bounds.Dy())
+}
+
+// TestResourceFile_TFK21_TextFileGeneration verifies that text files (HTML/CSS) with
+// instructions are generated, not just images. This is the TFK-21 bug reproduction.
+// Bug: Only image files (with `image` attribute) were generated, text files were skipped.
+func TestResourceFile_TFK21_TextFileGeneration(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_TFK21_TextFile")
+	iacTool := detectIaCTool(t)
+
+	// This config has ONLY text files with instructions (no image attribute)
+	// These should be generated by Claude
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+}
+
+# HTML file - should be generated by Claude
+resource "tofukit_file" "index_html" {
+  name = "ui_page_home"
+  path = "index.html"
+
+  instructions = [{
+    prompt = <<-PROMPT
+      Generate a simple HTML5 landing page for a tech company called "TFK Test Corp".
+      Include:
+      - DOCTYPE html declaration
+      - head with title "TFK Test Corp"
+      - body with h1 heading "Welcome to TFK Test Corp"
+      - A paragraph with company description
+      - A simple footer with copyright
+    PROMPT
+    constraints = [
+      "Must be valid HTML5",
+      "Keep it simple - under 50 lines",
+      "No external CSS or JavaScript",
+    ]
+  }]
+
+  model = "anthropic/claude-haiku"
+  description = "Landing page for TFK-21 test"
+}
+
+# CSS file - should be generated by Claude
+resource "tofukit_file" "main_css" {
+  name = "ui_style_main"
+  path = "_next/static/css/main.css"
+
+  instructions = [{
+    prompt = <<-PROMPT
+      Generate a simple CSS file for a tech company landing page.
+      Include:
+      - Basic reset (margin: 0, padding: 0)
+      - Body font-family (sans-serif)
+      - h1 styling (color: #333)
+      - Footer styling (text-align: center)
+    PROMPT
+    constraints = [
+      "Must be valid CSS",
+      "Keep it simple - under 30 lines",
+      "No CSS variables or advanced features",
+    ]
+  }]
+
+  model = "anthropic/claude-haiku"
+  description = "Main stylesheet for TFK-21 test"
+}
+
+resource "tofukit_project" "test" {
+  name    = "tfk21-text-file-test"
+  version = "1.0.0"
+
+  files = {
+    "index.html"               = tofukit_file.index_html
+    "_next/static/css/main.css" = tofukit_file.main_css
+  }
+}
+`
+
+	// Write config
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	// Run terraform init and apply
+	runTerraformInit(t, iacTool, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// CRITICAL ASSERTIONS for TFK-21:
+
+	// 1. HTML file SHOULD exist and have content
+	htmlPath := filepath.Join(testDir, "output", "index.html")
+	require.FileExists(t, htmlPath, "TFK-21: index.html should be created")
+
+	htmlContent, err := os.ReadFile(htmlPath)
+	require.NoError(t, err, "TFK-21: Should be able to read index.html")
+	require.NotEmpty(t, htmlContent, "TFK-21: index.html should NOT be empty")
+
+	htmlStr := string(htmlContent)
+	assert.Contains(t, strings.ToLower(htmlStr), "<!doctype html", "TFK-21: Should contain DOCTYPE")
+	assert.Contains(t, strings.ToLower(htmlStr), "<html", "TFK-21: Should contain html tag")
+	t.Logf("✓ index.html generated: %d bytes", len(htmlContent))
+
+	// 2. CSS file SHOULD exist and have content
+	cssPath := filepath.Join(testDir, "output", "_next", "static", "css", "main.css")
+	require.FileExists(t, cssPath, "TFK-21: main.css should be created at nested path")
+
+	cssContent, err := os.ReadFile(cssPath)
+	require.NoError(t, err, "TFK-21: Should be able to read main.css")
+	require.NotEmpty(t, cssContent, "TFK-21: main.css should NOT be empty")
+
+	cssStr := string(cssContent)
+	assert.Contains(t, cssStr, "{", "TFK-21: Should contain CSS rules")
+	t.Logf("✓ main.css generated: %d bytes", len(cssContent))
+
+	// 3. Nested directory should have been created
+	nestedDir := filepath.Join(testDir, "output", "_next", "static", "css")
+	require.DirExists(t, nestedDir, "TFK-21: Nested CSS directory should be created")
+
+	t.Logf("✓ TFK-21 text file generation verified:")
+	t.Logf("  - index.html: %d bytes (contains HTML structure)", len(htmlContent))
+	t.Logf("  - main.css: %d bytes (contains CSS rules)", len(cssContent))
+}
+
+// TestResourceFile_TFK21_MixedImageAndText verifies that BOTH image AND text files
+// are generated when in the same project. This is the actual TFK-21 bug scenario:
+// images work but text files are skipped.
+func TestResourceFile_TFK21_MixedImageAndText(t *testing.T) {
+	testDir := createTestDirectory(t, "TestResourceFile_TFK21_Mixed")
+	iacTool := detectIaCTool(t)
+
+	// This config has BOTH:
+	// - Image file (wireframe mode)
+	// - Text file (HTML)
+	// Bug: only image gets generated, text is skipped
+	config := `
+terraform {
+  required_providers {
+    tofukit = {
+      source  = "registry.terraform.io/DimmKirr/tofukit"
+      version = "0.1.0"
+    }
+  }
+}
+
+provider "tofukit" {
+  output_path = "output"
+  debug       = true
+  image_mode  = "wireframe"
+}
+
+# IMAGE file - uses wireframe mode (Claude SVG -> PNG)
+resource "tofukit_file" "logo" {
+  name = "ui_image_logo"
+  path = "_next/static/media/logo.png"
+
+  image = {
+    quality = "low"
+    size = "100x100"
+  }
+
+  instructions = [{
+    prompt = "Create a simple geometric logo with a blue circle and white letter T in the center."
+    constraints = ["Simple flat design", "Minimal colors"]
+  }]
+
+  model = "openai/gpt-image-1"
+  description = "Logo image"
+}
+
+# TEXT file - should use Claude for HTML generation
+resource "tofukit_file" "index_html" {
+  name = "ui_page_home"
+  path = "index.html"
+
+  instructions = [{
+    prompt = "Generate a minimal HTML5 page with title 'Test' and h1 'Hello TFK-21'."
+    constraints = ["Valid HTML5", "Under 20 lines"]
+  }]
+
+  model = "anthropic/claude-haiku"
+  description = "Landing page"
+}
+
+resource "tofukit_project" "test" {
+  name    = "tfk21-mixed-test"
+  version = "1.0.0"
+
+  files = {
+    "_next/static/media/logo.png" = tofukit_file.logo
+    "index.html"                  = tofukit_file.index_html
+  }
+}
+`
+
+	configPath := filepath.Join(testDir, "project.tofu")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
+
+	runTerraformInit(t, iacTool, testDir)
+	runTerraformApply(t, iacTool, testDir)
+
+	// Check IMAGE file (should work per TFK-21 description)
+	imagePath := filepath.Join(testDir, "output", "_next", "static", "media", "logo.png")
+	imageExists := false
+	if _, err := os.Stat(imagePath); err == nil {
+		imageExists = true
+		t.Logf("✓ Image file exists: logo.png")
+	} else {
+		t.Logf("✗ Image file MISSING: logo.png")
+	}
+
+	// Check TEXT file (this is what TFK-21 says is broken)
+	htmlPath := filepath.Join(testDir, "output", "index.html")
+	htmlExists := false
+	if _, err := os.Stat(htmlPath); err == nil {
+		htmlContent, _ := os.ReadFile(htmlPath)
+		if len(htmlContent) > 0 {
+			htmlExists = true
+			t.Logf("✓ Text file exists: index.html (%d bytes)", len(htmlContent))
+		} else {
+			t.Logf("✗ Text file EXISTS but EMPTY: index.html")
+		}
+	} else {
+		t.Logf("✗ Text file MISSING: index.html")
+	}
+
+	// TFK-21 bug assertion: if image works but text doesn't, that's the bug
+	if imageExists && !htmlExists {
+		t.Fatalf("TFK-21 BUG REPRODUCED: Image generated but text file skipped!")
+	}
+
+	require.True(t, imageExists, "Image should be generated")
+	require.True(t, htmlExists, "Text file should be generated (TFK-21 fix needed if this fails)")
+
+	t.Log("✓ TFK-21 mixed test passed: both image AND text files generated")
 }

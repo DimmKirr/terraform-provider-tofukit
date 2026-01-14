@@ -43,6 +43,23 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 
 		attrs := fileObj.Attributes()
 
+		// TFK-20: Determine the actual output path
+		// Priority: file's "path" attribute > map key
+		// This allows tofukit_file resources to specify their output path via the path attribute
+		actualPath := pathKey
+		if pathAttr, exists := attrs["path"]; exists {
+			if pathStr, ok := pathAttr.(types.String); ok && !pathStr.IsNull() && !pathStr.IsUnknown() {
+				pathValue := pathStr.ValueString()
+				if pathValue != "" {
+					actualPath = pathValue
+					tflog.Debug(ctx, "Using file's path attribute instead of map key", map[string]interface{}{
+						"map_key":     pathKey,
+						"actual_path": actualPath,
+					})
+				}
+			}
+		}
+
 		// Extract model
 		model := types.StringNull()
 		if modelVal, exists := attrs["model"]; exists {
@@ -152,7 +169,7 @@ func FilesMapToList(ctx context.Context, filesMap types.Map) []FileModelWithPath
 
 		// Create FileModelWithPath
 		result = append(result, FileModelWithPath{
-			Path:          pathKey,
+			Path:          actualPath, // TFK-20: Use actualPath (from path attribute or map key)
 			Model:         model,
 			Content:       content,
 			Instructions:  instructions,

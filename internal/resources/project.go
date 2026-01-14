@@ -556,6 +556,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	// Get provider configuration
 	outputPath := ".tofukit"
 	claudeHomeDir := "~/.claude"
+	debug := false
 	if provData, ok := r.ProviderData.(interface {
 		GetOutputPath() string
 		GetClaudeHomeDirectory() string
@@ -563,7 +564,7 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	}); ok {
 		outputPath = provData.GetOutputPath()
 		claudeHomeDir = provData.GetClaudeHomeDirectory()
-		_ = provData.GetDebug() // debug is handled in executeClaudeCode
+		debug = provData.GetDebug()
 	}
 
 	// Initialize all computed fields to ensure they're never unknown
@@ -611,6 +612,17 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 	stringFields := r.collectStringFields(ctx, data)
 	uriScanner := uri.NewScanner()
 	foundURIs := uriScanner.ExtractURIs(stringFields)
+
+	// DEBUG: Log string fields and found URIs
+	if debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); debugFile != nil {
+		fmt.Fprintf(debugFile, "=== URI SCANNING ===\n")
+		fmt.Fprintf(debugFile, "String fields collected: %d\n", len(stringFields))
+		for key, value := range stringFields {
+			fmt.Fprintf(debugFile, "  %s: %q\n", key, value)
+		}
+		fmt.Fprintf(debugFile, "Found URIs: %v\n", foundURIs)
+		debugFile.Close()
+	}
 
 	var resourceRegistry map[string]interface{}
 	if len(foundURIs) > 0 {
@@ -690,8 +702,10 @@ func (r *ProjectResourceFinal) Create(ctx context.Context, req resource.CreateRe
 
 	r.writeJSONFile(ctx, data, outputData, outputPath)
 
-	// Note: Debug files are written during ModifyPlan (plan phase)
-	// Prompt is regenerated deterministically during Create (apply phase)
+	// Write debug files if debug mode is enabled
+	if debug {
+		r.writeDebugFiles(ctx, data, outputData, outputPath)
+	}
 
 	if err := r.executeClaudeCode(ctx, &data, outputData, enrichedFiles, outputPath, claudeHomeDir, false); err != nil {
 		// Set error status and fail the resource creation
@@ -909,25 +923,18 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 				"modtime_null":      fileModel.FileModTime.IsNull(),
 			})
 
-			// Skip if no hash stored yet (first run after upgrade)
-			if fileModel.FileHash.IsNull() || fileModel.FileHash.IsUnknown() {
-				tflog.Warn(ctx, "=== READ: SKIPPING FILE (no hash) ===", map[string]interface{}{
-					"path":              path,
-					"file_hash_null":    fileModel.FileHash.IsNull(),
-					"file_hash_unknown": fileModel.FileHash.IsUnknown(),
-				})
-				continue
-			}
-
 			fullPath := filepath.Join(projectPath, path)
 
-			// Check if file exists
+			// TFK-19 FIX: Check file existence FIRST, before hash check
+			// This ensures deleted files are detected even when no hash is stored
+			// (e.g., after interrupted Claude execution or first run after upgrade)
 			fileInfo, err := os.Stat(fullPath)
 			if os.IsNotExist(err) {
-				// File deleted outside Terraform
+				// File deleted outside Terraform - always mark as drifted
 				tflog.Warn(ctx, "File deleted outside Terraform", map[string]interface{}{
 					"project_id": data.ID.ValueString(),
 					"path":       path,
+					"has_hash":   !fileModel.FileHash.IsNull() && !fileModel.FileHash.IsUnknown(),
 				})
 				driftedFiles = append(driftedFiles, path)
 				continue
@@ -936,6 +943,17 @@ func (r *ProjectResourceFinal) Read(ctx context.Context, req resource.ReadReques
 				tflog.Warn(ctx, "Failed to stat file for drift detection", map[string]interface{}{
 					"path":  path,
 					"error": err.Error(),
+				})
+				continue
+			}
+
+			// Skip hash comparison if no hash stored yet (first run after upgrade)
+			// File exists at this point, so no drift from deletion
+			if fileModel.FileHash.IsNull() || fileModel.FileHash.IsUnknown() {
+				tflog.Warn(ctx, "=== READ: SKIPPING HASH CHECK (no hash stored) ===", map[string]interface{}{
+					"path":              path,
+					"file_hash_null":    fileModel.FileHash.IsNull(),
+					"file_hash_unknown": fileModel.FileHash.IsUnknown(),
 				})
 				continue
 			}
@@ -1438,8 +1456,10 @@ func (r *ProjectResourceFinal) Update(ctx context.Context, req resource.UpdateRe
 
 		r.writeJSONFile(ctx, data, outputData, outputPath)
 
-		// Note: Debug files are written during ModifyPlan (plan phase)
-		// Prompt is regenerated deterministically during Update (apply phase)
+		// Write debug files if debug mode is enabled
+		if debug {
+			r.writeDebugFiles(ctx, data, outputData, outputPath)
+		}
 
 		if err := r.executeClaudeCode(ctx, &data, outputData, enrichedFiles, outputPath, claudeHomeDir, true); err != nil {
 			// Set error status and fail the resource update
@@ -2095,7 +2115,7 @@ func (r *ProjectResourceFinal) buildOutputDataWithFiles(ctx context.Context, dat
 	kits := map[string]interface{}{}
 
 	// DEBUG: Write to file
-	debugFile, _ := os.Create("/tmp/tofukit-debug.log")
+	debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if debugFile != nil {
 		fmt.Fprintf(debugFile, "DEBUG buildOutputData: data.Kits.IsNull()=%v, IsUnknown()=%v\n", data.Kits.IsNull(), data.Kits.IsUnknown())
 		defer debugFile.Close()
@@ -2376,6 +2396,24 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		dryRun = provData.GetDryRun()
 	}
 
+	// Log debug state for tracing (TFK-21)
+	tflog.Info(ctx, "executeClaudeCode: debug settings", map[string]interface{}{
+		"debug":       debug,
+		"dry_run":     dryRun,
+		"output_path": outputPath,
+	})
+
+	// Initialize debug log file (TFK-21: captures execution flow for debugging)
+	debugLog := NewDebugLog(outputPath, debug)
+	defer debugLog.Close()
+
+	debugLog.Section("EXECUTION START")
+	debugLog.Log("Project: %s", data.Name.ValueString())
+	debugLog.Log("Output path: %s", outputPath)
+	debugLog.Log("Debug mode: %v", debug)
+	debugLog.Log("Dry run: %v", dryRun)
+	debugLog.Log("Total files: %d", len(mergedFiles))
+
 	// Get system prompt from resource data
 	systemPrompt := ""
 	if !data.SystemPrompt.IsNull() && !data.SystemPrompt.IsUnknown() {
@@ -2393,9 +2431,21 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		providerModel = provData.GetModel()
 	}
 
+	debugLog.Log("Project model: %s", projectModel)
+	debugLog.Log("Provider model: %s", providerModel)
+
 	// Group files by their resolved model
 	// The hierarchy is: file.model > feature.model (already applied) > stack.model (already applied) > project.model > provider.model > default
 	modelGroups := r.groupFilesByModel(ctx, mergedFiles, projectModel, providerModel)
+
+	debugLog.Section("MODEL GROUPS")
+	debugLog.Log("Total groups: %d", len(modelGroups))
+	for i, group := range modelGroups {
+		debugLog.Log("  Group %d: model=%s files=%d", i+1, group.Model, len(group.Files))
+		for _, f := range group.Files {
+			debugLog.Log("    - %s", f.Path)
+		}
+	}
 
 	tflog.Info(ctx, "Prepared model groups for execution", map[string]interface{}{
 		"group_count":    len(modelGroups),
@@ -2506,6 +2556,10 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 		}
 
 		for groupIdx, group := range modelGroups {
+			debugLog.Section(fmt.Sprintf("GROUP %d/%d EXECUTION", groupIdx+1, len(modelGroups)))
+			debugLog.Log("Model: %s", group.Model)
+			debugLog.Log("File count: %d", len(group.Files))
+
 			tflog.Info(ctx, "Executing model group", map[string]interface{}{
 				"group_index": groupIdx + 1,
 				"group_count": len(modelGroups),
@@ -2517,12 +2571,15 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			// Check if this is an image model and we're in wireframe mode
 			isImageModel := models.IsImageModel(group.Model)
 			potentialWireframeMode := isImageModel && imageMode == "wireframe" && hasSVGExec
+			debugLog.Log("Is image model: %v", isImageModel)
+			debugLog.Log("Potential wireframe mode: %v", potentialWireframeMode)
 
 			// TFK-13: SVG files should always use main LLM executor (text generation), not wireframe
 			// If we're in potential wireframe mode and have mixed file types, split them
 			var svgFilesInGroup, rasterFilesInGroup []schemas.FileModelWithPath
 			if potentialWireframeMode {
 				svgFilesInGroup, rasterFilesInGroup = SplitSVGFromRasterFiles(group.Files)
+				debugLog.Log("SVG/Raster split: svg=%d raster=%d", len(svgFilesInGroup), len(rasterFilesInGroup))
 				if len(svgFilesInGroup) > 0 {
 					tflog.Info(ctx, "TFK-13: Found SVG files in image group - routing to text executor", map[string]interface{}{
 						"svg_file_count":    len(svgFilesInGroup),
@@ -2560,6 +2617,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 					}
 				}
 
+				debugLog.Log(">>> Executing SVG files with text executor (count=%d)", len(svgFilesInGroup))
 				tflog.Info(ctx, "Executing SVG files with text executor", map[string]interface{}{
 					"file_count": len(svgFilesInGroup),
 				})
@@ -2571,8 +2629,10 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 					claudeExec := adapter.GetClaudeExecutor()
 					_, svgReport, execErr := claudeExec.ExecuteWithPromptJSON(ctx, svgPromptJSON, outputPath, svgVerifications, maxRetries)
 					if execErr != nil {
+						debugLog.Error("SVG execution failed: %v", execErr)
 						return fmt.Errorf("failed to execute SVG files: %w", execErr)
 					}
+					debugLog.Log("<<< SVG execution completed successfully")
 					if svgReport != nil && !svgReport.AllPassed {
 						aggregatedReport.AllPassed = false
 						aggregatedReport.FailedCount += svgReport.FailedCount
@@ -2588,6 +2648,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 				filesToProcess = rasterFilesInGroup
 				if len(filesToProcess) == 0 {
 					// All files were SVG - skip to next group
+					debugLog.Log("All files were SVG - skipping to next group")
 					tflog.Debug(ctx, "All files in group were SVG - already processed", map[string]interface{}{
 						"model": group.Model,
 					})
@@ -2677,6 +2738,7 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 					modelFilename := strings.ReplaceAll(group.Model, "/", "-")
 					promptPath := filepath.Join(debugDir, fmt.Sprintf("%s-prompt-attempt1-%s-%s.json", promptPrefix, modelFilename, timestamp))
 					if err := os.WriteFile(promptPath, []byte(promptJSON), 0644); err == nil {
+						debugLog.Log("Wrote prompt JSON: %s", promptPath)
 						tflog.Debug(ctx, "Wrote prompt JSON", map[string]interface{}{"path": promptPath})
 					}
 				}
@@ -2687,12 +2749,19 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 			var report *files.VerificationReport
 			var executorType string
 
+			debugLog.Log("Files to process: %d", len(filesToProcess))
+			for _, f := range filesToProcess {
+				debugLog.Log("  - %s", f.Path)
+			}
+
 			if adapter, ok := executor.(claudeAdapterInterface); ok {
 				executorType = "Claude"
+				debugLog.Log(">>> Executing with Claude executor")
 				claudeExecutor := adapter.GetClaudeExecutor()
 				var claudeStatus *claude.ExecutionStatus
 				claudeStatus, report, err = claudeExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
 				if claudeStatus != nil {
+					debugLog.Log("<<< Claude execution completed: state=%s", claudeStatus.State)
 					status = &llm.ExecutionStatus{
 						State:       claudeStatus.State,
 						StartedAt:   claudeStatus.StartedAt,
@@ -2705,18 +2774,28 @@ func (r *ProjectResourceFinal) executeClaudeCode(ctx context.Context, data *Proj
 				}
 			} else if adapter, ok := executor.(openaiAdapterInterface); ok {
 				executorType = "OpenAI"
+				debugLog.Log(">>> Executing with OpenAI executor")
 				openaiExecutor := adapter.GetOpenAIExecutor()
 				status, report, err = openaiExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
+				if status != nil {
+					debugLog.Log("<<< OpenAI execution completed: state=%s", status.State)
+				}
 			} else if adapter, ok := executor.(svgAdapterInterface); ok {
 				executorType = "SVG/Wireframe"
+				debugLog.Log(">>> Executing with SVG/Wireframe executor")
 				svgExecutor := adapter.GetSVGExecutor()
 				status, report, err = svgExecutor.ExecuteWithPromptJSON(ctx, promptJSON, outputPath, groupVerifications, maxRetries)
+				if status != nil {
+					debugLog.Log("<<< SVG/Wireframe execution completed: state=%s", status.State)
+				}
 			} else {
+				debugLog.Error("No compatible executor for model %s", group.Model)
 				return fmt.Errorf("executor for model %s does not support ExecuteWithPromptJSON", group.Model)
 			}
 
 			if err != nil {
 				// Execution or verification failed for this group
+				debugLog.Error("Execution failed: %v", err)
 				data.ExecutionStatus = types.StringValue("failed")
 				if report != nil && !report.AllPassed {
 					data.ExecutionError = types.StringValue(fmt.Sprintf("Verification failed for %s executor (model %s) after %d attempts:\n%s", executorType, group.Model, maxRetries, report.GetFailureSummary()))
@@ -2899,6 +2978,21 @@ func (r *ProjectResourceFinal) writeDebugFiles(ctx context.Context, data Project
 				"path": projectSpecPath,
 				"size": len(specJSON),
 			})
+		}
+	}
+
+	// Write resource-registry-{timestamp}.json - separate file for URI registry debugging
+	if resourceRegistry, ok := outputData["_resource_registry"].(map[string]interface{}); ok && len(resourceRegistry) > 0 {
+		registryPath := filepath.Join(debugDir, fmt.Sprintf("resource-registry-%s.json", timestamp))
+		registryJSON, err := json.MarshalIndent(resourceRegistry, "", "  ")
+		if err == nil {
+			if writeErr := os.WriteFile(registryPath, registryJSON, 0644); writeErr == nil {
+				tflog.Debug(ctx, "Wrote resource registry", map[string]interface{}{
+					"path":      registryPath,
+					"size":      len(registryJSON),
+					"uri_count": len(resourceRegistry),
+				})
+			}
 		}
 	}
 
@@ -3410,20 +3504,11 @@ func (r *ProjectResourceFinal) buildProjectContext(
 					"name": featureName,
 				}
 
-				// Add prompt from requirements if present
-				if len(feature.Requirements) > 0 {
-					// Get the prompt from the first requirement's first instruction
-					if len(feature.Requirements[0].Instructions) > 0 {
-						if !feature.Requirements[0].Instructions[0].Prompt.IsNull() {
-							featureMeta["prompt"] = feature.Requirements[0].Instructions[0].Prompt.ValueString()
-						}
-					}
-				}
+				// NOTE: Intentionally NOT including prompts - lean context only
+				// NOTE: Description is only available on FeatureResourceModel, not inline FeatureModel
+				// For feature resource references, the description would need to be looked up from registry
 
-				// Add description if available (this would come from FeatureResourceModel)
-				// For inline features, we don't have a description field in FeatureModel
-
-				// Add feature files if present
+				// Add feature files if present (paths only for lean context)
 				if !feature.Files.IsNull() && !feature.Files.IsUnknown() {
 					files := []string{}
 					for path := range feature.Files.Elements() {
@@ -3478,17 +3563,10 @@ func (r *ProjectResourceFinal) buildProjectContext(
 						"name": featureName,
 					}
 
-					// Add prompt from requirements if present
-					if len(feature.Requirements) > 0 {
-						// Get the prompt from the first requirement's first instruction
-						if len(feature.Requirements[0].Instructions) > 0 {
-							if !feature.Requirements[0].Instructions[0].Prompt.IsNull() {
-								featureMeta["prompt"] = feature.Requirements[0].Instructions[0].Prompt.ValueString()
-							}
-						}
-					}
+					// NOTE: Intentionally NOT including prompts - lean context only
+					// NOTE: Description is only available on FeatureResourceModel, not inline FeatureModel
 
-					// Add feature files if present
+					// Add feature files if present (paths only for lean context)
 					if !feature.Files.IsNull() && !feature.Files.IsUnknown() {
 						files := []string{}
 						for path := range feature.Files.Elements() {
@@ -5446,10 +5524,23 @@ func (r *ProjectResourceFinal) collectStringFields(ctx context.Context, data Pro
 	}
 
 	// Files - content and instructions
+	// DEBUG: Log files state
+	if debugFile, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); debugFile != nil {
+		fmt.Fprintf(debugFile, "collectStringFields: Files.IsNull()=%v, IsUnknown()=%v\n", data.Files.IsNull(), data.Files.IsUnknown())
+		if !data.Files.IsNull() && !data.Files.IsUnknown() {
+			fmt.Fprintf(debugFile, "collectStringFields: Files has %d elements\n", len(data.Files.Elements()))
+		}
+		debugFile.Close()
+	}
 	if !data.Files.IsNull() && !data.Files.IsUnknown() {
 		for path, fileAttr := range data.Files.Elements() {
 			fileObj, ok := fileAttr.(types.Object)
 			if !ok {
+				// DEBUG
+				if df, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); df != nil {
+					fmt.Fprintf(df, "  file %s: NOT an object, type=%T\n", path, fileAttr)
+					df.Close()
+				}
 				continue
 			}
 
@@ -5457,7 +5548,19 @@ func (r *ProjectResourceFinal) collectStringFields(ctx context.Context, data Pro
 			var fileModel schemas.FileModel
 			diags := fileObj.As(ctx, &fileModel, basetypes.ObjectAsOptions{})
 			if diags.HasError() {
+				// DEBUG
+				if df, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); df != nil {
+					fmt.Fprintf(df, "  file %s: diags error: %v\n", path, diags.Errors())
+					df.Close()
+				}
 				continue
+			}
+
+			// DEBUG
+			if df, _ := os.OpenFile("/tmp/tofukit-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); df != nil {
+				fmt.Fprintf(df, "  file %s: content.IsNull=%v, content.IsUnknown=%v, instructions=%d\n",
+					path, fileModel.Content.IsNull(), fileModel.Content.IsUnknown(), len(fileModel.Instructions))
+				df.Close()
 			}
 
 			// File content
@@ -5646,6 +5749,7 @@ func (r *ProjectResourceFinal) computeAndStoreFileHashes(
 		// Resource metadata attributes (optional, present when referencing tofukit_file)
 		"id":          types.StringType,
 		"name":        types.StringType,
+		"path":        types.StringType,
 		"link":        types.StringType,
 		"description": types.StringType,
 	}

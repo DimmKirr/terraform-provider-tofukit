@@ -20,9 +20,10 @@ type Scanner struct {
 // NewScanner creates a new URI scanner
 func NewScanner() *Scanner {
 	// Pattern matches: tofukit://<type>/<name> or tofukit://kit/<subtype>/<name>
-	// Type must be lowercase, name can have alphanumeric, underscore, hyphen
+	// Type must be lowercase, name can have alphanumeric, underscore, hyphen, dot
+	// Dot is allowed for file extensions (e.g., tofukit://file/README.md)
 	return &Scanner{
-		pattern: regexp.MustCompile(`tofukit://[a-z]+(/[a-z]+)?/[a-zA-Z0-9_-]+`),
+		pattern: regexp.MustCompile(`tofukit://[a-z]+(/[a-z]+)?/[a-zA-Z0-9_.-]+`),
 	}
 }
 

@@ -49,6 +49,9 @@ type FileModel struct {
 	Instructions  []InstructionModel  `tfsdk:"instructions"`
 	Verifications []VerificationModel `tfsdk:"verifications"`
 
+	// Model override for this specific file
+	Model types.String `tfsdk:"model"`
+
 	// Image generation configuration (optional, for image models)
 	Image *ImageModel `tfsdk:"image"`
 
@@ -60,6 +63,7 @@ type FileModel struct {
 	// Optional resource metadata fields (present when referencing tofukit_file)
 	ID          types.String `tfsdk:"id"`
 	Name        types.String `tfsdk:"name"`
+	Path        types.String `tfsdk:"path"`
 	Link        types.String `tfsdk:"link"`
 	Description types.String `tfsdk:"description"`
 }
@@ -259,6 +263,10 @@ func GetFilesMapAttribute() schema.MapNestedAttribute {
 				},
 				"name": schema.StringAttribute{
 					MarkdownDescription: "File name (present when referencing tofukit_file resource)",
+					Optional:            true,
+				},
+				"path": schema.StringAttribute{
+					MarkdownDescription: "File path (present when referencing tofukit_file resource)",
 					Optional:            true,
 				},
 				"link": schema.StringAttribute{

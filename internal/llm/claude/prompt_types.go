@@ -13,6 +13,13 @@ type ProjectPrompt struct {
 	Request      PromptRequest `json:"request"`
 }
 
+// InstructionGroup represents a named group of instructions with constraints
+type InstructionGroup struct {
+	Name        string   `json:"name"`
+	Prompt      string   `json:"prompt"`
+	Constraints []string `json:"constraints,omitempty"`
+}
+
 // PromptRequest contains the actual project implementation request
 type PromptRequest struct {
 	Type             string                   `json:"type"`
@@ -20,11 +27,8 @@ type PromptRequest struct {
 	Specification    map[string]interface{}   `json:"specification"`
 	ResourceRegistry map[string]interface{}   `json:"resource_registry,omitempty"`
 	ProjectContext   map[string]interface{}   `json:"project_context,omitempty"`
-	Instructions     []string                 `json:"instructions"`
-	FileDetails      *FileInstructions        `json:"file_details,omitempty"`
+	Instructions     []InstructionGroup       `json:"instructions"`
 	FileOperations   []map[string]interface{} `json:"file_operations,omitempty"`
-	Guidelines       []string                 `json:"guidelines"`
-	Deliverables     []string                 `json:"deliverables"`
 }
 
 // ProjectInfo contains basic project metadata
@@ -32,12 +36,6 @@ type ProjectInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Version     string `json:"version"`
-}
-
-// FileInstructions provides details about file files
-type FileInstructions struct {
-	Description string   `json:"description"`
-	Rules       []string `json:"rules"`
 }
 
 // ToJSON converts the prompt to JSON string
@@ -68,7 +66,12 @@ The following JSON contains the full project specification:
 
 ## Instructions
 
-{{range $i, $instruction := .Request.Instructions}}{{add $i 1}}. {{$instruction}}
+{{range .Request.Instructions}}### {{.Name}}
+**{{.Prompt}}**
+{{if .Constraints}}
+Constraints:
+{{range .Constraints}}- {{.}}
+{{end}}{{end}}
 {{end}}
 {{if .Request.FileOperations}}
 ## File Operations
@@ -98,21 +101,7 @@ The following JSON contains the full project specification:
 - This file should remain as-is (no action needed)
 {{end}}
 {{end}}
-{{end}}{{if .Request.FileDetails}}## File Files
-
-{{.Request.FileDetails.Description}}
-
-{{range .Request.FileDetails.Rules}}- {{.}}
-{{end}}
-{{end}}## Key Guidelines
-
-{{range .Request.Guidelines}}- {{.}}
-{{end}}
-## Expected Deliverables
-
-{{range .Request.Deliverables}}- {{.}}
-{{end}}
-`
+{{end}}`
 
 // ToMarkdown renders the prompt as markdown for debug output
 func (p *ProjectPrompt) ToMarkdown() string {
@@ -144,47 +133,6 @@ func (p *ProjectPrompt) ToMarkdown() string {
 }
 
 // BuildProjectPrompt creates a structured prompt from project specification
-// buildFileDetails creates FileInstructions based on whether files are specified
-func buildFileDetails(hasFiles bool) *FileInstructions {
-	if hasFiles {
-		// Files ARE specified - strict mode
-		return &FileInstructions{
-			Description: "IMPORTANT: The specification contains a \"files\" object. This is an EXHAUSTIVE list - you MUST manage ONLY these files:",
-			Rules: []string{
-				"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
-				"**EXHAUSTIVE LIST**: The \"files\" section contains the COMPLETE list of files. Do NOT create any files beyond those listed, even if requirements suggest additional files are needed. All functionality must be implemented within the specified files.",
-				"**NON-NEGOTIABLE**: Files listed in the \"files\" section are MANDATORY. Even if you believe a file shouldn't exist or isn't needed, you MUST create it exactly as specified. If you think main.tf shouldn't exist but it's specified, create main.tf anyway and work around your concerns. The files list is the user's explicit directive and cannot be questioned or skipped.",
-				"Create each file at the exact path specified as a key in the files object (relative to current working directory)",
-				"If a path contains directories (e.g., 'dir/file.txt'), create the parent directories first",
-				"If 'content' field exists: Use the EXACT content provided without ANY modification - preserve all characters including trailing newlines (\\n)",
-				"If 'generate' is true and 'instructions' field exists: Generate appropriate content following ALL the instructions provided",
-				"IMPORTANT: For generated content, ensure it satisfies ALL instructions AND the verification requirements",
-				"IMPORTANT: Generated files should be production-ready and follow best practices for the file type",
-				"IMPORTANT: If content ends with \\n, the file MUST have a newline at the end. Use echo or printf appropriately",
-				"Remove any existing file files that are NOT in the current specification",
-				"When removing the last file from a directory, also remove the empty directory",
-				"These are template/example files that should be created/updated/removed as specified",
-				"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
-			},
-		}
-	}
-
-	// NO files specified - flexible mode
-	return &FileInstructions{
-		Description: "IMPORTANT: No explicit files are specified. Create files as needed to satisfy the requirements:",
-		Rules: []string{
-			"**CRITICAL**: ALL file operations MUST be performed in the current working directory (run 'pwd' first to verify location). NEVER create files in /tmp/ or any other directory",
-			"Analyze the requirements and determine what files are needed to implement them fully",
-			"Create appropriate file structure and naming conventions based on best practices for the languages/frameworks involved",
-			"If a path contains directories (e.g., 'src/cli.py'), create the parent directories first",
-			"Generate production-ready, well-documented code that follows best practices",
-			"Ensure all generated content satisfies the requirements AND any verification requirements",
-			"IMPORTANT: Only create files that are necessary to fulfill the requirements - do not create unnecessary files",
-			"When creating files, use: echo -n 'content' > file (for no trailing newline) or echo 'content' > file (for trailing newline)",
-		},
-	}
-}
-
 func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt string) *ProjectPrompt {
 	// Extract project info
 	projectInfo := ProjectInfo{
@@ -217,38 +165,77 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		hasFiles = true
 	}
 
-	// Build instructions - conditional based on whether files are specified
-	instructions := []string{
-		"**CRITICAL - Working Directory**: ALL files must be created directly in the current working directory. DO NOT create any project-name subdirectories. DO NOT use 'cd' commands. The current directory IS the project directory.",
+	// Build consolidated instruction groups
+	instructions := []InstructionGroup{
+		{
+			Name:   "Working Directory",
+			Prompt: "Execute all file operations in the current working directory",
+			Constraints: []string{
+				"DO NOT create project-name subdirectories",
+				"DO NOT use 'cd' commands",
+				"Run 'pwd' first to verify location",
+				"NEVER create files in /tmp/ or any other directory",
+			},
+		},
 	}
 
 	// File handling instructions - different behavior based on whether files are specified
 	if hasFiles {
-		// Files ARE specified - create ONLY those files (exhaustive list)
-		instructions = append(instructions,
-			"**Managing specified files - EXHAUSTIVE LIST**: The specification includes a \"files\" object. This is the COMPLETE and EXHAUSTIVE list of files you must create - do not create any additional files beyond this list. Create these files exactly as specified **in the current working directory** with their exact paths and content. IMPORTANT: All file operations must be performed in the current working directory (use pwd to verify). Never create files in /tmp/ or other directories. When comparing with existing files, remove any files not in the specification. If removing the last file from a directory, also remove the now-empty directory.",
-			"**Requirements when files are specified**: If the specification also contains \"requirements\", treat them as context and constraints for HOW to implement the specified files. Requirements provide implementation guidance but should NOT result in creating additional files beyond those explicitly listed in the \"files\" section. All requirement logic must be incorporated into the specified files.",
-		)
+		instructions = append(instructions, InstructionGroup{
+			Name:   "File Management",
+			Prompt: "Create ONLY the files listed in the specification's \"files\" object - this is an EXHAUSTIVE list",
+			Constraints: []string{
+				"Do NOT create any files beyond those explicitly listed",
+				"Files listed are MANDATORY - create them even if you think they're unnecessary",
+				"If 'content' field exists, use EXACT content without ANY modification",
+				"If 'generate' is true with 'instructions', generate content following ALL instructions",
+				"Remove existing files NOT in the current specification",
+				"Remove empty directories when last file is removed",
+			},
+		})
 	} else {
-		// NO files specified - create files as needed based on requirements
-		instructions = append(instructions,
-			"**Creating files based on requirements**: No explicit files are specified. Create whatever files and directories are needed to fulfill the requirements listed in the \"requirements\" section. Use your expertise to determine the appropriate file structure, naming conventions, and content organization. All paths should be relative to the current working directory - DO NOT create a project-name subdirectory.",
-		)
+		instructions = append(instructions, InstructionGroup{
+			Name:   "File Creation",
+			Prompt: "Create files as needed to fulfill the requirements",
+			Constraints: []string{
+				"Use your expertise to determine appropriate file structure",
+				"Only create files necessary for the requirements",
+				"Follow language/framework best practices for naming and organization",
+			},
+		})
 	}
 
-	// Common instructions for both cases
+	// Common instructions
 	instructions = append(instructions,
-		"**Analyzing the specification**: Understand all the requirements, kits, and dependencies specified in the JSON",
-		"**Implementing all requirements**: Follow each requirement listed in the \"requirements\" section",
-		"**Installing and configuring all kits**: Set up all the tools, frameworks, languages, and methodologies specified in the \"kits\" section",
-		"**Following verification steps**: Ensure each requirement can be verified as specified",
+		InstructionGroup{
+			Name:   "Quality Standards",
+			Prompt: "Produce production-ready, well-documented code",
+			Constraints: []string{
+				"No TODO comments or placeholder code",
+				"Include proper error handling",
+				"Follow language-specific best practices",
+				"Ensure all verification commands pass",
+			},
+		},
+		InstructionGroup{
+			Name:   "Implementation",
+			Prompt: "Implement all requirements and configure all kits",
+			Constraints: []string{
+				"Process requirements in priority order (higher numbers first)",
+				"Set up all tools, frameworks, and languages specified in kits",
+				"Follow each requirement's verification steps",
+			},
+		},
 	)
 
 	// If this is a fix request, prepend fix instructions
 	if fixRequest, ok := projectSpec["_fix_request"].(map[string]interface{}); ok {
 		if fixInstructions, ok := fixRequest["instructions"].(string); ok {
-			// Prepend fix instructions to the beginning
-			instructions = append([]string{fixInstructions}, instructions...)
+			instructions = append([]InstructionGroup{{
+				Name:        "Fix Request",
+				Prompt:      fixInstructions,
+				Constraints: []string{},
+			}}, instructions...)
 		}
 	}
 
@@ -258,31 +245,51 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		fileOperations = ops
 	}
 
-	// Extract resource registry if present
+	// Extract resource registry if present (from _resource_registry in spec)
+	// NOTE: Do NOT delete from projectSpec - this function may be called multiple times
+	// and we need to preserve the registry in the source map
 	var resourceRegistry map[string]interface{}
 	if registry, ok := projectSpec["_resource_registry"].(map[string]interface{}); ok {
 		resourceRegistry = registry
-		// Enhance system prompt with resource URI instructions
-		systemPrompt += "\n\n## Resource URI References\n\n" +
-			"URIs like tofukit://TYPE/NAME reference other resources in this project. " +
-			"Look them up in the resource_registry section for complete details about their files, capabilities, and interfaces. " +
-			"When you see these URIs in prompts or instructions, treat them as explicit dependencies that you should integrate with."
+		// Enhance system prompt with tofukit URI instructions
+		systemPrompt += "\n\n## Resource URI Linking (tofukit://)\n\n" +
+			"URIs like `tofukit://TYPE/NAME` reference other resources in this project.\n\n" +
+			"**How to resolve URIs:**\n" +
+			"1. Look up the URI in `resource_registry` for complete metadata\n" +
+			"2. For file resources: `resource_registry[\"tofukit://file/NAME\"]` contains:\n" +
+			"   - `name`: The resource identifier (used in linking)\n" +
+			"   - `path`: The actual filesystem path where the file exists\n" +
+			"   - `description`: What the file does\n" +
+			"3. For feature resources: Contains name, description, and associated files\n\n" +
+			"**Example:** If you see `tofukit://file/logo` in a prompt:\n" +
+			"- Look up `resource_registry[\"tofukit://file/logo\"]`\n" +
+			"- Use the `path` field (e.g., `assets/logo.png`) when referencing the actual file"
 	}
 
-	// Extract project context if present
+	// Extract project context if present (from _project_context in spec)
+	// NOTE: Do NOT delete from projectSpec - this function may be called multiple times
+	// and we need to preserve the context in the source map
 	var projectContext map[string]interface{}
 	if ctx, ok := projectSpec["_project_context"].(map[string]interface{}); ok {
 		projectContext = ctx
+		// Enhance system prompt with lean project context instructions
+		systemPrompt += "\n\n## Project Context\n\n" +
+			"The `project_context` field contains metadata about this project:\n" +
+			"- `project_info`: Project name, description, version\n" +
+			"- `features`: Feature names and their associated file lists\n\n" +
+			"To resolve `tofukit://` URIs, use `resource_registry` (see above)."
+	}
 
-		// Enhance system prompt with project context instructions
-		systemPrompt += "\n\n## Project Context Introspection\n\n" +
-			"The project_context field in the specification contains complete metadata about this project:\n" +
-			"- features: All features defined in this project with their prompts, files, and capabilities\n" +
-			"- integrations: All external API/service integrations referenced by this project\n" +
-			"- kits: All language/framework/tool kits configured for this project\n" +
-			"- requirements: All high-level requirements for this project\n\n" +
-			"Features can introspect this context to automatically discover project components without requiring explicit configuration. " +
-			"For example, diagram generation features can visualize the entire architecture by reading the project_context field."
+	// Create a clean specification without internal fields
+	// Internal fields (_resource_registry, _project_context, _file_operations) should
+	// appear at the request level, not duplicated in specification
+	cleanSpec := make(map[string]interface{})
+	for k, v := range projectSpec {
+		// Skip internal fields - they are exposed at request level
+		if k == "_resource_registry" || k == "_project_context" || k == "_file_operations" {
+			continue
+		}
+		cleanSpec[k] = v
 	}
 
 	// Build the structured prompt
@@ -291,31 +298,11 @@ func BuildProjectPrompt(projectSpec map[string]interface{}, customSystemPrompt s
 		Request: PromptRequest{
 			Type:             "project_implementation",
 			ProjectInfo:      projectInfo,
-			Specification:    projectSpec,
+			Specification:    cleanSpec,
 			ResourceRegistry: resourceRegistry,
 			ProjectContext:   projectContext,
 			Instructions:     instructions,
 			FileOperations:   fileOperations,
-			FileDetails: buildFileDetails(hasFiles),
-			Guidelines: []string{
-				"Follow the exact specifications provided in the JSON",
-				"Create file files exactly as specified without modification",
-				"Create parent directories as needed for nested file paths (e.g., mkdir -p for 'dir/subdir/file.txt')",
-				"Clean up empty directories when removing the last file from them (e.g., rmdir or rm -d)",
-				"Implement all requirements in priority order (higher numbers first)",
-				"Ensure all verification commands work as expected",
-				"Create production-ready, well-documented code",
-				"Follow best practices for the specified programming language and frameworks",
-				"Include proper error handling and logging",
-				"Set up development and build toolchains as specified in the kits",
-			},
-			Deliverables: []string{
-				"All file files created exactly as specified",
-				"Complete, working project implementation",
-				"All files and directories properly structured",
-				"All requirements implemented and verified",
-				"Development environment ready for use",
-			},
 		},
 	}
 

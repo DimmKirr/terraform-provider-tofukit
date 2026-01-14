@@ -182,7 +182,8 @@ provider "tofukit" {
 
 # Text file using Claude Haiku
 resource "tofukit_file" "readme" {
-  name = "README.md"
+  name = "readme"
+  path = "README.md"
 
   instructions = [{
     prompt = "Create a simple README with just the text 'Hello World' as a heading"
@@ -194,7 +195,8 @@ resource "tofukit_file" "readme" {
 
 # Image file using OpenAI image model
 resource "tofukit_file" "icon" {
-  name = "icon.png"
+  name = "icon"
+  path = "icon.png"
 
   instructions = [{
     prompt = "A simple red circle on white background"
@@ -345,7 +347,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "rabbit" {
-  name = "rabbit.png"
+  name = "rabbit"
+  path = "rabbit.png"
 
   instructions = [{
     prompt = %q

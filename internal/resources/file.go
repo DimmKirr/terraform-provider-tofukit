@@ -29,6 +29,7 @@ type FileResource struct {
 type FileResourceModel struct {
 	ID            types.String                `tfsdk:"id"`
 	Name          types.String                `tfsdk:"name"`
+	Path          types.String                `tfsdk:"path"`
 	Link          types.String                `tfsdk:"link"`
 	Model         types.String                `tfsdk:"model"`
 	Description   types.String                `tfsdk:"description"`
@@ -59,15 +60,20 @@ func (r *FileResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "Resource identifier",
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "File path with extension (e.g., 'README.md', 'src/main.go'). Must be filesystem-compliant across platforms.",
+				MarkdownDescription: "Unique identifier for this file resource, used in tofukit:// URIs for cross-referencing (e.g., 'logo', 'app-config'). This is the linkable identity, not the filesystem path.",
 				Required:            true,
+			},
+			"path": schema.StringAttribute{
+				MarkdownDescription: "Filesystem path where the file will be created (e.g., 'assets/logo.png', 'config/app.yaml'). Defaults to `name` if not specified. Must be filesystem-compliant across platforms.",
+				Optional:            true,
+				Computed:            true,
 				Validators: []validator.String{
 					ValidFileName(),
 				},
 			},
 			"link": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://file/name)",
+				MarkdownDescription: "URI link to this resource for cross-referencing (e.g., tofukit://file/logo)",
 			},
 			"model": schema.StringAttribute{
 				MarkdownDescription: "Model to use for this file in provider/model format (e.g., 'anthropic/claude-sonnet-4.5', 'openai/gpt-5-image'). Overrides provider-level model setting. If not specified, uses provider's default model.",
@@ -189,12 +195,19 @@ func (r *FileResource) Create(ctx context.Context, req resource.CreateRequest, r
 		}
 	}
 
+	// Set path to name if not specified (backwards compatibility)
+	if data.Path.IsNull() || data.Path.IsUnknown() || data.Path.ValueString() == "" {
+		data.Path = data.Name
+	}
+
+	// ID and Link use name (identity), not path (filesystem location)
 	data.ID = types.StringValue(fmt.Sprintf("file.%s", data.Name.ValueString()))
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://file/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Created file resource", map[string]interface{}{
 		"file_id":          data.ID.ValueString(),
 		"name":             data.Name.ValueString(),
+		"path":             data.Path.ValueString(),
 		"link":             data.Link.ValueString(),
 		"has_content":      hasContent,
 		"has_instructions": hasInstructions,
@@ -282,13 +295,19 @@ func (r *FileResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
-	// Preserve computed fields from state
+	// Set path to name if not specified (backwards compatibility)
+	if data.Path.IsNull() || data.Path.IsUnknown() || data.Path.ValueString() == "" {
+		data.Path = data.Name
+	}
+
+	// Preserve computed fields from state (ID uses name for identity)
 	data.ID = state.ID
 	data.Link = types.StringValue(fmt.Sprintf("tofukit://file/%s", data.Name.ValueString()))
 
 	tflog.Info(ctx, "Updated file resource", map[string]interface{}{
 		"file_id":          data.ID.ValueString(),
 		"name":             data.Name.ValueString(),
+		"path":             data.Path.ValueString(),
 		"link":             data.Link.ValueString(),
 		"has_content":      hasContent,
 		"has_instructions": hasInstructions,

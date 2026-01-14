@@ -15,7 +15,8 @@ provider "tofukit" {
 }
 
 resource "tofukit_file" "hello" {
-  name    = "hello.txt"
+  name    = "hello"
+  path    = "hello.txt"
   content = "Hello World"
 }
 

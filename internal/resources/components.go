@@ -73,8 +73,8 @@ func (r *ComponentResource) Create(ctx context.Context, req resource.CreateReque
 
 	// Generate ID from kind and name
 	data.ID = types.StringValue(fmt.Sprintf("%s.%s", r.Kind, data.Name.ValueString()))
-	// Generate link URI: tofukit://kit/<kind>/<name>
-	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
+	// Generate link URI: tofukit:///<kind>/<name>
+	data.Link = types.StringValue(fmt.Sprintf("tofukit:///%s/%s", r.Kind, data.Name.ValueString()))
 
 	tflog.Trace(ctx, fmt.Sprintf("created %s resource: %s (link: %s)", r.Kind, data.ID.ValueString(), data.Link.ValueString()))
 
@@ -104,7 +104,7 @@ func (r *ComponentResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	// Recompute link in case name changed
-	data.Link = types.StringValue(fmt.Sprintf("tofukit://kit/%s/%s", r.Kind, data.Name.ValueString()))
+	data.Link = types.StringValue(fmt.Sprintf("tofukit:///%s/%s", r.Kind, data.Name.ValueString()))
 
 	// Initialize hash fields to null for registry-only resources (no actual files created)
 	if !data.Files.IsNull() {

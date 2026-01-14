@@ -2004,7 +2004,8 @@ provider "tofukit" {
 
 # Define a reusable file resource
 resource "tofukit_file" "gitignore" {
-  name        = ".gitignore"
+  name        = "gitignore"
+  path        = ".gitignore"
   description = "Standard Go .gitignore"
 
   content = "bin/\n*.exe\n*.dll\n"
@@ -2093,7 +2094,8 @@ provider "tofukit" {
 
 # Define a file resource with instructions (not content)
 resource "tofukit_file" "readme" {
-  name        = "README.md"
+  name        = "readme"
+  path        = "README.md"
   description = "Standard project README"
 
   instructions = [{
@@ -2184,7 +2186,8 @@ provider "tofukit" {
 
 # Define a reusable LICENSE file resource
 resource "tofukit_file" "mit_license" {
-  name = "LICENSE"
+  name = "mit_license"
+  path = "LICENSE"
   content = "MIT License\n\nCopyright (c) 2024\n\nPermission is hereby granted...\n"
 }
 

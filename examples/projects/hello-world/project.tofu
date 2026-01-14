@@ -62,7 +62,8 @@ resource "tofukit_project" "hello_world" {
 }
 
 resource "tofukit_file" "story" {
-  name = "STORY.md"
+  name = "story"
+  path = "STORY.md"
 
   instructions = [
     {
@@ -81,7 +82,8 @@ resource "tofukit_file" "story" {
 }
 
 resource "tofukit_file" "readme" {
-  name = "README.md"
+  name = "readme"
+  path = "README.md"
 
   instructions = [
     {

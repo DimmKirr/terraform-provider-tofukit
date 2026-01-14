@@ -96,7 +96,7 @@ func TestE2EProjectExampleHelloWorldSuccess(t *testing.T) {
 	// Verify file with resource link in content
 	resourceLinkPath := filepath.Join(outputPath, "hello-with-resource-link.txt")
 	assert.FileExists(t, resourceLinkPath, "hello-with-resource-link.txt should exist")
-	verifyFileContent(t, resourceLinkPath, "More info in tofukit://file/README.md")
+	verifyFileContent(t, resourceLinkPath, "More info in tofukit://file/readme")
 
 	// Verify file with resource link in prompt (cross-resource reference)
 	resourceLinkInPromptPath := filepath.Join(outputPath, "hello-with-resource-link-in-prompt.txt")
