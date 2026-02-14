@@ -1,0 +1,14 @@
+# Ignore generated diagram outputs
+*.drawio
+*.png
+*.pdf
+*.svg
+
+# Allow the feature definition files
+!*.tofu
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup

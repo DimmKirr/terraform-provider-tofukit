@@ -1,0 +1,19 @@
+bin/
+.terraform
+.devcontainer
+terraform.tfstate*
+
+# Output dir ignored  for now
+.tofukit/
+test-output
+vendor/
+*.log
+
+# Git worktrees
+.worktrees/
+
+node_modules
+package-lock.json
+package.json
+**/.terraform.lock.hcl
+tas

@@ -1,0 +1,56 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+Project resource that aggregates kits, features, stacks, and files into a complete software project managed by Claude.
+
+## Example Usage
+
+```hcl
+resource "tofukit_project" "my_app" {
+  name    = "my-application"
+  version = "1.0.0"
+
+  files = {
+    "README.md" = {
+      instructions = [{
+        prompt = "Create project README"
+      }]
+    }
+  }
+
+  kits = [
+    tofukit_language.python,
+    tofukit_library.flask
+  ]
+
+  requirements = [{
+    name = "Setup"
+    instructions = [{
+      prompt = "Initialize project structure"
+    }]
+  }]
+}
+```
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Drift Detection
+
+The project resource tracks file modifications outside of Terraform:
+- `drift_detected` - Set to `true` when files are modified externally
+- `drifted_files` - Lists paths of files that changed
+- Running `tofu apply` after drift restores files to specification
+
+{{ if .HasImport -}}
+## Import
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
